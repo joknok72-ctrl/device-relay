@@ -1,0 +1,15 @@
+{
+  "name": "Game smoke test: launch, play 5 swipes, back out",
+  "steps": [
+    { "tool": "press_home" },
+    { "tool": "wait", "arguments": { "ms": 800 } },
+    { "tool": "capture_screen", "save": "01_home.png" },
+    { "tool": "tap", "arguments": { "x": 540, "y": 990 } },
+    { "tool": "wait", "arguments": { "ms": 1500 } },
+    { "tool": "capture_screen", "save": "02_after_play.png" },
+    { "tool": "swipe", "arguments": { "x1": 540, "y1": 1800, "x2": 540, "y2": 600, "duration": 250 }, "repeat": 5, "every_ms": 400 },
+    { "tool": "capture_screen", "save": "03_after_swipes.png" },
+    { "tool": "press_back" },
+    { "tool": "wait", "arguments": { "ms": 500 } }
+  ]
+}

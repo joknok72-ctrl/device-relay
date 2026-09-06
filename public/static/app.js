@@ -138,6 +138,7 @@
   };
   $('#refresh-devices-btn').onclick = loadDevices;
 
+  $('#mcp-url').textContent = location.origin + '/mcp';
   loadDevices();
   setInterval(loadDevices, 15000);
 })();

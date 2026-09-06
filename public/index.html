@@ -82,6 +82,17 @@
       </div>
 
       <div class="card">
+        <h2 class="font-semibold mb-2"><i class="fas fa-robot ml-1 text-slate-400"></i> ربط AI Agent (Tool Calling / MCP)</h2>
+        <ul class="text-sm text-slate-300 space-y-1" dir="ltr">
+          <li><span class="text-slate-500">MCP Server:</span> <code id="mcp-url" class="text-emerald-300"></code> <span class="text-slate-500">(Bearer token)</span></li>
+          <li><span class="text-slate-500">OpenAI tools:</span> <a class="text-emerald-300 underline" href="/api/tools/schema?format=openai" target="_blank">/api/tools/schema?format=openai</a></li>
+          <li><span class="text-slate-500">Anthropic tools:</span> <a class="text-emerald-300 underline" href="/api/tools/schema?format=anthropic" target="_blank">/api/tools/schema?format=anthropic</a></li>
+          <li><span class="text-slate-500">OpenAPI 3.1:</span> <a class="text-emerald-300 underline" href="/api/tools/schema?format=openapi" target="_blank">/api/tools/schema?format=openapi</a></li>
+          <li><span class="text-slate-500">Python runner:</span> <code>python agent/agent_runner.py goal "..."</code></li>
+        </ul>
+      </div>
+
+      <div class="card">
         <h2 class="font-semibold mb-2"><i class="fas fa-code ml-1 text-slate-400"></i> استخدام الـ API (curl)</h2>
         <pre id="curl-example" class="text-xs bg-slate-950 rounded p-3 overflow-x-auto" dir="ltr"></pre>
       </div>

@@ -44,3 +44,9 @@ android/app/*.iml
 *.aab
 *.keystore
 *.jks
+
+# agent runner outputs
+agent/shots/
+agent/scenario_out/
+agent/.env
+agent/screen.png

@@ -5,6 +5,9 @@ import type { Bindings, DeviceInfo } from './types'
 import { parseAction, isValidDeviceId } from './validate'
 import { DeviceRoom } from './device-room'
 import { DeviceRegistry } from './registry'
+import { TOOLS, openaiTools, anthropicTools, geminiTools, openapiSpec } from './tools'
+import { executeTool } from './tool-exec'
+import { handleMcp } from './mcp'
 
 export { DeviceRoom, DeviceRegistry }
 
@@ -34,7 +37,15 @@ function extractToken(c: { req: { header: (n: string) => string | undefined; que
 // Public health check (registered before auth middleware)
 app.get('/api/health', (c) => c.json({ ok: true, ts: Date.now(), service: 'device-relay' }))
 
+app.use('/mcp', async (c, next) => {
+  const expected = c.env.RELAY_TOKEN
+  const token = extractToken(c)
+  if (!expected || !token || !safeEqual(token, expected)) return c.json({ error: 'unauthorized' }, 401)
+  await next()
+})
+
 app.use('/api/*', async (c, next) => {
+  if (c.req.path === '/api/tools/schema') return next() // public, no secrets
   const expected = c.env.RELAY_TOKEN
   if (!expected) return c.json({ error: 'server misconfigured: RELAY_TOKEN not set' }, 500)
   const token = extractToken(c)
@@ -55,7 +66,7 @@ function registry(c: { env: Env['Bindings'] }) {
 
 // ---------------- Devices ----------------
 app.get('/api/devices', async (c) => {
-  const ids = await registry(c).list()
+  const ids = (await registry(c).list()) as string[]
   const infos = await Promise.all(
     ids.map(async (id) => {
       const r = await room(c, id).fetch(`https://do/info?deviceId=${id}`)
@@ -155,6 +166,67 @@ app.post('/api/devices/:deviceId/macro', async (c) => {
   const ok = results.every((r) => (r as { ok: boolean }).ok)
   return c.json({ ok, results }, ok ? 200 : 502)
 })
+
+// ---------------- AI Tools ----------------
+/** Tool schemas in every popular format (public: contains no secrets) */
+app.get('/api/tools/schema', (c) => {
+  const fmt = c.req.query('format') ?? 'openai'
+  const origin = new URL(c.req.url).origin
+  switch (fmt) {
+    case 'openai': return c.json(openaiTools())
+    case 'anthropic': return c.json(anthropicTools())
+    case 'gemini': return c.json(geminiTools())
+    case 'openapi': return c.json(openapiSpec(origin))
+    case 'raw': return c.json(TOOLS)
+    default: return c.json({ error: 'format must be openai|anthropic|gemini|openapi|raw' }, 400)
+  }
+})
+
+/** Generic tool call: { "name": "tap", "arguments": { "x": 1, "y": 2 } } */
+app.post('/api/devices/:deviceId/tools/call', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  let body: { name?: string; arguments?: Record<string, unknown> }
+  try { body = await c.req.json() } catch { return c.json({ error: 'invalid JSON body' }, 400) }
+  if (!body.name) return c.json({ error: 'name required' }, 400)
+  const res = await executeTool(c.env, deviceId, body.name, body.arguments ?? {})
+  return c.json(res, res.ok ? 200 : 502)
+})
+
+/** One endpoint per tool (matches the OpenAPI spec): POST /api/devices/:id/tools/tap {x,y} */
+app.post('/api/devices/:deviceId/tools/:tool', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  const tool = c.req.param('tool')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  if (!TOOLS.some((t) => t.name === tool)) return c.json({ error: `unknown tool ${tool}` }, 404)
+  let args: Record<string, unknown> = {}
+  if (c.req.header('content-length') && c.req.header('content-length') !== '0') {
+    try { args = await c.req.json() } catch { return c.json({ error: 'invalid JSON body' }, 400) }
+  }
+  const res = await executeTool(c.env, deviceId, tool, args)
+  return c.json(res, res.ok ? 200 : 502)
+})
+
+/** Raw PNG screenshot — easiest for vision models / python */
+app.get('/api/devices/:deviceId/screenshot.png', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  const res = await executeTool(c.env, deviceId, 'capture_screen', {})
+  if (!res.ok || !res.image) return c.json({ error: res.error ?? 'no screenshot' }, 502)
+  const bin = Uint8Array.from(atob(res.image.base64), (ch) => ch.charCodeAt(0))
+  return new Response(bin, {
+    headers: {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'no-store',
+      'X-Screen-Width': String(res.screen?.w ?? ''),
+      'X-Screen-Height': String(res.screen?.h ?? ''),
+      'X-Image-Scale': String(res.image.scale),
+    },
+  })
+})
+
+/** MCP server (Streamable HTTP) */
+app.all('/mcp', (c) => handleMcp(c.env, c.req.raw))
 
 // ---------------- WebSocket endpoints ----------------
 /** Phone connects here: wss://host/api/ws/phone/<deviceId>  (Authorization: Bearer ...) */
