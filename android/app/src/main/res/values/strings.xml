@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Device Relay</string>
+    <string name="accessibility_service_label">Device Relay Automation</string>
+    <string name="accessibility_service_description">Allows Device Relay to perform taps, swipes and system actions received from your own Cloudflare relay server. Nothing is read from the screen; the service only performs gestures you send.</string>
+    <string name="notification_channel_name">Relay connection</string>
+    <string name="notification_title">Device Relay</string>
+</resources>

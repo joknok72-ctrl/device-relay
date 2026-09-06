@@ -1,0 +1,3 @@
+-keepattributes *Annotation*, InnerClasses
+-keep class kotlinx.serialization.** { *; }
+-keep class com.devicerelay.client.net.** { *; }
