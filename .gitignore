@@ -31,3 +31,16 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/app/*.iml
+*.apk
+*.aab
+*.keystore
+*.jks

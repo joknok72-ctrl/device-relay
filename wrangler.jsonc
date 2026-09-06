@@ -1,34 +1,28 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "webapp",
-  "compatibility_date": "2026-08-25",
-  "pages_build_output_dir": "./dist",
-  "compatibility_flags": [
-    "nodejs_compat"
+  "name": "device-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Static dashboard files (public/) served at root
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+
+  // Durable Object = one live "room" per device holding the WebSocket connections
+  "durable_objects": {
+    "bindings": [
+      { "name": "DEVICE_ROOM", "class_name": "DeviceRoom" },
+      { "name": "REGISTRY", "class_name": "DeviceRegistry" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["DeviceRoom", "DeviceRegistry"] }
   ]
-  // "vars": {
-  //   "MY_VAR": "my-variable"
-  // },
-  // "kv_namespaces": [
-  //   {
-  //     "binding": "MY_KV_NAMESPACE",
-  //     "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-  //   }
-  // ],
-  // "r2_buckets": [
-  //   {
-  //     "binding": "MY_BUCKET",
-  //     "bucket_name": "my-bucket"
-  //   }
-  // ],
-  // "d1_databases": [
-  //   {
-  //     "binding": "MY_DB",
-  //     "database_name": "my-database",
-  //     "database_id": ""
-  //   }
-  // ],
-  // "ai": {
-  //   "binding": "AI"
-  // }
+
+  // Secrets (set via `wrangler secret put`):
+  //   RELAY_TOKEN  -> Bearer token used by the API, dashboard, and phone app
 }

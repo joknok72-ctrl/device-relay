@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Device Relay — لوحة التحكم</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link href="/static/style.css" rel="stylesheet">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <header id="top-bar" class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+      <h1 class="text-lg font-bold flex items-center gap-2">
+        <i class="fas fa-mobile-screen-button text-emerald-400"></i>
+        Device Relay
+        <span class="text-xs font-normal text-slate-400">Cloud Automation & Accessibility Relay</span>
+      </h1>
+      <div class="flex items-center gap-2">
+        <input id="token-input" type="password" placeholder="Bearer Token"
+               class="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm w-56 focus:outline-none focus:border-emerald-500">
+        <button id="save-token-btn" class="btn-primary"><i class="fas fa-key ml-1"></i> حفظ</button>
+        <span id="auth-status" class="text-xs text-slate-400"></span>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <!-- Devices -->
+    <aside id="devices-panel" class="lg:col-span-3 card">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold"><i class="fas fa-list ml-1 text-slate-400"></i> الأجهزة</h2>
+        <button id="refresh-devices-btn" class="text-slate-400 hover:text-white" title="تحديث"><i class="fas fa-rotate"></i></button>
+      </div>
+      <ul id="devices-list" class="space-y-2 text-sm"></ul>
+      <p id="devices-empty" class="text-slate-500 text-sm hidden">لا توجد أجهزة بعد. افتح التطبيق على هاتفك واضغط Connect.</p>
+    </aside>
+
+    <!-- Controls -->
+    <section id="control-panel" class="lg:col-span-5 space-y-6">
+      <div class="card">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold"><i class="fas fa-gamepad ml-1 text-slate-400"></i> التحكم</h2>
+          <span id="selected-device" class="text-xs bg-slate-800 rounded px-2 py-1 text-slate-300">لم يتم اختيار جهاز</span>
+        </div>
+
+        <div class="grid grid-cols-4 gap-2 mb-4">
+          <button class="btn-action" data-action='{"type":"back"}'><i class="fas fa-arrow-right"></i><span>رجوع</span></button>
+          <button class="btn-action" data-action='{"type":"home"}'><i class="fas fa-house"></i><span>الرئيسية</span></button>
+          <button class="btn-action" data-action='{"type":"recents"}'><i class="fas fa-layer-group"></i><span>التطبيقات</span></button>
+          <button class="btn-action" data-action='{"type":"notifications"}'><i class="fas fa-bell"></i><span>الإشعارات</span></button>
+          <button class="btn-action" data-action='{"type":"lock"}'><i class="fas fa-lock"></i><span>قفل</span></button>
+          <button class="btn-action" data-action='{"type":"screenshot"}'><i class="fas fa-camera"></i><span>لقطة شاشة</span></button>
+          <button class="btn-action" data-action='{"type":"ping"}'><i class="fas fa-satellite-dish"></i><span>Ping</span></button>
+          <button class="btn-action" data-action='{"type":"swipe","x1":540,"y1":1500,"x2":540,"y2":500,"duration":300}'><i class="fas fa-arrow-up"></i><span>سحب لأعلى</span></button>
+        </div>
+
+        <form id="tap-form" class="grid grid-cols-5 gap-2 items-end mb-3">
+          <label class="col-span-2 text-xs text-slate-400">X<input name="x" type="number" value="540" class="input"></label>
+          <label class="col-span-2 text-xs text-slate-400">Y<input name="y" type="number" value="1200" class="input"></label>
+          <button class="btn-primary h-9"><i class="fas fa-hand-pointer ml-1"></i> Tap</button>
+        </form>
+
+        <form id="swipe-form" class="grid grid-cols-6 gap-2 items-end mb-3">
+          <label class="text-xs text-slate-400">X1<input name="x1" type="number" value="540" class="input"></label>
+          <label class="text-xs text-slate-400">Y1<input name="y1" type="number" value="1500" class="input"></label>
+          <label class="text-xs text-slate-400">X2<input name="x2" type="number" value="540" class="input"></label>
+          <label class="text-xs text-slate-400">Y2<input name="y2" type="number" value="500" class="input"></label>
+          <label class="text-xs text-slate-400">ms<input name="duration" type="number" value="300" class="input"></label>
+          <button class="btn-primary h-9"><i class="fas fa-arrows-left-right ml-1"></i> Swipe</button>
+        </form>
+
+        <details class="mt-2">
+          <summary class="text-sm text-slate-400 cursor-pointer">JSON يدوي / Macro</summary>
+          <textarea id="json-input" rows="5" class="input mt-2 font-mono text-xs w-full" dir="ltr">{"steps":[{"type":"home"},{"type":"wait","ms":500},{"type":"tap","x":540,"y":1200}]}</textarea>
+          <div class="flex gap-2 mt-2">
+            <button id="send-json-btn" class="btn-primary"><i class="fas fa-paper-plane ml-1"></i> إرسال</button>
+            <span class="text-xs text-slate-500 self-center">لو فيه <code>steps</code> بيتبعت كـ macro، غير كده أمر واحد.</span>
+          </div>
+        </details>
+      </div>
+
+      <div class="card">
+        <h2 class="font-semibold mb-2"><i class="fas fa-code ml-1 text-slate-400"></i> استخدام الـ API (curl)</h2>
+        <pre id="curl-example" class="text-xs bg-slate-950 rounded p-3 overflow-x-auto" dir="ltr"></pre>
+      </div>
+    </section>
+
+    <!-- Live -->
+    <section id="live-panel" class="lg:col-span-4 space-y-6">
+      <div class="card">
+        <h2 class="font-semibold mb-3"><i class="fas fa-circle-info ml-1 text-slate-400"></i> حالة الجهاز</h2>
+        <dl id="device-info" class="grid grid-cols-2 gap-y-1 text-sm text-slate-300"></dl>
+      </div>
+      <div class="card">
+        <h2 class="font-semibold mb-3"><i class="fas fa-image ml-1 text-slate-400"></i> آخر لقطة شاشة</h2>
+        <div id="screenshot-wrap" class="bg-slate-950 rounded flex items-center justify-center min-h-40">
+          <img id="screenshot-img" class="max-h-96 rounded hidden" alt="screenshot">
+          <span id="screenshot-empty" class="text-slate-600 text-sm">اضغط "لقطة شاشة"</span>
+        </div>
+      </div>
+      <div class="card">
+        <h2 class="font-semibold mb-3"><i class="fas fa-scroll ml-1 text-slate-400"></i> السجل المباشر</h2>
+        <ul id="log-list" class="space-y-1 text-xs font-mono max-h-80 overflow-y-auto" dir="ltr"></ul>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="fixed bottom-4 left-4 hidden bg-slate-800 border border-slate-700 px-4 py-2 rounded shadow text-sm"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
