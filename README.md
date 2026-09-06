@@ -42,6 +42,10 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - لوحة تحكم Web (عربي/RTL) بأزرار سريعة + JSON يدوي + عرض لقطة الشاشة
 
+**طبقة الـ AI**
+- MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
+- `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
+
 **التطبيق (Android)**
 - شاشة إعدادات: رابط السيرفر، التوكن، Device ID، اتصال تلقائي بعد Reboot
 - Foreground Service يحافظ على الاتصال + إشعار دائم مع زر "قطع الاتصال"
@@ -90,6 +94,60 @@ curl -X POST $URL/api/devices/$DEV/macro -H "Authorization: Bearer $TOKEN" \
   -d '{"steps":[{"type":"home"},{"type":"wait","ms":500},{"type":"tap","x":540,"y":1200},{"type":"screenshot"}]}'
 ```
 
+## 🤖 التحكم بواسطة AI Agent (Tool Calling / MCP)
+
+الهاتف مصمم ليكون "يد" لأي نموذج ذكاء اصطناعي. توجد 3 طرق للربط:
+
+### أ) MCP Server (Claude Desktop / Claude Code / Cursor / OpenAI Agents SDK ...)
+```
+URL:    https://device-relay.cracknew37.workers.dev/mcp
+Header: Authorization: Bearer <RELAY_TOKEN>
+```
+مثال إعداد Claude Code:
+```bash
+claude mcp add --transport http device-relay https://device-relay.cracknew37.workers.dev/mcp \
+  --header "Authorization: Bearer <RELAY_TOKEN>"
+```
+مثال `mcp.json` (Cursor وغيره):
+```json
+{ "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
+  "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
+```
+بعدها النموذج يرى الأدوات مباشرة: `capture_screen`, `tap`, `swipe`, `long_press`, `press_back`, `press_home`, `open_recents`, `open_notifications`, `lock_screen`, `wait`, `get_device_status`.
+`capture_screen` يرجّع الصورة كـ MCP image content فيراها النموذج مباشرة.
+
+### ب) مواصفات الأدوات بأي صيغة (عامة — بدون أسرار)
+| الصيغة | الرابط |
+|---|---|
+| OpenAI `tools` | `GET /api/tools/schema?format=openai` |
+| Anthropic `tools` | `GET /api/tools/schema?format=anthropic` |
+| Gemini `function_declarations` | `GET /api/tools/schema?format=gemini` |
+| OpenAPI 3.1 (GPT Actions / أي عميل OpenAPI) | `GET /api/tools/schema?format=openapi` |
+
+تنفيذ الأداة:
+```bash
+# عام
+POST /api/devices/:id/tools/call      {"name":"tap","arguments":{"x":540,"y":990}}
+# أو endpoint لكل أداة (مطابق للـ OpenAPI)
+POST /api/devices/:id/tools/tap       {"x":540,"y":990}
+POST /api/devices/:id/tools/swipe     {"x1":540,"y1":1800,"x2":540,"y2":600,"duration":250}
+POST /api/devices/:id/tools/capture_screen   → {ok, screen:{w,h}, image:{base64,w,h,scale}}
+GET  /api/devices/:id/screenshot.png         → PNG خام + Headers: X-Screen-Width/Height, X-Image-Scale
+```
+> **الإحداثيات دائمًا بمقياس الشاشة الأصلي** (`screen.w × screen.h`). الصورة مصغّرة بعامل `scale`؛ التحويل: `original = image_px / scale`.
+
+### ج) `agent/agent_runner.py` — عميل مستقل يشغّله الـ AI من التيرمينال
+```bash
+cd agent && pip install -r requirements.txt
+export RELAY_URL=https://device-relay.cracknew37.workers.dev RELAY_TOKEN=... OPENAI_API_KEY=...
+
+python agent_runner.py devices                                   # الأجهزة
+python agent_runner.py goal "افتح الإعدادات وفعّل الوضع الليلي"      # AI يقود الهاتف في حلقة حتى DONE
+python agent_runner.py scenario scenarios/game_smoke.json --loops 50   # اختبار تكراري للألعاب
+python agent_runner.py shell                                     # REPL: tap 540 900 / shot / ai: <goal>
+```
+يعمل مع أي نموذج OpenAI-compatible يدعم الرؤية + Tools (`gpt-5`, `gpt-4o`, Ollama `qwen2.5-vl` ...). التفاصيل في [`agent/README.md`](agent/README.md).
+
 ## مرجع الـ API
 
 كل المسارات تحت `/api/*` تتطلب `Authorization: Bearer <RELAY_TOKEN>` (ما عدا `/api/health`).
@@ -103,6 +161,11 @@ curl -X POST $URL/api/devices/$DEV/macro -H "Authorization: Bearer $TOKEN" \
 | GET | `/api/devices/:id/logs` | آخر 100 أمر |
 | POST | `/api/devices/:id/command` | أمر واحد `{ "action": {...}, "wait": true }` |
 | POST | `/api/devices/:id/macro` | سلسلة `{ "steps": [ ... ] }` (حتى 50 خطوة) |
+| GET | `/api/tools/schema?format=` | مواصفات الأدوات (عام) |
+| POST | `/api/devices/:id/tools/call` | تنفيذ أداة AI بالاسم |
+| POST | `/api/devices/:id/tools/:tool` | endpoint لكل أداة |
+| GET | `/api/devices/:id/screenshot.png` | لقطة PNG خام |
+| POST | `/mcp` | MCP Server (JSON-RPC, Streamable HTTP) |
 | WS | `/api/ws/phone/:id` | يتصل به الهاتف (Header Bearer) |
 | WS | `/api/ws/viewer/:id?token=` | بث حي للوحة التحكم |
 
@@ -121,7 +184,10 @@ curl -X POST $URL/api/devices/$DEV/macro -H "Authorization: Bearer $TOKEN" \
 ## بنية المشروع
 ```
 ├── src/
-│   ├── index.ts         # Hono: auth, REST, WS upgrade, static
+│   ├── index.ts         # Hono: auth, REST, WS upgrade, tools, static
+│   ├── tools.ts         # كتالوج الأدوات + مولدات OpenAI/Anthropic/Gemini/OpenAPI
+│   ├── tool-exec.ts     # تنفيذ الأداة → Action على الهاتف
+│   ├── mcp.ts           # MCP Server
 │   ├── device-room.ts   # Durable Object: غرفة WebSocket لكل جهاز
 │   ├── registry.ts      # Durable Object: قائمة الأجهزة
 │   ├── validate.ts      # تحقق JSON
@@ -133,7 +199,10 @@ curl -X POST $URL/api/devices/$DEV/macro -H "Authorization: Bearer $TOKEN" \
 │       ├── service/RelayConnectionService.kt           # WebSocket + Foreground
 │       ├── ui/MainActivity.kt                          # واجهة Compose
 │       └── net/Protocol.kt                             # نماذج JSON
-├── tests/fake-phone.mjs # محاكي هاتف للاختبار
+├── agent/
+│   ├── agent_runner.py  # AI Agent loop / scenario runner / REPL
+│   └── scenarios/       # سيناريوهات JSON
+├── tests/fake-phone.mjs # محاكي هاتف للاختبار (+ mock_llm.py)
 ├── .github/workflows/   # بناء APK + نشر Worker
 └── wrangler.jsonc
 ```
@@ -163,6 +232,6 @@ node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
 - **Platform**: Cloudflare Workers (Durable Objects + Static Assets)
 - **Status**: ✅ Active — https://device-relay.cracknew37.workers.dev
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
-- **Last Updated**: 2026-09-06
+- **Last Updated**: 2026-09-06 (v1.1 — AI tool calling + MCP)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
