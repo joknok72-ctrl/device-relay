@@ -1,5 +1,6 @@
 package com.devicerelay.client.net
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -8,6 +9,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /** JSON wire protocol shared with the Cloudflare Worker (see src/types.ts). */
+@OptIn(ExperimentalSerializationApi::class)
 val RelayJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true
