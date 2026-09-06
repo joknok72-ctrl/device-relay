@@ -8,6 +8,8 @@ import { DeviceRegistry } from './registry'
 import { TOOLS, openaiTools, anthropicTools, geminiTools, openapiSpec } from './tools'
 import { executeTool } from './tool-exec'
 import { handleMcp } from './mcp'
+import { agentBootstrap } from './agent-bootstrap'
+import { PHONE_SH } from './phone-sh'
 
 export { DeviceRoom, DeviceRegistry }
 
@@ -36,6 +38,30 @@ function extractToken(c: { req: { header: (n: string) => string | undefined; que
 
 // Public health check (registered before auth middleware)
 app.get('/api/health', (c) => c.json({ ok: true, ts: Date.now(), service: 'device-relay' }))
+
+/** Token-in-path variants so an agent needs exactly ONE string */
+function tokenOk(c: { env: Bindings }, token: string) {
+  return !!c.env.RELAY_TOKEN && safeEqual(token, c.env.RELAY_TOKEN)
+}
+
+/** Self-describing bootstrap for AI agents: the only thing a human pastes into a new chat. */
+app.get('/agent/:token', async (c) => {
+  const token = c.req.param('token')
+  if (!tokenOk(c, token)) return c.text('unauthorized', 401)
+  const ids = (await registry(c).list()) as string[]
+  const infos = await Promise.all(ids.map(async (id) => (await (await room(c, id).fetch(`https://do/info?deviceId=${id}`)).json()) as DeviceInfo))
+  infos.sort((a, b) => Number(b.online) - Number(a.online))
+  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos), 200, { 'Cache-Control': 'no-store' })
+})
+
+/** MCP with token in the URL (for clients that cannot set headers) */
+app.all('/mcp/:token', (c) => {
+  if (!tokenOk(c, c.req.param('token'))) return c.json({ error: 'unauthorized' }, 401)
+  return handleMcp(c.env, c.req.raw)
+})
+
+/** The helper script, served from the relay itself (no GitHub dependency) */
+app.get('/phone.sh', (c) => c.text(PHONE_SH, 200, { 'Content-Type': 'text/x-shellscript; charset=utf-8', 'Cache-Control': 'no-store' }))
 
 app.use('/mcp', async (c, next) => {
   const expected = c.env.RELAY_TOKEN

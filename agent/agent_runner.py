@@ -15,6 +15,7 @@ Only dependency: `pip install requests`  (optional: pillow for image overlays)
 
 Environment / flags
 -------------------
+  RELAY_BOOTSTRAP  https://device-relay.xxx.workers.dev/agent/<token>   (one URL replaces the next three)
   RELAY_URL      https://device-relay.xxx.workers.dev
   RELAY_TOKEN    bearer token configured on the Worker
   RELAY_DEVICE   device id (defaults to first online device)
@@ -385,6 +386,7 @@ def shell(relay: Relay, agent_factory) -> None:
 # ----------------------------------------------------------------------------- CLI
 def main() -> None:
     ap = argparse.ArgumentParser(description="Autonomous AI agent for Device Relay")
+    ap.add_argument("--bootstrap", default=os.getenv("RELAY_BOOTSTRAP", ""), help="single bootstrap URL: https://host/agent/<token> (sets url+token+device)")
     ap.add_argument("--url", default=os.getenv("RELAY_URL", ""), help="Worker URL")
     ap.add_argument("--token", default=os.getenv("RELAY_TOKEN", ""), help="Relay bearer token")
     ap.add_argument("--device", default=os.getenv("RELAY_DEVICE"), help="device id (default: first online)")
@@ -403,6 +405,14 @@ def main() -> None:
     sub.add_parser("schema", help="print OpenAI tools schema")
 
     args = ap.parse_args()
+    if args.bootstrap:
+        # https://host/agent/<token>  ->  url, token
+        from urllib.parse import urlparse
+        u = urlparse(args.bootstrap)
+        parts = [p for p in u.path.split("/") if p]
+        if len(parts) >= 2 and parts[-2] == "agent":
+            args.url = f"{u.scheme}://{u.netloc}"
+            args.token = parts[-1]
     if not args.url or not args.token:
         sys.exit("set RELAY_URL and RELAY_TOKEN (env or --url/--token)")
 

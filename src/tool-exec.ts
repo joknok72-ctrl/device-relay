@@ -49,6 +49,9 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
     return { ok: true, status: info, screen: info.screen }
   }
 
+  if (mapped.special === 'wait_for') return waitForElement(env, deviceId, args)
+  if (mapped.special === 'find_tap') return findAndTap(env, deviceId, args)
+
   let actionInput: Record<string, unknown> | undefined = mapped.action
   if (mapped.special === 'scroll') {
     const info = await deviceInfo(env, deviceId)
@@ -101,4 +104,65 @@ export async function defaultDevice(env: Bindings & { REGISTRY: DurableObjectNam
     if (info.online) return id
   }
   return ids[0]
+}
+
+// ---------------------------------------------------------------- composite tools
+interface UiElement { i: number; text?: string; desc?: string; hint?: string; id?: string; cx: number; cy: number; [k: string]: unknown }
+
+function matchElement(elements: UiElement[], text?: unknown, elementId?: unknown): UiElement | undefined {
+  const q = typeof text === 'string' && text.trim() ? text.trim().toLowerCase() : undefined
+  const id = typeof elementId === 'string' && elementId.trim() ? elementId.trim().toLowerCase() : undefined
+  if (!q && !id) return undefined
+  const hits = elements.filter((e) => {
+    const idOk = !id || e.id?.toLowerCase() === id
+    const textOk = !q || [e.text, e.desc, e.hint].some((t) => typeof t === 'string' && t.toLowerCase().includes(q))
+    return idOk && textOk
+  })
+  if (q) {
+    const exact = hits.find((e) => [e.text, e.desc].some((t) => typeof t === 'string' && t.trim().toLowerCase() === q))
+    if (exact) return exact
+  }
+  return hits[0]
+}
+
+async function uiElements(env: Bindings, deviceId: string): Promise<{ ok: boolean; error?: string; elements: UiElement[] }> {
+  const r = await executeTool(env, deviceId, 'get_ui_elements', {})
+  const data = r.data as { elements?: UiElement[] } | undefined
+  return { ok: r.ok, error: r.error, elements: data?.elements ?? [] }
+}
+
+async function waitForElement(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  if (!args.text && !args.elementId) return { ok: false, error: 'wait_for_element requires text or elementId' }
+  const timeout = Math.min(Math.max(Number(args.timeoutMs) || 8000, 500), 30_000)
+  const start = Date.now()
+  let polls = 0
+  while (Date.now() - start < timeout) {
+    const ui = await uiElements(env, deviceId)
+    polls++
+    if (!ui.ok) return { ok: false, error: ui.error ?? 'ui dump failed', polls }
+    const hit = matchElement(ui.elements, args.text, args.elementId)
+    if (hit) return { ok: true, found: true, element: hit, waitedMs: Date.now() - start, polls }
+    await new Promise((r) => setTimeout(r, 600))
+  }
+  return { ok: false, found: false, error: `element not found within ${timeout}ms`, waitedMs: Date.now() - start, polls }
+}
+
+async function findAndTap(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  if (!args.text && !args.elementId) return { ok: false, error: 'find_and_tap requires text or elementId' }
+  const maxScrolls = Math.min(Math.max(Number(args.maxScrolls ?? 8), 0), 30)
+  const direction = typeof args.direction === 'string' ? args.direction : 'down'
+  for (let attempt = 0; attempt <= maxScrolls; attempt++) {
+    const ui = await uiElements(env, deviceId)
+    if (!ui.ok) return { ok: false, error: ui.error ?? 'ui dump failed' }
+    const hit = matchElement(ui.elements, args.text, args.elementId)
+    if (hit) {
+      const tapped = await executeTool(env, deviceId, 'tap', { x: hit.cx, y: hit.cy })
+      return { ...tapped, found: true, scrolls: attempt, element: hit }
+    }
+    if (attempt === maxScrolls) break
+    const sc = await executeTool(env, deviceId, 'scroll', { direction, amount: 0.5 })
+    if (!sc.ok) return { ok: false, error: `scroll failed: ${sc.error}`, scrolls: attempt }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return { ok: false, found: false, error: `not found after ${maxScrolls} scrolls`, scrolls: maxScrolls }
 }

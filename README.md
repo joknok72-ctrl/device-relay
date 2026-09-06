@@ -40,7 +40,7 @@
 - انتظار نتيجة التنفيذ من الهاتف (timeout 15s) وإرجاعها في نفس الطلب
 - تنفيذ Macro (سلسلة أوامر + `wait`)
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
-- لوحة تحكم Web (عربي/RTL) بأزرار سريعة + JSON يدوي + عرض لقطة الشاشة
+- صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
@@ -71,9 +71,6 @@ openssl rand -hex 24 | npx wrangler secret put RELAY_TOKEN
 4. ارجع للتطبيق واضغط **اتصال**. يجب أن تظهر الحالة "متصل ✔".
 5. (اختياري) في إعدادات البطارية اجعل التطبيق "غير مقيّد" حتى لا يقتله النظام.
 
-### 3) التحكم من لوحة التحكم
-افتح https://device-relay.cracknew37.workers.dev ، أدخل التوكن، اختر الجهاز، واضغط الأزرار.
-
 ### 4) التحكم من الـ API
 
 ```bash
@@ -94,8 +91,13 @@ curl -X POST $URL/api/devices/$DEV/macro -H "Authorization: Bearer $TOKEN" \
   -d '{"steps":[{"type":"home"},{"type":"wait","ms":500},{"type":"tap","x":540,"y":1200},{"type":"screenshot"}]}'
 ```
 
-## 🧭 تريد أن يتحكم AI في هاتفك من محادثة جديدة؟
-اقرأ **[docs/NEW_CHAT_PROMPT.md](docs/NEW_CHAT_PROMPT.md)** — فيه برومبت جاهز للنسخ + سكريبت `agent/phone.sh` بأمر واحد.
+## 🧭 AI-only: تحكم من محادثة جديدة برابط واحد
+```
+https://device-relay.cracknew37.workers.dev/agent/<RELAY_TOKEN>
+افتح الرابط ونفّذ ما فيه، ثم: <مهمتك>
+```
+السيرفر **يشرح نفسه** للـ AI (بيانات الاتصال + phone.sh + 24 أداة + القواعد + حالة الهاتف). التفاصيل: **[docs/NEW_CHAT_PROMPT.md](docs/NEW_CHAT_PROMPT.md)**.
+لا توجد لوحة تحكم يدوية — الصفحة الرئيسية صفحة حالة فقط.
 
 ## 🤖 التحكم بواسطة AI Agent (Tool Calling / MCP)
 
@@ -116,9 +118,9 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **22 أداة** مباشرة:
+بعدها النموذج يرى **24 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen`, `get_current_app`, `get_device_status`
-- عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`
+- عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `wait_for_element`, `find_and_tap` (تمرير تلقائي حتى يظهر العنصر)
 - تطبيقات: `open_app`, `open_url`, `list_apps`
 - إيماءات: `tap`, `double_tap`, `long_press`, `swipe`, `scroll`
 - نظام: `press_back`, `press_home`, `open_recents`, `open_notifications`, `open_quick_settings`, `lock_screen`, `wake_screen`, `wait`
@@ -173,7 +175,9 @@ python agent_runner.py shell                                     # REPL: tap 540
 | POST | `/api/devices/:id/tools/call` | تنفيذ أداة AI بالاسم |
 | POST | `/api/devices/:id/tools/:tool` | endpoint لكل أداة |
 | GET | `/api/devices/:id/screenshot.png` | لقطة PNG خام |
-| POST | `/mcp` | MCP Server (JSON-RPC, Streamable HTTP) |
+| POST | `/mcp` · `/mcp/:token` | MCP Server (JSON-RPC, Streamable HTTP) |
+| GET | `/agent/:token` | **Bootstrap ذاتي الوصف للـ AI** (بيانات + أدوات + قواعد + حالة) |
+| GET | `/phone.sh` | سكريبت التحكم (يُخدَم من السيرفر) |
 | WS | `/api/ws/phone/:id` | يتصل به الهاتف (Header Bearer) |
 | WS | `/api/ws/viewer/:id?token=` | بث حي للوحة التحكم |
 
@@ -231,7 +235,6 @@ node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
 
 ## غير منجز بعد / خطوات مقترحة
 - [x] ~~كتابة نص، فتح تطبيق، قراءة عناصر الشاشة~~ (v1.2)
-- [ ] `find_text` مع تمرير تلقائي حتى يظهر العنصر
 - [ ] بث الشاشة المستمر (Screen streaming) بدلاً من لقطات
 - [ ] توقيع APK بمفتاح Release حقيقي (حاليًا debug-signed) للنشر في المتاجر
 - [ ] توكن مختلف لكل جهاز / صلاحيات متعددة المستخدمين
@@ -241,6 +244,6 @@ node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
 - **Platform**: Cloudflare Workers (Durable Objects + Static Assets)
 - **Status**: ✅ Active — https://device-relay.cracknew37.workers.dev
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
-- **Last Updated**: 2026-09-06 (v1.2 — UI tree, type_text, open_app, 22 tools)
+- **Last Updated**: 2026-09-06 (v1.3 — AI-only, /agent/:token bootstrap, 24 tools)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.

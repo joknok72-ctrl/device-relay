@@ -140,6 +140,33 @@ export const TOOLS: ToolDef[] = [
       required: ['direction'],
     },
   },
+  {
+    name: 'wait_for_element',
+    description: 'Poll the UI tree until an element whose text/desc/hint contains `text` (or id equals elementId) appears. Returns the element (with cx,cy) or times out. Use after opening apps or submitting forms.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text to wait for (case-insensitive, partial)' },
+        elementId: { type: 'string', description: 'Or a view id to wait for' },
+        timeoutMs: { type: 'integer', description: 'Max wait (default 8000, max 30000)', minimum: 500, maximum: 30000, default: 8000 },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'find_and_tap',
+    description: 'Scroll (down by default) up to maxScrolls times until an element matching text/elementId is visible, then tap it. Great for long settings pages, menus and lists.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text to find (case-insensitive, partial)' },
+        elementId: { type: 'string', description: 'Or a view id' },
+        direction: { type: 'string', description: 'Scroll direction while searching: down (default) | up | left | right' },
+        maxScrolls: { type: 'integer', description: 'Max scroll attempts (default 8)', minimum: 0, maximum: 30, default: 8 },
+      },
+      required: [],
+    },
+  },
   { name: 'wake_screen', description: 'Wake the display if it is off (you may still need to swipe up / unlock).', parameters: { type: 'object', properties: {}, required: [] } },
   { name: 'open_quick_settings', description: 'Open the quick-settings panel (Wi-Fi, Bluetooth, flashlight toggles...).', parameters: { type: 'object', properties: {}, required: [] } },
   { name: 'press_back', description: 'Press the Android BACK button.', parameters: { type: 'object', properties: {}, required: [] } },
@@ -164,7 +191,7 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap'; error?: string } {
   switch (name) {
     case 'capture_screen': return { action: { type: 'screenshot' } }
     case 'tap': return { action: { type: 'tap', x: args.x, y: args.y } }
@@ -186,6 +213,8 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'wake_screen': return { action: { type: 'wake' } }
     case 'open_quick_settings': return { action: { type: 'quick_settings' } }
     case 'scroll': return { special: 'scroll' }
+    case 'wait_for_element': return { special: 'wait_for' }
+    case 'find_and_tap': return { special: 'find_tap' }
     case 'wait': return { special: 'wait' }
     case 'get_device_status': return { special: 'status' }
     default: return { error: `unknown tool: ${name}` }

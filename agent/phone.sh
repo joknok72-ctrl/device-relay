@@ -13,6 +13,8 @@
 #   ./phone.sh swipe 540 1800 540 600 [ms]
 #   ./phone.sh scroll down|up|left|right
 #   ./phone.sh back | home | recents | notif | qs | lock | wake | app | apps | status
+#   ./phone.sh waitfor "Inbox" [timeoutMs]  # wait until element text appears
+#   ./phone.sh find "Privacy" [down|up]     # scroll until text visible, then tap it
 #   ./phone.sh call <tool> '<json args>'   # any tool
 set -euo pipefail
 : "${RELAY_URL:?set RELAY_URL}" "${RELAY_TOKEN:?set RELAY_TOKEN}"
@@ -38,13 +40,14 @@ import json,sys
 for x in json.load(sys.stdin)["devices"]: print(("● " if x["online"] else "○ ")+x["deviceId"], x.get("model",""), x.get("screen",""), "a11y="+str(x.get("accessibilityEnabled")))' ;;
   status)  d=$(dev); curl -s "${AUTH[@]}" "$RELAY_URL/api/devices/$d" | pretty ;;
   ui)      call get_ui_elements | python3 -c '
-import json,sys; r=json.load(sys.stdin)
+import json,sys; r=json.load(sys.stdin); flt=" ".join(sys.argv[1:]).lower()
 if not r.get("ok"): print(r); sys.exit(1)
 d=r["data"]; print("app: %s (%s)  elements: %s" % (d.get("label"), d.get("package"), d.get("count")))
 for e in d.get("elements",[]):
+    if flt and flt not in json.dumps(e, ensure_ascii=False).lower(): continue
     f="".join(c for c,k in (("C","clickable"),("E","editable"),("S","scrollable")) if e.get(k))
     label=(e.get("text") or e.get("desc") or e.get("hint") or "")[:60]
-    print("  [%3d] (%4d,%4d) %-3s %-14s %-24s %r" % (e["i"], e["cx"], e["cy"], f, e.get("cls",""), e.get("id",""), label))' ;;
+    print("  [%3d] (%4d,%4d) %-3s %-14s %-24s %r" % (e["i"], e["cx"], e["cy"], f, e.get("cls",""), e.get("id",""), label))' "$@" ;;
   shot)    out="${1:-screen.png}"; d=$(dev); curl -sf "${AUTH[@]}" -D /dev/stderr -o "$out" "$RELAY_URL/api/devices/$d/screenshot.png" 2>&1 | grep -i "^x-screen\|^x-image" || true; echo "saved $out" ;;
   tap)     call tap "{\"x\":$1,\"y\":$2}" | pretty ;;
   dtap)    call double_tap "{\"x\":$1,\"y\":$2}" | pretty ;;
@@ -54,6 +57,8 @@ for e in d.get("elements",[]):
   type)    txt="$1"; sub=false; [[ "${2:-}" == "submit" ]] && sub=true
            call type_text "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1],"submit":sys.argv[2]=="true"}))' "$txt" "$sub")" | pretty ;;
   open)    call open_app "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1]}))' "$*")" | pretty ;;
+  waitfor) call wait_for_element "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1],"timeoutMs":int(sys.argv[2])}))' "$1" "${2:-8000}")" | pretty ;;
+  find)    call find_and_tap "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1],"direction":sys.argv[2]}))' "$1" "${2:-down}")" | pretty ;;
   url)     call open_url "{\"url\":\"$1\"}" | pretty ;;
   swipe)   call swipe "{\"x1\":$1,\"y1\":$2,\"x2\":$3,\"y2\":$4,\"duration\":${5:-300}}" | pretty ;;
   scroll)  call scroll "{\"direction\":\"${1:-down}\",\"amount\":${2:-0.5}}" | pretty ;;
@@ -70,5 +75,5 @@ for e in d.get("elements",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,20p' "$0" ;;
+  *) sed -n '2,22p' "$0" ;;
 esac
