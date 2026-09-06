@@ -4,6 +4,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -26,6 +27,13 @@ data class Action(
     val x2: Float? = null,
     val y2: Float? = null,
     val duration: Long? = null,
+    // extended actions
+    val text: String? = null,        // type_text, tap_element (text/desc match), open_app (package or label)
+    val elementId: String? = null,   // tap_element by view id
+    val url: String? = null,         // open_url
+    val clear: Boolean? = null,      // type_text: clear field first
+    val submit: Boolean? = null,     // type_text: press IME action after typing
+    val index: Int? = null,          // tap_element: nth match
 )
 
 @Serializable
@@ -44,6 +52,8 @@ data class ResultMessage(
     val error: String? = null,
     val screenshot: String? = null,
     val durationMs: Long? = null,
+    /** Arbitrary structured payload (ui elements, app list, ...) */
+    val data: JsonElement? = null,
 )
 
 @Serializable

@@ -164,7 +164,7 @@ class RelayConnectionService : Service() {
             val dur = SystemClock.elapsedRealtime() - t0
             when (outcome) {
                 is AutomationAccessibilityService.Outcome.Ok ->
-                    ResultMessage(id = cmd.id, ok = true, screenshot = outcome.screenshotBase64, durationMs = dur)
+                    ResultMessage(id = cmd.id, ok = true, screenshot = outcome.screenshotBase64, durationMs = dur, data = outcome.data)
                 is AutomationAccessibilityService.Outcome.Fail ->
                     ResultMessage(id = cmd.id, ok = false, error = outcome.error, durationMs = dur)
                 null -> ResultMessage(id = cmd.id, ok = false, error = "execution timeout", durationMs = dur)
@@ -174,6 +174,7 @@ class RelayConnectionService : Service() {
         val summary = buildString {
             append(cmd.action.type)
             cmd.action.x?.let { append(" (${it.toInt()},${cmd.action.y?.toInt()})") }
+            cmd.action.text?.let { append(" \"${it.take(30)}\"") }
             cmd.action.x1?.let { append(" (${it.toInt()},${cmd.action.y1?.toInt()})→(${cmd.action.x2?.toInt()},${cmd.action.y2?.toInt()})") }
             if (!result.ok) append(" ✖ ${result.error}") else append(" ✔ ${result.durationMs}ms")
         }

@@ -18,10 +18,21 @@ export type Action =
   | { type: 'lock' }
   | { type: 'screenshot' }
   | { type: 'ping' }
+  | { type: 'double_tap'; x: number; y: number }
+  | { type: 'quick_settings' }
+  | { type: 'wake' }
+  | { type: 'ui_dump' }
+  | { type: 'tap_element'; text?: string; elementId?: string; index?: number }
+  | { type: 'type_text'; text: string; elementId?: string; clear?: boolean; submit?: boolean }
+  | { type: 'open_app'; text: string }
+  | { type: 'open_url'; url: string }
+  | { type: 'list_apps' }
+  | { type: 'current_app' }
 
 export const ACTION_TYPES = [
   'tap', 'long_press', 'swipe', 'back', 'home', 'recents',
-  'notifications', 'lock', 'screenshot', 'ping',
+  'notifications', 'lock', 'screenshot', 'ping', 'double_tap', 'quick_settings', 'wake',
+  'ui_dump', 'tap_element', 'type_text', 'open_app', 'open_url', 'list_apps', 'current_app',
 ] as const
 
 /** Message sent server -> phone */
@@ -41,6 +52,8 @@ export interface ResultMessage {
   /** base64 PNG for screenshot actions */
   screenshot?: string
   durationMs?: number
+  /** structured payload (ui elements, app list, ...) */
+  data?: unknown
 }
 
 /** Periodic status from phone */

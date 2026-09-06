@@ -22,8 +22,33 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
           duration: isNum(a.duration) ? a.duration : 300,
         },
       }
-    case 'back': case 'home': case 'recents': case 'notifications':
-    case 'lock': case 'screenshot': case 'ping':
+    case 'double_tap':
+      if (!isNum(a.x) || !isNum(a.y)) return { error: 'double_tap requires numeric x,y' }
+      return { action: { type: 'double_tap', x: a.x, y: a.y } }
+    case 'tap_element': {
+      const text = typeof a.text === 'string' && a.text.trim() ? a.text.trim().slice(0, 200) : undefined
+      const elementId = typeof a.elementId === 'string' && a.elementId.trim() ? a.elementId.trim().slice(0, 200) : undefined
+      if (!text && !elementId) return { error: 'tap_element requires text or elementId' }
+      return { action: { type: 'tap_element', text, elementId, index: isNum(a.index) ? a.index : 0 } }
+    }
+    case 'type_text': {
+      if (typeof a.text !== 'string') return { error: 'type_text requires text' }
+      return {
+        action: {
+          type: 'type_text', text: a.text.slice(0, 5000),
+          elementId: typeof a.elementId === 'string' ? a.elementId : undefined,
+          clear: a.clear !== false, submit: a.submit === true,
+        },
+      }
+    }
+    case 'open_app':
+      if (typeof a.text !== 'string' || !a.text.trim()) return { error: 'open_app requires text (app name or package)' }
+      return { action: { type: 'open_app', text: a.text.trim().slice(0, 200) } }
+    case 'open_url':
+      if (typeof a.url !== 'string' || !a.url.trim()) return { error: 'open_url requires url' }
+      return { action: { type: 'open_url', url: a.url.trim().slice(0, 2000) } }
+    case 'back': case 'home': case 'recents': case 'notifications': case 'quick_settings': case 'wake':
+    case 'lock': case 'screenshot': case 'ping': case 'ui_dump': case 'list_apps': case 'current_app':
       return { action: { type: a.type } as Action }
     default:
       return { error: `unknown action type: ${String(a.type)}` }

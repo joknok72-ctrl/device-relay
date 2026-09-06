@@ -49,8 +49,8 @@
 **التطبيق (Android)**
 - شاشة إعدادات: رابط السيرفر، التوكن، Device ID، اتصال تلقائي بعد Reboot
 - Foreground Service يحافظ على الاتصال + إشعار دائم مع زر "قطع الاتصال"
-- AccessibilityService رسمي ينفذ: `tap`, `long_press`, `swipe`, `back`, `home`, `recents`, `notifications`, `lock`, `screenshot`, `ping`
-- لا يقرأ محتوى الشاشة (`canRetrieveWindowContent=false`) — ينفذ حركات فقط
+- AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
+- **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - سجل مباشر داخل التطبيق لكل أمر وزمن تنفيذه
 
 ## دليل الاستخدام (خطوة بخطوة)
@@ -94,6 +94,9 @@ curl -X POST $URL/api/devices/$DEV/macro -H "Authorization: Bearer $TOKEN" \
   -d '{"steps":[{"type":"home"},{"type":"wait","ms":500},{"type":"tap","x":540,"y":1200},{"type":"screenshot"}]}'
 ```
 
+## 🧭 تريد أن يتحكم AI في هاتفك من محادثة جديدة؟
+اقرأ **[docs/NEW_CHAT_PROMPT.md](docs/NEW_CHAT_PROMPT.md)** — فيه برومبت جاهز للنسخ + سكريبت `agent/phone.sh` بأمر واحد.
+
 ## 🤖 التحكم بواسطة AI Agent (Tool Calling / MCP)
 
 الهاتف مصمم ليكون "يد" لأي نموذج ذكاء اصطناعي. توجد 3 طرق للربط:
@@ -113,7 +116,12 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى الأدوات مباشرة: `capture_screen`, `tap`, `swipe`, `long_press`, `press_back`, `press_home`, `open_recents`, `open_notifications`, `lock_screen`, `wait`, `get_device_status`.
+بعدها النموذج يرى **22 أداة** مباشرة:
+- مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen`, `get_current_app`, `get_device_status`
+- عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`
+- تطبيقات: `open_app`, `open_url`, `list_apps`
+- إيماءات: `tap`, `double_tap`, `long_press`, `swipe`, `scroll`
+- نظام: `press_back`, `press_home`, `open_recents`, `open_notifications`, `open_quick_settings`, `lock_screen`, `wake_screen`, `wait`
 `capture_screen` يرجّع الصورة كـ MCP image content فيراها النموذج مباشرة.
 
 ### ب) مواصفات الأدوات بأي صيغة (عامة — بدون أسرار)
@@ -222,7 +230,8 @@ node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
 - لا توجد قاعدة بيانات خارجية؛ التخزين داخل Durable Objects (SQLite-backed).
 
 ## غير منجز بعد / خطوات مقترحة
-- [ ] أوامر إضافية: كتابة نص (`type`), فتح تطبيق بالـ package name, قراءة نص من الشاشة (تحتاج `canRetrieveWindowContent`)
+- [x] ~~كتابة نص، فتح تطبيق، قراءة عناصر الشاشة~~ (v1.2)
+- [ ] `find_text` مع تمرير تلقائي حتى يظهر العنصر
 - [ ] بث الشاشة المستمر (Screen streaming) بدلاً من لقطات
 - [ ] توقيع APK بمفتاح Release حقيقي (حاليًا debug-signed) للنشر في المتاجر
 - [ ] توكن مختلف لكل جهاز / صلاحيات متعددة المستخدمين
@@ -232,6 +241,6 @@ node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
 - **Platform**: Cloudflare Workers (Durable Objects + Static Assets)
 - **Status**: ✅ Active — https://device-relay.cracknew37.workers.dev
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
-- **Last Updated**: 2026-09-06 (v1.1 — AI tool calling + MCP)
+- **Last Updated**: 2026-09-06 (v1.2 — UI tree, type_text, open_app, 22 tools)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.

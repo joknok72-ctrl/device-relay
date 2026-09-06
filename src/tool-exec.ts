@@ -49,7 +49,25 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
     return { ok: true, status: info, screen: info.screen }
   }
 
-  const { action, error } = parseAction(mapped.action)
+  let actionInput: Record<string, unknown> | undefined = mapped.action
+  if (mapped.special === 'scroll') {
+    const info = await deviceInfo(env, deviceId)
+    const w = info.screen?.w ?? 1080
+    const h = info.screen?.h ?? 2400
+    const amt = Math.min(Math.max(Number(args?.amount) || 0.5, 0.1), 0.9)
+    const cx = Math.round(w / 2), cy = Math.round(h / 2)
+    const dy = Math.round(h * amt / 2), dx = Math.round(w * amt / 2)
+    const dir = String(args?.direction ?? 'down').toLowerCase()
+    const map: Record<string, [number, number, number, number]> = {
+      down: [cx, cy + dy, cx, cy - dy], up: [cx, cy - dy, cx, cy + dy],
+      right: [cx + dx, cy, cx - dx, cy], left: [cx - dx, cy, cx + dx, cy],
+    }
+    const c = map[dir]
+    if (!c) return { ok: false, error: 'direction must be down|up|left|right' }
+    actionInput = { type: 'swipe', x1: c[0], y1: c[1], x2: c[2], y2: c[3], duration: 350 }
+  }
+
+  const { action, error } = parseAction(actionInput)
   if (!action) return { ok: false, error }
 
   const r = await room(env, deviceId).fetch(`https://do/command?deviceId=${deviceId}`, {
@@ -57,9 +75,10 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, wait: true }),
   })
-  const res = (await r.json()) as { ok: boolean; error?: string; durationMs?: number; screenshot?: string }
+  const res = (await r.json()) as { ok: boolean; error?: string; durationMs?: number; screenshot?: string; data?: unknown }
 
   const out: ToolResult = { ok: res.ok, error: res.error, durationMs: res.durationMs }
+  if (res.data !== undefined) out.data = res.data
   if (name === 'capture_screen') {
     const info = await deviceInfo(env, deviceId)
     out.screen = info.screen

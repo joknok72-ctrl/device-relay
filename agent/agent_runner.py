@@ -117,18 +117,27 @@ class Relay:
 
 # ----------------------------------------------------------------------------- AI agent (OpenAI-compatible)
 SYSTEM_PROMPT = """You are an autonomous QA/automation agent operating a REAL Android phone through tools.
-You see the screen via capture_screen and act with tap / swipe / long_press / press_back / press_home / wait.
+
+Perception (prefer in this order):
+  - get_ui_elements: exact text, ids and center coordinates (cx,cy) of every visible element. Fast, precise, cheap. Use it FIRST.
+  - capture_screen: a PNG when visuals matter (games, images, canvas/WebView apps, or when the UI tree is empty).
+Action (prefer in this order):
+  - open_app(name) to launch apps instead of hunting icons on the launcher.
+  - tap_element(text=...) / tap_element(elementId=...) for buttons, links, list rows, tabs.
+  - type_text(text, submit) after focusing an input (tap_element on the field or its hint).
+  - tap(x,y) / swipe / scroll / double_tap / long_press only when there is no element to target (games, canvases).
+  - press_back / press_home / open_notifications / wait.
 
 Rules:
-1. ALWAYS look at the latest screenshot before acting. After every action that changes the screen, call capture_screen again.
-2. Coordinates MUST be in ORIGINAL screen pixels. The screenshot you receive is downscaled by `scale`;
-   convert: original_x = image_x / scale, original_y = image_y / scale. The tool result tells you screen.w/screen.h and scale.
-3. Tap the CENTER of buttons. If a tap did nothing, re-check the screenshot before repeating; try a slightly different point or wait.
-4. Use wait(800-2000) after taps that open apps or load content.
-5. Be efficient: one or two tool calls per turn, then verify.
-6. When the goal is fully achieved, reply with a short text starting with "DONE:" and a summary of what you observed.
-   If it is impossible or you are stuck after several attempts, reply starting with "FAILED:" and explain why.
-Never invent screen content. Never claim success without visual confirmation."""
+1. Observe before acting. After every action that changes the screen, re-observe (get_ui_elements or capture_screen).
+2. Coordinates MUST be in ORIGINAL screen pixels (screen.w x screen.h). Screenshots are downscaled by `scale`:
+   original = image_px / scale. Elements from get_ui_elements are already in original pixels.
+3. If an action did nothing, re-observe before repeating; try another element/point or wait(800-1500) for loading.
+4. Handle interruptions (permission dialogs, popups, cookie banners) sensibly, then continue toward the goal.
+5. Be efficient: 1-3 tool calls per turn, then verify.
+6. When the goal is fully achieved, reply with text starting "DONE:" + what you observed as evidence.
+   If impossible or stuck after several attempts, reply starting "FAILED:" + why.
+Never invent screen content. Never claim success without observed confirmation."""
 
 
 class AIAgent:
@@ -165,7 +174,12 @@ class AIAgent:
         dt = int((time.time() - t0) * 1000)
         image = res.pop("image", None)
         status = "✔" if res.get("ok") else "✖"
-        log(f"  {status} {name}({json.dumps(args)}) → {json.dumps({k: v for k, v in res.items() if k != 'status'})} [{dt}ms]", "g" if res.get("ok") else "r")
+        brief = {k: v for k, v in res.items() if k not in ("status", "data")}
+        if isinstance(res.get("data"), dict) and "elements" in res["data"]:
+            brief["elements"] = res["data"].get("count")
+        elif "data" in res:
+            brief["data"] = res["data"]
+        log(f"  {status} {name}({json.dumps(args, ensure_ascii=False)}) → {json.dumps(brief, ensure_ascii=False)[:300]} [{dt}ms]", "g" if res.get("ok") else "r")
 
         # tool message (text) ...
         tool_msg = {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(res)}
@@ -289,7 +303,10 @@ def run_scenario(relay: Relay, path: str, loops: int = 1, stop_on_fail: bool = T
 
 # ----------------------------------------------------------------------------- interactive shell
 def shell(relay: Relay, agent_factory) -> None:
-    print("Device Relay shell. Commands: shot | tap X Y | swipe X1 Y1 X2 Y2 [ms] | long X Y [ms] | back | home | recents | notif | lock | wait MS | status | devices | use ID | ai: <goal> | quit")
+    print("Device Relay shell. Commands:\n"
+          "  shot | ui | ui <filter> | tap X Y | dtap X Y | tapel <text> | tapid <id> | type <text> | type! <text> (submit)\n"
+          "  swipe X1 Y1 X2 Y2 [ms] | scroll down|up|left|right | long X Y [ms] | open <app> | url <url> | apps | app\n"
+          "  back | home | recents | notif | qs | lock | wake | wait MS | status | devices | use ID | ai: <goal> | quit")
     while True:
         try:
             line = input(f"{C['b']}{relay.device}>{C['x']} ").strip()
@@ -309,6 +326,38 @@ def shell(relay: Relay, agent_factory) -> None:
             if cmd == "shot":
                 res = relay.save_screenshot("screen.png")
                 print(json.dumps({k: v for k, v in res.items() if k != "image"}), "→ screen.png")
+            elif cmd == "ui":
+                res = relay.call("get_ui_elements")
+                d = res.get("data") or {}
+                flt = " ".join(a).lower()
+                print(f"app: {d.get('label')} ({d.get('package')})  elements: {d.get('count')}")
+                for e in d.get("elements", []):
+                    label = e.get("text") or e.get("desc") or e.get("hint") or ""
+                    if flt and flt not in json.dumps(e, ensure_ascii=False).lower():
+                        continue
+                    flags = "".join(f for f, k in (("C", "clickable"), ("E", "editable"), ("S", "scrollable")) if e.get(k))
+                    print(f"  [{e['i']:3}] ({e['cx']:4},{e['cy']:4}) {flags:3} {e.get('cls',''):14} {e.get('id','') :24} {label[:50]!r}")
+            elif cmd == "dtap":
+                print(relay.call("double_tap", {"x": int(a[0]), "y": int(a[1])}))
+            elif cmd == "tapel":
+                print(relay.call("tap_element", {"text": " ".join(a)}))
+            elif cmd == "tapid":
+                print(relay.call("tap_element", {"elementId": a[0]}))
+            elif cmd in ("type", "type!"):
+                print(relay.call("type_text", {"text": line.split(" ", 1)[1] if " " in line else "", "submit": cmd == "type!"}))
+            elif cmd == "scroll":
+                print(relay.call("scroll", {"direction": a[0] if a else "down"}))
+            elif cmd == "open":
+                print(relay.call("open_app", {"text": " ".join(a)}))
+            elif cmd == "url":
+                print(relay.call("open_url", {"url": a[0]}))
+            elif cmd == "apps":
+                for x in (relay.call("list_apps").get("data") or []):
+                    print(f"  {x['label']:30} {x['package']}")
+            elif cmd == "app":
+                print(relay.call("get_current_app"))
+            elif cmd in ("qs", "wake"):
+                print(relay.call({"qs": "open_quick_settings", "wake": "wake_screen"}[cmd]))
             elif cmd == "tap":
                 print(relay.call("tap", {"x": int(a[0]), "y": int(a[1])}))
             elif cmd == "long":
@@ -346,6 +395,7 @@ def main() -> None:
 
     sub.add_parser("devices", help="list phones")
     p = sub.add_parser("shot", help="save a screenshot"); p.add_argument("--out", default="screen.png")
+    sub.add_parser("ui", help="dump visible UI elements (text, id, coordinates)")
     p = sub.add_parser("call", help="call one tool"); p.add_argument("name"); p.add_argument("json_args", nargs="?", default="{}")
     p = sub.add_parser("goal", help="AI drives the phone toward a goal"); p.add_argument("text"); p.add_argument("--max-steps", type=int, default=20)
     p = sub.add_parser("scenario", help="run deterministic JSON scenario"); p.add_argument("file"); p.add_argument("--loops", type=int, default=1); p.add_argument("--continue-on-fail", action="store_true")
@@ -373,6 +423,8 @@ def main() -> None:
     elif args.cmd == "shot":
         res = relay.save_screenshot(args.out)
         print(json.dumps({k: v for k, v in res.items() if k != "image"}), "→", args.out if res.get("ok") else "")
+    elif args.cmd == "ui":
+        print(json.dumps(relay.call("get_ui_elements").get("data"), indent=1, ensure_ascii=False))
     elif args.cmd == "call":
         print(json.dumps({k: (v if k != "image" else "<image>") for k, v in relay.call(args.name, json.loads(args.json_args)).items()}))
     elif args.cmd == "goal":

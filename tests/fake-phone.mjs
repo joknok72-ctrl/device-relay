@@ -18,7 +18,25 @@ ws.onmessage = (ev) => {
   const t0 = Date.now()
   setTimeout(() => {
     const res = { kind: 'result', id: m.id, ok: true, durationMs: Date.now() - t0 }
-    if (m.action.type === 'screenshot') res.screenshot = FAKE_SCREEN
+    const a = m.action
+    if (a.type === 'screenshot') res.screenshot = FAKE_SCREEN
+    if (a.type === 'ui_dump') res.data = { package: 'com.example.spacerunner', label: 'Space Runner', count: 5, elements: [
+      { i: 0, text: 'SPACE RUNNER', cls: 'TextView', cx: 540, cy: 270, bounds: '300,240,780,300' },
+      { i: 1, text: 'PLAY', id: 'btn_play', cls: 'Button', cx: 540, cy: 990, bounds: '180,900,900,1080', clickable: true },
+      { i: 2, text: 'SETTINGS', id: 'btn_settings', cls: 'Button', cx: 540, cy: 1270, bounds: '180,1180,900,1360', clickable: true },
+      { i: 3, text: 'SHOP', id: 'btn_shop', cls: 'Button', cx: 540, cy: 1550, bounds: '180,1460,900,1640', clickable: true },
+      { i: 4, hint: 'Player name', id: 'edit_name', cls: 'EditText', cx: 540, cy: 2240, bounds: '40,2160,1040,2320', editable: true, clickable: true },
+    ] }
+    if (a.type === 'tap_element') {
+      const q = (a.text || a.elementId || '').toLowerCase()
+      const hit = ['play', 'settings', 'shop', 'btn_play', 'btn_settings', 'btn_shop', 'edit_name'].find((x) => x.includes(q))
+      if (hit) res.data = { matched: 1, index: 0, text: hit.toUpperCase(), cx: 540, cy: 990, method: 'action_click' }
+      else { res.ok = false; res.error = `no element matching ${a.text || a.elementId}` }
+    }
+    if (a.type === 'type_text') res.data = { typed: a.text.length, submitted: !!a.submit }
+    if (a.type === 'open_app') res.data = { package: 'com.android.chrome', label: 'Chrome' }
+    if (a.type === 'list_apps') res.data = [{ package: 'com.android.chrome', label: 'Chrome' }, { package: 'com.android.settings', label: 'Settings' }]
+    if (a.type === 'current_app') res.data = { package: 'com.example.spacerunner', label: 'Space Runner' }
     ws.send(JSON.stringify(res))
   }, 50)
 }

@@ -5,7 +5,7 @@ const COMMAND_TIMEOUT_MS = 15_000
 const MAX_LOGS = 100
 
 interface Pending {
-  resolve: (r: { ok: boolean; error?: string; screenshot?: string; durationMs?: number }) => void
+  resolve: (r: { ok: boolean; error?: string; screenshot?: string; durationMs?: number; data?: unknown }) => void
   timer: ReturnType<typeof setTimeout>
   sentAt: number
 }
@@ -147,7 +147,7 @@ export class DeviceRoom extends DurableObject {
       return { id, ok: true, queued: true }
     }
 
-    const result = await new Promise<{ ok: boolean; error?: string; screenshot?: string; durationMs?: number }>((resolve) => {
+    const result = await new Promise<{ ok: boolean; error?: string; screenshot?: string; durationMs?: number; data?: unknown }>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         resolve({ ok: false, error: 'timeout waiting for device' })
@@ -200,6 +200,7 @@ export class DeviceRoom extends DurableObject {
             ok: msg.ok,
             error: msg.error,
             screenshot: msg.screenshot,
+            data: msg.data,
             durationMs: msg.durationMs ?? Date.now() - p.sentAt,
           })
         } else {
