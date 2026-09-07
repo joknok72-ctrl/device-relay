@@ -114,6 +114,11 @@ class AutomationAccessibilityService : AccessibilityService() {
         "pixel" -> pixels(action.points)
         "find_color" -> findColor(action)
         "screen_hash" -> screenHash()
+        // v1.6
+        "screen_diff" -> screenDiff(action)
+        "watch_color" -> watchColor(action)
+        "wait_pixel" -> waitPixel(action)
+        "find_image" -> findImage(action)
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -410,6 +415,161 @@ class AutomationAccessibilityService : AccessibilityService() {
         var bits = 0; var n = 0
         for (g in grey) { bits = (bits shl 1) or (if (g > avg) 1 else 0); n++; if (n == 4) { sb.append(Integer.toHexString(bits)); bits = 0; n = 0 } }
         return Outcome.Ok(data = buildJsonObject { put("hash", sb.toString()); put("w", bmp.width); put("h", bmp.height) })
+    }
+
+    // ---------------------------------------------------------------- v1.6 reflexes (phone waits/reacts; agent does not poll)
+
+    /** Shared colour-match scan. Returns (count, cx, cy, bounds) for pixels within tol of target in region. */
+    private fun scanColor(bmp: Bitmap, hex: String, tol: Int, region: Region?): JsonObject {
+        val target = hex.removePrefix("#").toIntOrNull(16) ?: 0
+        val tr = (target shr 16) and 0xFF; val tg = (target shr 8) and 0xFF; val tb = target and 0xFF
+        val rx = region?.x?.coerceIn(0, bmp.width - 1) ?: 0; val ry = region?.y?.coerceIn(0, bmp.height - 1) ?: 0
+        val rw = region?.w?.coerceIn(1, bmp.width - rx) ?: (bmp.width - rx); val rh = region?.h?.coerceIn(1, bmp.height - ry) ?: (bmp.height - ry)
+        val stepPx = if (rw * rh > 1_500_000) 3 else if (rw * rh > 400_000) 2 else 1
+        val row = IntArray(rw)
+        var minX = Int.MAX_VALUE; var minY = Int.MAX_VALUE; var maxX = -1; var maxY = -1; var count = 0L; var sumX = 0L; var sumY = 0L
+        var y = ry
+        while (y < ry + rh) {
+            bmp.getPixels(row, 0, rw, rx, y, rw, 1)
+            var i = 0
+            while (i < rw) {
+                val c = row[i]
+                if (Math.abs(((c shr 16) and 0xFF) - tr) <= tol && Math.abs(((c shr 8) and 0xFF) - tg) <= tol && Math.abs((c and 0xFF) - tb) <= tol) {
+                    val x = rx + i; count++; sumX += x; sumY += y
+                    if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y
+                }
+                i += stepPx
+            }
+            y += stepPx
+        }
+        return buildJsonObject {
+            put("found", count > 0); put("count", count * stepPx * stepPx)
+            if (count > 0) { put("cx", (sumX / count).toInt()); put("cy", (sumY / count).toInt()); put("bounds", buildJsonObject { put("x", minX); put("y", minY); put("w", maxX - minX + 1); put("h", maxY - minY + 1) }) }
+        }
+    }
+
+    private suspend fun watchColor(a: Action): Outcome {
+        val color = a.color ?: return Outcome.Fail("watch_color requires color")
+        val tol = (a.tolerance ?: 24).coerceIn(0, 128); val appear = a.appear != false
+        val timeout = (a.timeoutMs ?: 5000L).coerceIn(200, 30_000); val interval = (a.intervalMs ?: 150L).coerceIn(50, 2000)
+        val minCount = (a.minCount ?: 20).coerceAtLeast(1)
+        val t0 = android.os.SystemClock.elapsedRealtime(); var polls = 0; var last: JsonObject? = null
+        while (android.os.SystemClock.elapsedRealtime() - t0 < timeout) {
+            val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+            val r = scanColor(bmp, color, tol, a.region); polls++; last = r
+            val present = (r["count"]?.toString()?.toLongOrNull() ?: 0L) >= minCount
+            if (present == appear) return Outcome.Ok(data = buildJsonObject { put("matched", true); put("appear", appear); put("waitedMs", android.os.SystemClock.elapsedRealtime() - t0); put("polls", polls); for ((k, v) in r) put(k, v) })
+            delay(interval)
+        }
+        return Outcome.Fail("color ${if (appear) "did not appear" else "did not disappear"} within ${timeout}ms (polls=$polls, lastCount=${last?.get("count")})")
+    }
+
+    private suspend fun waitPixel(a: Action): Outcome {
+        val x = a.x?.toInt() ?: return Outcome.Fail("missing x"); val y = a.y?.toInt() ?: return Outcome.Fail("missing y")
+        val target = a.color?.removePrefix("#")?.toIntOrNull(16) ?: return Outcome.Fail("wait_pixel requires color")
+        val tr = (target shr 16) and 0xFF; val tg = (target shr 8) and 0xFF; val tb = target and 0xFF
+        val tol = (a.tolerance ?: 24).coerceIn(0, 128); val appear = a.appear != false
+        val timeout = (a.timeoutMs ?: 5000L).coerceIn(200, 30_000); val interval = (a.intervalMs ?: 100L).coerceIn(50, 2000)
+        val t0 = android.os.SystemClock.elapsedRealtime(); var polls = 0; var lastHex = ""
+        while (android.os.SystemClock.elapsedRealtime() - t0 < timeout) {
+            val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+            val c = bmp.getPixel(x.coerceIn(0, bmp.width - 1), y.coerceIn(0, bmp.height - 1)); polls++
+            lastHex = String.format("#%06x", c and 0xFFFFFF)
+            val match = Math.abs(((c shr 16) and 0xFF) - tr) <= tol && Math.abs(((c shr 8) and 0xFF) - tg) <= tol && Math.abs((c and 0xFF) - tb) <= tol
+            if (match == appear) return Outcome.Ok(data = buildJsonObject { put("matched", true); put("appear", appear); put("hex", lastHex); put("waitedMs", android.os.SystemClock.elapsedRealtime() - t0); put("polls", polls); put("cx", x); put("cy", y) })
+            delay(interval)
+        }
+        return Outcome.Fail("pixel ${if (appear) "did not match" else "kept matching"} within ${timeout}ms (last=$lastHex, polls=$polls)")
+    }
+
+    /** Frame-to-frame change map. Keeps a small grey thumbnail of the previous frame. */
+    private var diffPrev: IntArray? = null
+    private var diffPrevCols = 0; private var diffPrevRows = 0
+    private suspend fun screenDiff(a: Action): Outcome {
+        val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        val cell = (a.cell ?: 60).coerceIn(20, 400); val thr = (a.threshold?.toInt() ?: 32).coerceIn(4, 128)
+        val cols = (bmp.width + cell - 1) / cell; val rows = (bmp.height + cell - 1) / cell
+        val small = Bitmap.createScaledBitmap(bmp, cols, rows, true)
+        val px = IntArray(cols * rows); small.getPixels(px, 0, cols, 0, 0, cols, rows)
+        val grey = IntArray(cols * rows) { val c = px[it]; (((c shr 16) and 0xFF) * 3 + ((c shr 8) and 0xFF) * 6 + (c and 0xFF)) / 10 }
+        val prev = diffPrev
+        diffPrev = grey; diffPrevCols = cols; diffPrevRows = rows
+        if (prev == null || prev.size != grey.size) return Outcome.Ok(data = buildJsonObject { put("baseline", true); put("changedPct", 0); put("cells", cols * rows) })
+        // changed cells → merge into regions (simple row-scan of flagged cells into boxes)
+        val changed = BooleanArray(grey.size) { Math.abs(grey[it] - prev[it]) >= thr }
+        val n = changed.count { it }
+        val regions = buildJsonArray {
+            val seen = BooleanArray(grey.size)
+            var emitted = 0
+            for (idx in changed.indices) {
+                if (!changed[idx] || seen[idx] || emitted >= 12) continue
+                // flood fill 4-neighbour
+                var minC = Int.MAX_VALUE; var minR = Int.MAX_VALUE; var maxC = -1; var maxR = -1; var size = 0
+                val stack = ArrayDeque<Int>(); stack.add(idx); seen[idx] = true
+                while (stack.isNotEmpty()) {
+                    val k = stack.removeLast(); size++
+                    val cc = k % cols; val rr = k / cols
+                    if (cc < minC) minC = cc; if (cc > maxC) maxC = cc; if (rr < minR) minR = rr; if (rr > maxR) maxR = rr
+                    for ((dc, dr) in listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)) {
+                        val nc = cc + dc; val nr = rr + dr
+                        if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue
+                        val nk = nr * cols + nc
+                        if (changed[nk] && !seen[nk]) { seen[nk] = true; stack.add(nk) }
+                    }
+                }
+                val x = minC * cell; val y = minR * cell; val w = ((maxC - minC + 1) * cell).coerceAtMost(bmp.width - x); val h = ((maxR - minR + 1) * cell).coerceAtMost(bmp.height - y)
+                add(buildJsonObject { put("x", x); put("y", y); put("w", w); put("h", h); put("cx", x + w / 2); put("cy", y + h / 2); put("cells", size) })
+                emitted++
+            }
+        }
+        return Outcome.Ok(data = buildJsonObject { put("changedPct", Math.round(n * 1000.0 / grey.size) / 10.0); put("changedCells", n); put("cells", grey.size); put("regions", regions) })
+    }
+
+    /** Template matching (normalised cross-correlation on downscaled grey, refined at full res). */
+    private suspend fun findImage(a: Action): Outcome {
+        val b64 = a.image ?: return Outcome.Fail("find_image requires image")
+        val tplBytes = runCatching { Base64.decode(b64, Base64.DEFAULT) }.getOrNull() ?: return Outcome.Fail("bad base64")
+        val tplFull = android.graphics.BitmapFactory.decodeByteArray(tplBytes, 0, tplBytes.size) ?: return Outcome.Fail("cannot decode template image")
+        val screen = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        val thr = (a.threshold ?: 0.85f).coerceIn(0.5f, 1f); val maxRes = (a.maxResults ?: 5).coerceIn(1, 20)
+        val rx = a.region?.x?.coerceIn(0, screen.width - 1) ?: 0; val ry = a.region?.y?.coerceIn(0, screen.height - 1) ?: 0
+        val rw = a.region?.w?.coerceIn(1, screen.width - rx) ?: (screen.width - rx); val rh = a.region?.h?.coerceIn(1, screen.height - ry) ?: (screen.height - ry)
+        if (tplFull.width > rw || tplFull.height > rh) return Outcome.Fail("template larger than search region")
+        // downscale factor so the search area is <= ~250k px
+        val f = Math.max(1, Math.ceil(Math.sqrt(rw.toDouble() * rh / 250_000.0)).toInt())
+        val sw = rw / f; val sh = rh / f; val tw = Math.max(2, tplFull.width / f); val th = Math.max(2, tplFull.height / f)
+        if (tw >= sw || th >= sh) return Outcome.Fail("template too large relative to region")
+        val sBmp = Bitmap.createScaledBitmap(Bitmap.createBitmap(screen, rx, ry, rw, rh), sw, sh, true)
+        val tBmp = Bitmap.createScaledBitmap(tplFull, tw, th, true)
+        fun grey(b: Bitmap): FloatArray { val p = IntArray(b.width * b.height); b.getPixels(p, 0, b.width, 0, 0, b.width, b.height); return FloatArray(p.size) { val c = p[it]; ((((c shr 16) and 0xFF) * 3 + ((c shr 8) and 0xFF) * 6 + (c and 0xFF)) / 10).toFloat() } }
+        val S = grey(sBmp); val T = grey(tBmp)
+        val tMean = T.average().toFloat(); var tVar = 0f; for (v in T) tVar += (v - tMean) * (v - tMean)
+        if (tVar < 1e-3f) return Outcome.Fail("template is flat (single colour) — use find_color instead")
+        val tNorm = Math.sqrt(tVar.toDouble()).toFloat()
+        val scores = ArrayList<Triple<Float, Int, Int>>()
+        val step = if (sw * sh > 120_000) 2 else 1
+        var y = 0
+        while (y + th <= sh) {
+            var x = 0
+            while (x + tw <= sw) {
+                var sSum = 0f; var sSq = 0f; var cross = 0f
+                for (j in 0 until th) { val rowS = (y + j) * sw + x; val rowT = j * tw; for (i in 0 until tw) { val sv = S[rowS + i]; val tv = T[rowT + i] - tMean; sSum += sv; sSq += sv * sv; cross += sv * tv } }
+                val nPx = (tw * th).toFloat(); val sMean = sSum / nPx
+                val sVar = sSq - nPx * sMean * sMean
+                val score = if (sVar <= 1e-3f) 0f else (cross / (Math.sqrt(sVar.toDouble()).toFloat() * tNorm))
+                if (score >= thr) scores.add(Triple(score, x, y))
+                x += step
+            }
+            y += step
+        }
+        scores.sortByDescending { it.first }
+        // non-max suppression
+        val picked = ArrayList<Triple<Float, Int, Int>>()
+        for (s in scores) { if (picked.none { Math.abs(it.second - s.second) < tw / 2 && Math.abs(it.third - s.third) < th / 2 }) picked.add(s); if (picked.size >= maxRes) break }
+        return Outcome.Ok(data = buildJsonObject {
+            put("found", picked.isNotEmpty()); put("count", picked.size); put("scale", f)
+            put("matches", buildJsonArray { for ((sc, x, y) in picked) { val ox = rx + x * f; val oy = ry + y * f; add(buildJsonObject { put("score", Math.round(sc * 1000) / 1000.0); put("x", ox); put("y", oy); put("w", tplFull.width); put("h", tplFull.height); put("cx", ox + tplFull.width / 2); put("cy", oy + tplFull.height / 2) }) } })
+        })
     }
 
     // ---------------------------------------------------------------- v1.5 precision input

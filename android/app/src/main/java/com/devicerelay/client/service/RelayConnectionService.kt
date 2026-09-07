@@ -203,6 +203,7 @@ class RelayConnectionService : Service() {
             "swipe_path" -> base + (a.duration ?: 500L)
             "long_press" -> base + (a.duration ?: 800L)
             "drag" -> base + (a.duration ?: 600L) + (a.holdMs ?: 500L)
+            "watch_color", "wait_pixel" -> base + (a.timeoutMs ?: 5000L)
             else -> base
         }
     }

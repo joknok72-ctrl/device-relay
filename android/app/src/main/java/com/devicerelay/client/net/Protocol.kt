@@ -51,6 +51,14 @@ data class Action(
     val region: Region? = null,          // screenshot / find_color: crop
     val color: String? = null,           // find_color: #rrggbb
     val tolerance: Int? = null,          // find_color
+    // v1.6 reflexes
+    val appear: Boolean? = null,         // watch_color / wait_pixel
+    val timeoutMs: Long? = null,         // watch_color / wait_pixel
+    val minCount: Int? = null,           // watch_color
+    val threshold: Float? = null,        // screen_diff (int-ish) / find_image (0..1)
+    val cell: Int? = null,               // screen_diff
+    val image: String? = null,           // find_image: base64 template
+    val maxResults: Int? = null,         // find_image
 )
 
 @Serializable
