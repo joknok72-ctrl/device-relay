@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
-let hashCounter = 0
+let hashCounter = 0, diffCounter = 0
 const FAKE_SCREEN = readFileSync(join(here, 'fake-screen.b64'), 'utf8').trim()
 const ws = new WebSocket(`${base}/api/ws/phone/${deviceId}`, { headers: { Authorization: `Bearer ${token}` } })
 ws.onopen = () => {
@@ -53,6 +53,10 @@ ws.onmessage = (ev) => {
     if (a.type === 'repeat_tap') res.data = { taps: a.count, elapsedMs: a.count * a.intervalMs }
     if (a.type === 'pixel') res.data = { pixels: a.points.map(p => ({ x: p.x, y: p.y, hex: p.y > 1200 ? '#ff0000' : '#1e293b', r: 0, g: 0, b: 0 })) }
     if (a.type === 'find_color') res.data = a.color === '#ff0000' ? { found: true, count: 1200, cx: 540, cy: 1500, bounds: { x: 500, y: 1450, w: 80, h: 100 } } : { found: false, count: 0 }
+    if (a.type === 'screen_diff') { diffCounter++; res.data = diffCounter === 1 ? { baseline: true, changedPct: 0 } : { changedPct: 7.5, changedCells: 30, cells: 400, regions: [{ x: 480, y: 1440, w: 120, h: 120, cx: 540, cy: 1500, cells: 4 }] } }
+    if (a.type === 'watch_color') { const present = a.color === '#ff0000'; res.ok = present === (a.appear !== false); if (res.ok) res.data = { matched: true, appear: a.appear !== false, found: present, count: present ? 1200 : 0, cx: 540, cy: 1500, waitedMs: 120, polls: 1 }; else res.error = 'color did not appear within ' + a.timeoutMs + 'ms' }
+    if (a.type === 'wait_pixel') { const match = a.color === '#ff0000' && a.y > 1200; res.ok = match === (a.appear !== false); if (res.ok) res.data = { matched: true, hex: '#ff0000', waitedMs: 80, polls: 1, cx: a.x, cy: a.y }; else res.error = 'pixel did not match' }
+    if (a.type === 'find_image') res.data = a.image.startsWith('iVBOR') ? { found: true, count: 1, scale: 2, matches: [{ score: 0.93, x: 500, y: 950, w: 80, h: 80, cx: 540, cy: 990 }] } : { found: false, count: 0, matches: [] }
     if (a.type === 'screen_hash') { hashCounter++; res.data = { hash: hashCounter < 3 ? 'aaaa' : 'bbbb', w: 1080, h: 2400 } }
     ws.send(JSON.stringify(res))
   }, delay)

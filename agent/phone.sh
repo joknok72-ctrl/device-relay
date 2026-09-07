@@ -9,6 +9,9 @@
 #   ./phone.sh seq '[{"x":..,"y":..,"delayMs":..},..]' | path '[{"x":..,"y":..},..]' [ms] | rep X Y COUNT [ms] | mtap '[{..},{..}]'
 #   ./phone.sh px '[{"x":..,"y":..}]' | color '#rrggbb' [tol] | waitscreen [change|stable] [ms]
 #   ./phone.sh remember "note" | recall | forget [index|-1]
+#   ./phone.sh watch '#rrggbb' [appear|vanish] [ms] | waitpx X Y '#rrggbb' [appear|vanish] [ms] | tapcolor '#rrggbb' [tol]
+#   ./phone.sh diff | findimg <file.png> [threshold] | loop '<json game_loop args>'
+#   ./phone.sh macros | macro <name> | savemacro <name> '<json steps>' ["description"]
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -83,6 +86,18 @@ import json,sys; d=json.load(sys.stdin)
 for n in d.get("notes",[]): print("  [%d] %s" % (n["index"], n["text"]))
 print("(%d notes)" % d.get("count",0))' ;;
   forget)  call recall "{\"forget\":${1:--1}}" | pretty ;;
+  watch)   ap=true; [[ "${2:-}" == "vanish" ]] && ap=false; call watch_color "{\"color\":\"$1\",\"appear\":$ap,\"timeoutMs\":${3:-5000}}" | pretty ;;
+  waitpx)  ap=true; [[ "${4:-}" == "vanish" ]] && ap=false; call wait_pixel "{\"x\":$1,\"y\":$2,\"color\":\"$3\",\"appear\":$ap,\"timeoutMs\":${5:-5000}}" | pretty ;;
+  tapcolor) call tap_color "{\"color\":\"$1\",\"tolerance\":${2:-24}}" | pretty ;;
+  diff)    call screen_diff | pretty ;;
+  findimg) call find_image "$(python3 -c 'import json,sys,base64; print(json.dumps({"image":base64.b64encode(open(sys.argv[1],"rb").read()).decode(),"threshold":float(sys.argv[2])}))' "$1" "${2:-0.85}")" | pretty ;;
+  loop)    call game_loop "$1" | pretty ;;
+  macros)  call list_macros | python3 -c '
+import json,sys; d=json.load(sys.stdin)
+for m in d.get("macros",[]): print("  %-28s %2d steps  ran %dx  %s" % (m["name"], m["steps"], m["runs"], m.get("description") or ""))
+print("(%d macros)" % d.get("count",0))' ;;
+  macro)   call run_macro "{\"name\":\"$1\"}" | pretty ;;
+  savemacro) call save_macro "$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"steps":json.loads(sys.argv[2]),"description":sys.argv[3]}))' "$1" "$2" "${3:-}")" | pretty ;;
   drag)    call drag "{\"x1\":$1,\"y1\":$2,\"x2\":$3,\"y2\":$4,\"holdMs\":${5:-500}}" | pretty ;;
   pinch)   call pinch "{\"x\":$1,\"y\":$2,\"scale\":$3}" | pretty ;;
   info)    call get_device_info | pretty ;;
@@ -115,5 +130,5 @@ print("(%d notes)" % d.get("count",0))' ;;
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,30p' "$0" ;;
+  *) sed -n '2,33p' "$0" ;;
 esac
