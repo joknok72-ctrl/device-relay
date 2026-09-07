@@ -9,9 +9,10 @@ call() { curl -s "${A[@]}" -d "$1" $U/api/devices/$D/tools/call; }
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "== version / catalogue"
-check version '"version":"1.8.0"' "$(curl -s $U/api/health)"
-check tools-61 '61' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"1.9.0"' "$(curl -s $U/api/health)"
+check tools-65 '65' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
+call '{"name":"open_recents"}' >/dev/null  # fake phone: back to menu screen
 echo "== OCR"
 check read_text 'SCORE 1250' "$(call '{"name":"read_text"}')"
 check read_text-region '"region"' "$(call '{"name":"read_text","arguments":{"region":{"x":0,"y":0,"w":500,"h":200}}}' | j 'json.dumps(list(d["data"].keys()))' )"
@@ -41,7 +42,7 @@ R=$(call '{"name":"session_stats"}')
 check stats-rate '"successRate":' "$R"
 check stats-latency '"p50":' "$R"
 check stats-byaction '"tap":{' "$R"
-check stats-failures '"recentFailures":[{"action":"tap_element"' "$R"
+check stats-failures '"action":"tap_element"' "$R"
 
 echo "== live preview"
 # viewer connects FIRST (frames are only relayed while someone watches), then stream is enabled

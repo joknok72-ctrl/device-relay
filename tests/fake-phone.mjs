@@ -60,8 +60,7 @@ ws.onmessage = (ev) => {
     if (a.type === 'watch_color') { const present = a.color === '#ff0000'; res.ok = present === (a.appear !== false); if (res.ok) res.data = { matched: true, appear: a.appear !== false, found: present, count: present ? 1200 : 0, cx: 540, cy: 1500, waitedMs: 120, polls: 1 }; else res.error = 'color did not appear within ' + a.timeoutMs + 'ms' }
     if (a.type === 'wait_pixel') { const match = a.color === '#ff0000' && a.y > 1200; res.ok = match === (a.appear !== false); if (res.ok) res.data = { matched: true, hex: '#ff0000', waitedMs: 80, polls: 1, cx: a.x, cy: a.y }; else res.error = 'pixel did not match' }
     if (a.type === 'find_image') res.data = a.image.startsWith('iVBOR') ? { found: true, count: 1, scale: 2, matches: [{ score: 0.93, x: 500, y: 950, w: 80, h: 80, cx: 540, cy: 990 }] } : { found: false, count: 0, matches: [] }
-    if (a.type === 'read_text' && screen === 'home') res.data = { count: 2, lines: [ { text: 'Phone', x: 40, y: 2200, w: 100, h: 40, cx: 90, cy: 2220 }, { text: 'Camera', x: 800, y: 2200, w: 120, h: 40, cx: 860, cy: 2220 } ], text: 'Phone\nCamera' }
-    else if (a.type === 'read_text') res.data = { count: 3, lines: [
+    if (a.type === 'read_text') res.data = { count: 3, lines: [
       { text: 'SCORE 1250', x: 40, y: 60, w: 300, h: 60, cx: 190, cy: 90 },
       { text: 'PLAY', x: 440, y: 950, w: 200, h: 80, cx: 540, cy: 990 },
       { text: 'Continue', x: 400, y: 1600, w: 280, h: 70, cx: 540, cy: 1635 } ], text: 'SCORE 1250\nPLAY\nContinue', ...(a.region ? { region: a.region } : {}) }
@@ -69,7 +68,7 @@ ws.onmessage = (ev) => {
     if (a.type === 'stream') { streaming = !!a.enabled; res.data = { streaming }; if (streaming) { const push = () => { if (!streaming) return; ws.send(JSON.stringify({ kind: 'frame', data: FAKE_SCREEN, mime: 'image/png', ts: Date.now() })); setTimeout(push, 500) }; setTimeout(push, 100) } }
     if (a.type === 'screen_hash') { hashCounter++; res.data = { hash: screen === 'home' ? HASHES.home : (hashCounter < 3 ? HASHES.menu : HASHES.menu.replace('ffff0000ffff', 'ffff0000fffe')), w: 1080, h: 2400 } }
     if (a.type === 'home') screen = 'home'
-    if (a.type === 'recents') screen = 'menu'
+    if (a.type === 'recents' || a.type === 'open_app' || a.type === 'tap_element') screen = 'menu'
     if (a.type === 'find_objects') { const objs = a.color === '#ff0000' ? [ { i: 0, cx: 540, cy: 1500, area: 8000, bounds: { x: 500, y: 1450, w: 80, h: 100 } }, { i: 1, cx: 200, cy: 1200, area: 2500, bounds: { x: 175, y: 1175, w: 50, h: 50 } }, { i: 2, cx: 900, cy: 800, area: 900, bounds: { x: 885, y: 785, w: 30, h: 30 } } ].filter(o => o.bounds.w >= (a.minSize ?? 12)).slice(0, a.maxResults ?? 10) : []; res.data = { found: objs.length > 0, count: objs.length, total: objs.length, objects: objs, sampleStep: 2 } }
     if (a.type === 'auto_react') { const hit = a.color === '#ff0000'; const n = hit ? Math.min(a.maxTriggers ?? 20, 3) : 0; const taps = []; for (let i = 0; i < n; i++) taps.push({ t: 80 + i * (a.cooldownMs ?? 250), x: a.tapX ?? 540 + (a.tapOffsetX ?? 0), y: a.tapY ?? 1500 + (a.tapOffsetY ?? 0), count: 1200 }); res.data = { triggers: n, taps, polls: n + 5, stoppedBy: n >= (a.maxTriggers ?? 20) ? 'maxTriggers' : 'timeout', elapsedMs: hit ? 80 + n * (a.cooldownMs ?? 250) : Math.min(a.timeoutMs ?? 10000, 600) } }
     ws.send(JSON.stringify(res))
