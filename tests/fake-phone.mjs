@@ -45,6 +45,14 @@ ws.onmessage = (ev) => {
     if (a.type === 'set_clipboard') res.data = { copied: a.text.length, pasted: !!a.paste }
     if (a.type === 'scroll_element') res.data = { scrolled: true, direction: a.direction }
     if (a.type === 'screenshot' && a.format === 'jpeg') res.screenshotMime = 'image/jpeg'
+    if (a.type === 'screenshot' && (a.grid || a.region)) res.data = { ...(a.grid ? { grid: a.grid } : {}), ...(a.region ? { cropX: a.region.x, cropY: a.region.y, cropW: a.region.w, cropH: a.region.h } : {}) }
+    if (a.type === 'tap_sequence') res.data = { taps: a.points.length }
+    if (a.type === 'multi_tap') res.data = { fingers: a.points.length }
+    if (a.type === 'swipe_path') res.data = { points: a.points.length }
+    if (a.type === 'repeat_tap') res.data = { taps: a.count, elapsedMs: a.count * a.intervalMs }
+    if (a.type === 'pixel') res.data = { pixels: a.points.map(p => ({ x: p.x, y: p.y, hex: p.y > 1200 ? '#ff0000' : '#1e293b', r: 0, g: 0, b: 0 })) }
+    if (a.type === 'find_color') res.data = a.color === '#ff0000' ? { found: true, count: 1200, cx: 540, cy: 1500, bounds: { x: 500, y: 1450, w: 80, h: 100 } } : { found: false, count: 0 }
+    if (a.type === 'screen_hash') { hashCounter++; res.data = { hash: hashCounter < 3 ? 'aaaa' : 'bbbb', w: 1080, h: 2400 } }
     ws.send(JSON.stringify(res))
   }, delay)
 }
