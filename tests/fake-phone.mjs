@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
+let hashCounter = 0
 const FAKE_SCREEN = readFileSync(join(here, 'fake-screen.b64'), 'utf8').trim()
 const ws = new WebSocket(`${base}/api/ws/phone/${deviceId}`, { headers: { Authorization: `Bearer ${token}` } })
 ws.onopen = () => {
@@ -16,7 +17,7 @@ ws.onmessage = (ev) => {
   if (m.kind !== 'command') return
   console.log('[phone] got command', m.action)
   const t0 = Date.now()
-  const delay = ['tap','swipe','drag','pinch','long_press','type_text'].includes(m.action.type) ? 300 : 50
+  const delay = ['tap','swipe','drag','pinch','long_press','type_text','tap_sequence','repeat_tap','swipe_path','multi_tap'].includes(m.action.type) ? 300 : 50
   setTimeout(() => {
     const res = { kind: 'result', id: m.id, ok: true, durationMs: Date.now() - t0 }
     const a = m.action
