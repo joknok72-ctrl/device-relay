@@ -11,8 +11,8 @@ export RELAY_URL=$U RELAY_TOKEN=$T RELAY_DEVICE=$D
 P=/home/user/webapp/agent/phone.sh
 
 echo "== version / catalogue"
-check version '"version":"1.9.0"' "$(curl -s $U/api/health)"
-check tools-65 '65' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"2.0.0"' "$(curl -s $U/api/health)"
+check tools-66 '66' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check bootstrap-5d '## 5d. Labelled screens' "$(curl -s $U/agent/$T)"
 check bootstrap-react 'auto_react "#rrggbb" region' "$(curl -s $U/agent/$T)"
 
@@ -35,7 +35,7 @@ check react-stop '"stoppedBy":"maxTriggers"' "$R"
 check react-tap-pos '"x":540,"y":1500' "$R"
 check react-offset '"x":560,"y":1450' "$(call '{"name":"auto_react","arguments":{"color":"#ff0000","maxTriggers":1,"tapOffsetX":20,"tapOffsetY":-50}}')"
 check react-fixed '"x":100,"y":200' "$(call '{"name":"auto_react","arguments":{"color":"#ff0000","maxTriggers":1,"tapX":100,"tapY":200}}')"
-check react-none '"triggers":0' "$(call '{"name":"auto_react","arguments":{"color":"#00ff00","timeoutMs":600}}')"
+check react-none '"triggers":0' "$(call '{"name":"auto_react","arguments":{"color":"#0000ff","timeoutMs":600}}')"
 check react-badcolor 'requires color' "$(call '{"name":"auto_react","arguments":{"color":"zzz"}}')"
 check react-clamp-timeout 'ok' "$(curl -s "${A[@]}" -d '{"action":{"type":"auto_react","color":"#ff0000","timeoutMs":99999,"maxTriggers":1}}' $U/api/devices/$D/command | j '"ok" if d.get("ok") else d')"
 

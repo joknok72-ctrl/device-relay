@@ -9,8 +9,8 @@ call() { curl -s "${A[@]}" -d "$1" $U/api/devices/$D/tools/call; }
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "== version / catalogue"
-check version '"version":"1.9.0"' "$(curl -s $U/api/health)"
-check tools-65 '65' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"2.0.0"' "$(curl -s $U/api/health)"
+check tools-66 '66' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 call '{"name":"open_recents"}' >/dev/null  # fake phone: back to menu screen
 echo "== OCR"
