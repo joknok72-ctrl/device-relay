@@ -43,7 +43,21 @@ data class Action(
     val paste: Boolean? = null,      // set_clipboard: paste after copy
     val limit: Int? = null,          // get_notifications
     val direction: String? = null,   // scroll_element: forward | backward
+    // v1.5 games / precision
+    val points: List<SeqPoint>? = null,  // tap_sequence / multi_tap / swipe_path / pixel
+    val count: Int? = null,              // repeat_tap
+    val intervalMs: Long? = null,        // repeat_tap
+    val grid: Int? = null,               // screenshot: grid spacing in px (0 = none)
+    val region: Region? = null,          // screenshot / find_color: crop
+    val color: String? = null,           // find_color: #rrggbb
+    val tolerance: Int? = null,          // find_color
 )
+
+@Serializable
+data class SeqPoint(val x: Float, val y: Float, val delayMs: Long? = null, val durationMs: Long? = null)
+
+@Serializable
+data class Region(val x: Int, val y: Int, val w: Int, val h: Int)
 
 @Serializable
 data class CommandMessage(

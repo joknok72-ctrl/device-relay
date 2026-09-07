@@ -166,7 +166,8 @@ class RelayConnectionService : Service() {
         } else if (svc == null) {
             ResultMessage(id = cmd.id, ok = false, error = "accessibility service not enabled")
         } else {
-            val outcome = withTimeoutOrNull(12_000L) { withContext(Dispatchers.Main) { svc.execute(cmd.action) } }
+            val budget = execBudgetMs(cmd.action)
+            val outcome = withTimeoutOrNull(budget) { withContext(Dispatchers.Main) { svc.execute(cmd.action) } }
             val dur = SystemClock.elapsedRealtime() - t0
             when (outcome) {
                 is AutomationAccessibilityService.Outcome.Ok ->
@@ -190,6 +191,19 @@ class RelayConnectionService : Service() {
                 lastLatencyMs = result.durationMs,
                 logs = (listOf(LogLine(System.currentTimeMillis(), summary, result.ok)) + it.logs).take(50),
             )
+        }
+    }
+
+    /** Long on-device sequences (tap_sequence/repeat_tap/swipe_path) need more than the default 12s. */
+    private fun execBudgetMs(a: com.devicerelay.client.net.Action): Long {
+        val base = 12_000L
+        return when (a.type) {
+            "tap_sequence" -> base + (a.points?.sumOf { (it.delayMs ?: 0L) + (it.durationMs ?: 60L) } ?: 0L)
+            "repeat_tap" -> base + (a.count ?: 5) * ((a.intervalMs ?: 100L) + 60L)
+            "swipe_path" -> base + (a.duration ?: 500L)
+            "long_press" -> base + (a.duration ?: 800L)
+            "drag" -> base + (a.duration ?: 600L) + (a.holdMs ?: 500L)
+            else -> base
         }
     }
 

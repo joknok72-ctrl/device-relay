@@ -29,6 +29,8 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.devicerelay.client.net.Action
+import com.devicerelay.client.net.Region
+import com.devicerelay.client.net.SeqPoint
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
@@ -84,7 +86,7 @@ class AutomationAccessibilityService : AccessibilityService() {
         "quick_settings" -> global(GLOBAL_ACTION_QUICK_SETTINGS)
         "lock" -> if (Build.VERSION.SDK_INT >= 28) global(GLOBAL_ACTION_LOCK_SCREEN) else Outcome.Fail("lock requires Android 9+")
         "wake" -> wakeScreen()
-        "screenshot" -> screenshot(action.maxWidth, action.quality, action.format)
+        "screenshot" -> screenshot(action.maxWidth, action.quality, action.format, action.grid, action.region)
         "ui_dump" -> Outcome.Ok(data = uiDump())
         "tap_element" -> tapElement(action)
         "type_text" -> typeText(action)
@@ -104,6 +106,14 @@ class AutomationAccessibilityService : AccessibilityService() {
         "get_notifications" -> RelayNotificationListener.instance?.let { Outcome.Ok(data = it.dump(action.limit ?: 20)) }
             ?: Outcome.Fail("notification access not enabled: open Device Relay app and enable 'Notification access'")
         "device_info" -> Outcome.Ok(data = deviceInfo())
+        // v1.5
+        "tap_sequence" -> tapSequence(action.points)
+        "multi_tap" -> multiTap(action.points, action.duration)
+        "swipe_path" -> swipePath(action.points, action.duration)
+        "repeat_tap" -> repeatTap(action)
+        "pixel" -> pixels(action.points)
+        "find_color" -> findColor(action)
+        "screen_hash" -> screenHash()
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -276,30 +286,176 @@ class AutomationAccessibilityService : AccessibilityService() {
     }
 
     // ---------------------------------------------------------------- screenshot
-    private suspend fun screenshot(maxWidth: Int? = null, quality: Int? = null, format: String? = null): Outcome {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return Outcome.Fail("screenshot requires Android 11+")
+    /** Grab a full-resolution ARGB frame (Android 11+). */
+    private suspend fun captureBitmap(): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         return suspendCoroutine { cont ->
             takeScreenshot(Display.DEFAULT_DISPLAY, screenshotExecutor, object : TakeScreenshotCallback {
                 override fun onSuccess(result: ScreenshotResult) {
-                    try {
+                    val bmp = runCatching {
                         val hw = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
-                        val bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
-                        result.hardwareBuffer.close()
-                        if (bmp == null) { cont.resume(Outcome.Fail("bitmap null")); return }
-                        val maxW = (maxWidth ?: 540).coerceIn(120, 2160)
-                        val scale = (maxW.toFloat() / bmp.width).coerceAtMost(1f)
-                        val scaled = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
-                        val out = ByteArrayOutputStream()
-                        val jpeg = format.equals("jpeg", true) || format.equals("jpg", true)
-                        scaled.compress(if (jpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG, (quality ?: 80).coerceIn(10, 100), out)
-                        cont.resume(Outcome.Ok(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), mime = if (jpeg) "image/jpeg" else "image/png"))
-                    } catch (e: Exception) {
-                        cont.resume(Outcome.Fail("screenshot encode failed: ${e.message}"))
-                    }
+                        hw?.copy(Bitmap.Config.ARGB_8888, true)
+                    }.getOrNull()
+                    result.hardwareBuffer.close()
+                    cont.resume(bmp)
                 }
-                override fun onFailure(errorCode: Int) { cont.resume(Outcome.Fail("screenshot failed code=$errorCode")) }
+                override fun onFailure(errorCode: Int) { cont.resume(null) }
             })
         }
+    }
+
+    private suspend fun screenshot(maxWidth: Int? = null, quality: Int? = null, format: String? = null, grid: Int? = null, region: Region? = null): Outcome {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return Outcome.Fail("screenshot requires Android 11+")
+        var bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        return try {
+            // optional crop (original px)
+            var ox = 0; var oy = 0
+            if (region != null) {
+                val x = region.x.coerceIn(0, bmp.width - 1); val y = region.y.coerceIn(0, bmp.height - 1)
+                val w = region.w.coerceIn(8, bmp.width - x); val h = region.h.coerceIn(8, bmp.height - y)
+                bmp = Bitmap.createBitmap(bmp, x, y, w, h); ox = x; oy = y
+            }
+            // optional labelled coordinate grid (drawn at full res so labels stay readable after scaling)
+            if (grid != null && grid >= 20) drawGrid(bmp, grid, ox, oy)
+            val maxW = (maxWidth ?: 540).coerceIn(120, 2160)
+            val scale = (maxW.toFloat() / bmp.width).coerceAtMost(1f)
+            val scaled = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
+            val out = ByteArrayOutputStream()
+            val jpeg = format.equals("jpeg", true) || format.equals("jpg", true)
+            scaled.compress(if (jpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG, (quality ?: 80).coerceIn(10, 100), out)
+            val meta = buildJsonObject {
+                if (region != null) { put("cropX", ox); put("cropY", oy); put("cropW", bmp.width); put("cropH", bmp.height) }
+                if (grid != null && grid >= 20) put("grid", grid)
+            }
+            Outcome.Ok(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), data = if (meta.isEmpty()) null else meta, mime = if (jpeg) "image/jpeg" else "image/png")
+        } catch (e: Exception) {
+            Outcome.Fail("screenshot encode failed: ${e.message}")
+        }
+    }
+
+    /** Draw grid lines every `step` px with coordinate labels (absolute screen coords, honouring crop offset). */
+    private fun drawGrid(bmp: Bitmap, step: Int, ox: Int, oy: Int) {
+        val c = android.graphics.Canvas(bmp)
+        val line = android.graphics.Paint().apply { color = 0x66FF00FF.toInt(); strokeWidth = 2f }
+        val major = android.graphics.Paint().apply { color = 0xAAFF00FF.toInt(); strokeWidth = 3f }
+        val textSz = (bmp.width / 36f).coerceIn(18f, 40f)
+        val txt = android.graphics.Paint().apply { color = 0xFFFFFF00.toInt(); textSize = textSz; isAntiAlias = true; setShadowLayer(3f, 0f, 0f, 0xFF000000.toInt()) }
+        // vertical lines: start from first multiple of step >= ox
+        var x = ((ox + step - 1) / step) * step
+        while (x - ox < bmp.width) { val lx = (x - ox).toFloat(); c.drawLine(lx, 0f, lx, bmp.height.toFloat(), if (x % (step * 5) == 0) major else line); c.drawText(x.toString(), lx + 4f, textSz + 2f, txt); x += step }
+        var y = ((oy + step - 1) / step) * step
+        while (y - oy < bmp.height) { val ly = (y - oy).toFloat(); c.drawLine(0f, ly, bmp.width.toFloat(), ly, if (y % (step * 5) == 0) major else line); c.drawText(y.toString(), 4f, ly - 4f, txt); y += step }
+    }
+
+    // ---------------------------------------------------------------- v1.5 vision helpers
+    private suspend fun pixels(points: List<SeqPoint>?): Outcome {
+        if (points.isNullOrEmpty()) return Outcome.Fail("pixel requires points")
+        val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        return Outcome.Ok(data = buildJsonObject {
+            put("pixels", buildJsonArray {
+                for (p in points) {
+                    val x = p.x.toInt().coerceIn(0, bmp.width - 1); val y = p.y.toInt().coerceIn(0, bmp.height - 1)
+                    val c = bmp.getPixel(x, y)
+                    add(buildJsonObject { put("x", x); put("y", y); put("hex", String.format("#%06x", c and 0xFFFFFF)); put("r", (c shr 16) and 0xFF); put("g", (c shr 8) and 0xFF); put("b", c and 0xFF) })
+                }
+            })
+        })
+    }
+
+    private suspend fun findColor(a: Action): Outcome {
+        val hex = a.color?.removePrefix("#") ?: return Outcome.Fail("find_color requires color")
+        val target = hex.toIntOrNull(16) ?: return Outcome.Fail("bad color")
+        val tr = (target shr 16) and 0xFF; val tg = (target shr 8) and 0xFF; val tb = target and 0xFF
+        val tol = (a.tolerance ?: 24).coerceIn(0, 128)
+        val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        val rx = a.region?.x?.coerceIn(0, bmp.width - 1) ?: 0; val ry = a.region?.y?.coerceIn(0, bmp.height - 1) ?: 0
+        val rw = a.region?.w?.coerceIn(1, bmp.width - rx) ?: (bmp.width - rx); val rh = a.region?.h?.coerceIn(1, bmp.height - ry) ?: (bmp.height - ry)
+        // sample every 2px for speed on big screens
+        val stepPx = if (rw * rh > 1_500_000) 3 else if (rw * rh > 400_000) 2 else 1
+        val row = IntArray(rw)
+        var minX = Int.MAX_VALUE; var minY = Int.MAX_VALUE; var maxX = -1; var maxY = -1; var count = 0L; var sumX = 0L; var sumY = 0L
+        var y = ry
+        while (y < ry + rh) {
+            bmp.getPixels(row, 0, rw, rx, y, rw, 1)
+            var i = 0
+            while (i < rw) {
+                val c = row[i]
+                if (Math.abs(((c shr 16) and 0xFF) - tr) <= tol && Math.abs(((c shr 8) and 0xFF) - tg) <= tol && Math.abs((c and 0xFF) - tb) <= tol) {
+                    val x = rx + i
+                    count++; sumX += x; sumY += y
+                    if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y
+                }
+                i += stepPx
+            }
+            y += stepPx
+        }
+        return Outcome.Ok(data = buildJsonObject {
+            put("found", count > 0); put("count", count * stepPx * stepPx); put("sampleStep", stepPx)
+            if (count > 0) {
+                put("cx", (sumX / count).toInt()); put("cy", (sumY / count).toInt())
+                put("bounds", buildJsonObject { put("x", minX); put("y", minY); put("w", maxX - minX + 1); put("h", maxY - minY + 1) })
+            }
+        })
+    }
+
+    /** Cheap perceptual hash of the frame (16x28 grey thumbnail → hex). Used by wait_for_screen. */
+    private suspend fun screenHash(): Outcome {
+        val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        val w = 16; val h = 28
+        val small = Bitmap.createScaledBitmap(bmp, w, h, true)
+        val px = IntArray(w * h); small.getPixels(px, 0, w, 0, 0, w, h)
+        val grey = IntArray(w * h) { val c = px[it]; (((c shr 16) and 0xFF) * 3 + ((c shr 8) and 0xFF) * 6 + (c and 0xFF)) / 10 }
+        val avg = grey.average()
+        val sb = StringBuilder()
+        var bits = 0; var n = 0
+        for (g in grey) { bits = (bits shl 1) or (if (g > avg) 1 else 0); n++; if (n == 4) { sb.append(Integer.toHexString(bits)); bits = 0; n = 0 } }
+        return Outcome.Ok(data = buildJsonObject { put("hash", sb.toString()); put("w", bmp.width); put("h", bmp.height) })
+    }
+
+    // ---------------------------------------------------------------- v1.5 precision input
+    private suspend fun tapSequence(points: List<SeqPoint>?): Outcome {
+        if (points.isNullOrEmpty()) return Outcome.Fail("tap_sequence requires points")
+        var done = 0
+        for (p in points) {
+            if ((p.delayMs ?: 0) > 0) delay(p.delayMs!!)
+            val r = gesture(tapPath(p.x, p.y), (p.durationMs ?: 60L))
+            if (r is Outcome.Fail) return Outcome.Fail("tap ${done + 1}/${points.size} failed: ${r.error}")
+            done++
+        }
+        return Outcome.Ok(data = buildJsonObject { put("taps", done) })
+    }
+
+    private suspend fun multiTap(points: List<SeqPoint>?, duration: Long?): Outcome {
+        if (points.isNullOrEmpty()) return Outcome.Fail("multi_tap requires points")
+        val d = (duration ?: 60L).coerceIn(20, 5000)
+        val b = GestureDescription.Builder()
+        for (p in points.take(10)) b.addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(p.x, p.y) }, 0, d))
+        return dispatch(b.build())
+    }
+
+    private suspend fun swipePath(points: List<SeqPoint>?, duration: Long?): Outcome {
+        if (points == null || points.size < 2) return Outcome.Fail("swipe_path requires >= 2 points")
+        val path = Path().apply { moveTo(points[0].x, points[0].y); for (i in 1 until points.size) lineTo(points[i].x, points[i].y) }
+        return gesture(path, (duration ?: 500L).coerceIn(50, 30_000))
+    }
+
+    private suspend fun repeatTap(a: Action): Outcome {
+        val x = a.x ?: return Outcome.Fail("missing x"); val y = a.y ?: return Outcome.Fail("missing y")
+        val count = (a.count ?: 5).coerceIn(1, 100); val interval = (a.intervalMs ?: 100L).coerceIn(30, 5000)
+        var done = 0
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        for (i in 0 until count) {
+            val r = gesture(tapPath(x, y), 40)
+            if (r is Outcome.Fail) return Outcome.Fail("tap ${i + 1}/$count failed: ${r.error}")
+            done++
+            if (i < count - 1) {
+                // keep cadence stable regardless of gesture completion latency
+                val target = t0 + (i + 1) * interval
+                val wait = target - android.os.SystemClock.elapsedRealtime()
+                if (wait > 0) delay(wait)
+            }
+        }
+        return Outcome.Ok(data = buildJsonObject { put("taps", done); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0) })
     }
 
     // ---------------------------------------------------------------- UI tree
