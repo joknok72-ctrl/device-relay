@@ -32,8 +32,11 @@
   <main class="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
     <section id="screen-section" class="lg:col-span-4 bg-slate-900 rounded-2xl p-4 border border-slate-800">
       <div class="flex items-center justify-between mb-3">
-        <h2 class="font-semibold"><i class="fas fa-image ml-1 text-sky-400"></i> آخر لقطة</h2>
-        <span id="shot-ts" class="text-xs text-slate-500">—</span>
+        <h2 class="font-semibold"><i class="fas fa-image ml-1 text-sky-400"></i> <span id="shot-title">آخر لقطة</span></h2>
+        <div class="flex items-center gap-2">
+          <span id="shot-ts" class="text-xs text-slate-500">—</span>
+          <button id="live-btn" class="text-xs px-2 py-1 rounded bg-slate-800 hover:bg-slate-700" title="بث حي للشاشة (2 إطار/ثانية)"><i class="fas fa-video"></i> بث حي</button>
+        </div>
       </div>
       <div class="phone-frame mx-auto max-w-xs">
         <img id="shot-img" alt="screenshot" class="hidden">
@@ -135,8 +138,30 @@
     prepend ? tb.prepend(tr) : tb.append(tr)
     while (tb.children.length > 150) { const last = tb.lastElementChild; rows.forEach((v, k) => { if (v === last) rows.delete(k) }); last.remove() }
   }
+  let live = false, lastFrame = 0
+  function showFrame(m) {
+    if (!m || !m.data) return
+    lastFrame = Date.now()
+    $('shot-img').src = `data:${m.mime || 'image/jpeg'};base64,${m.data}`
+    $('shot-img').classList.remove('hidden'); $('shot-empty').classList.add('hidden')
+    $('shot-ts').textContent = 'LIVE ' + fmtTime(m.ts)
+  }
+  async function toggleLive() {
+    if (!current) return
+    live = !live
+    const b = $('live-btn')
+    b.innerHTML = live ? '<i class="fas fa-stop"></i> إيقاف البث' : '<i class="fas fa-video"></i> بث حي'
+    b.className = 'text-xs px-2 py-1 rounded ' + (live ? 'bg-rose-600 hover:bg-rose-500 text-white' : 'bg-slate-800 hover:bg-slate-700')
+    $('shot-title').textContent = live ? 'بث حي' : 'آخر لقطة'
+    const r = await fetch(`/api/devices/${current}/tools/live_preview`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: live, fps: 2, maxWidth: 360 }) })
+    if (!r.ok && live) { const j = await r.json().catch(() => ({})); alert('تعذّر تشغيل البث: ' + (j.error || r.status) + '\n(يتطلب تطبيق v1.7+ وأن يكون التوكن غير read-only)'); live = false; toggleLive() }
+  }
+  $('live-btn').onclick = toggleLive
+  // stop stream when leaving the page
+  window.addEventListener('beforeunload', () => { if (live && current) navigator.sendBeacon && fetch(`/api/devices/${current}/tools/live_preview`, { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }), keepalive: true }) })
   function showShot(s) {
     if (!s || !s.data) return
+    if (live && Date.now() - lastFrame < 3000) return // don't overwrite live frames with a stale shot
     $('shot-img').src = `data:${s.mime || 'image/png'};base64,${s.data}`
     $('shot-img').classList.remove('hidden'); $('shot-empty').classList.add('hidden')
     $('shot-ts').textContent = fmtTime(s.ts)
@@ -156,6 +181,7 @@
       else if (m.kind === 'status') renderStatus(m.info)
       else if (m.kind === 'log') upsertLog(m.entry)
       else if (m.kind === 'screenshot') showShot(m)
+      else if (m.kind === 'frame') showFrame(m)
     }
   }
 

@@ -117,7 +117,14 @@ Reflexes (v1.6 — the phone waits/reacts, you don't poll):
   find_image <base64 template> [region] threshold         → locate an icon/sprite you cropped earlier (capture_screen region=...)
   game_loop when={find_color…} then={tap x:"$cx" y:"$cy"} stopWhen={…} iterations → server runs the whole loop; ONE call replaces 20-60
   save_macro name steps[] / run_macro name              → reusable sequences (open game, skip intro, daily reward)
-Decision guide: known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
+OCR (v1.7 — read text where there is no ui tree):
+  read_text [region]           → all visible text lines with cx,cy (scores, timers, dialogue, menus in games)
+  tap_text "PLAY" [region]     → OCR + tap; the game-world tap_element
+  wait_for_text "LEVEL COMPLETE" / appear=false "Loading" → wait on text instead of guessing
+  find_colors ["#a","#b",...]  → several colours in one frame (enemies + gems + HP at once)
+  session_stats                → your own success rate / latency; adapt if flaky
+  live_preview true            → stream frames to the human's /monitor page when they want to watch
+Decision guide: text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
 Rules for games: never spam raw "tap" in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }

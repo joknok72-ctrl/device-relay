@@ -12,6 +12,7 @@
 #   ./phone.sh watch '#rrggbb' [appear|vanish] [ms] | waitpx X Y '#rrggbb' [appear|vanish] [ms] | tapcolor '#rrggbb' [tol]
 #   ./phone.sh diff | findimg <file.png> [threshold] | loop '<json game_loop args>'
 #   ./phone.sh macros | macro <name> | savemacro <name> '<json steps>' ["description"]
+#   ./phone.sh ocr [x,y,w,h] | taptext "PLAY" | waittext "LEVEL" [appear|vanish] [ms] | colors '#a,#b' | stats | live on|off
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -97,6 +98,20 @@ import json,sys; d=json.load(sys.stdin)
 for m in d.get("macros",[]): print("  %-28s %2d steps  ran %dx  %s" % (m["name"], m["steps"], m["runs"], m.get("description") or ""))
 print("(%d macros)" % d.get("count",0))' ;;
   macro)   call run_macro "{\"name\":\"$1\"}" | pretty ;;
+  ocr)     call read_text "$(python3 -c 'import json,sys
+r=sys.argv[1]
+if r:
+  x,y,w,h=map(int,r.split(",")); print(json.dumps({"region":{"x":x,"y":y,"w":w,"h":h}}))
+else: print("{}")' "${1:-}")" | python3 -c '
+import json,sys; r=json.load(sys.stdin)
+if not r.get("ok"): print(r); sys.exit(1)
+for l in r.get("data",{}).get("lines",[]): print("  (%4d,%4d) %s" % (l["cx"], l["cy"], l["text"]))
+print("(%d lines)" % len(r.get("data",{}).get("lines",[])))' ;;
+  taptext) call tap_text "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1]}))' "$*")" | pretty ;;
+  waittext) ap=true; [[ "${2:-}" == "vanish" ]] && ap=false; call wait_for_text "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1],"appear":sys.argv[2]=="true","timeoutMs":int(sys.argv[3])}))' "$1" "$ap" "${3:-8000}")" | pretty ;;
+  colors)  call find_colors "$(python3 -c 'import json,sys; print(json.dumps({"colors":sys.argv[1].split(",")}))' "$1")" | pretty ;;
+  stats)   call session_stats | pretty ;;
+  live)    en=false; [[ "${1:-on}" == "on" ]] && en=true; call live_preview "{\"enabled\":$en,\"fps\":${2:-2}}" | pretty ;;
   savemacro) call save_macro "$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"steps":json.loads(sys.argv[2]),"description":sys.argv[3]}))' "$1" "$2" "${3:-}")" | pretty ;;
   drag)    call drag "{\"x1\":$1,\"y1\":$2,\"x2\":$3,\"y2\":$4,\"holdMs\":${5:-500}}" | pretty ;;
   pinch)   call pinch "{\"x\":$1,\"y\":$2,\"scale\":$3}" | pretty ;;
@@ -130,5 +145,5 @@ print("(%d macros)" % d.get("count",0))' ;;
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,33p' "$0" ;;
+  *) sed -n '2,34p' "$0" ;;
 esac
