@@ -120,7 +120,7 @@ export interface LogEntry {
 
 // ---------------------------------------------------------------- auth
 export type AuthContext =
-  | { role: 'admin' }
+  | { role: 'admin'; tokenId?: string; label?: string }
   | { role: 'device'; deviceId: string; tokenId: string; label?: string }
 
 export interface TokenRecord {
@@ -132,4 +132,6 @@ export interface TokenRecord {
   lastUsedAt?: number
   /** true = can only read (screenshot/ui/status), no input */
   readOnly?: boolean
+  /** true = full admin token (same power as RELAY_TOKEN); deviceId is '*' */
+  admin?: boolean
 }

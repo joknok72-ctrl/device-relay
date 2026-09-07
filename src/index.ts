@@ -87,6 +87,14 @@ app.all('/mcp/:token', async (c) => {
   return handleMcp(c.env, c.req.raw, auth)
 })
 
+/** Setup / control panel for the human owner (admin token only): /setup/<token> */
+app.get('/setup/:token', async (c) => {
+  const auth = await authenticate(c.env, c.req.param('token'))
+  if (!auth || auth.role !== 'admin') return c.text('unauthorized — admin token required', 401)
+  const res = await c.env.ASSETS.fetch(new Request(new URL('/setup.html', c.req.url).toString()))
+  return new Response(res.body, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
+})
+
 /** Human monitor page with token in the URL: /monitor/<token> */
 app.get('/monitor/:token', async (c) => {
   const auth = await authenticate(c.env, c.req.param('token'))
@@ -95,12 +103,32 @@ app.get('/monitor/:token', async (c) => {
   return new Response(res.body, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
 })
 
+/** Phone pairing helper: opens the app via deep link, with a manual fallback. Token stays in the URL fragment-free query (user's own device). */
+app.get('/pair', (c) => {
+  const q = new URL(c.req.url).searchParams
+  const server = q.get('server') ?? new URL(c.req.url).origin
+  const token = q.get('token') ?? ''
+  const device = q.get('device') ?? ''
+  const deep = `devicerelay://pair?server=${encodeURIComponent(server)}&token=${encodeURIComponent(token)}&device=${encodeURIComponent(device)}`
+  const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+  return c.html(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ربط الهاتف — Device Relay</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f172a;color:#e2e8f0;font-family:system-ui,Tahoma,sans-serif}main{max-width:520px;padding:28px;text-align:center}a.btn{display:block;background:#34d399;color:#0f172a;font-weight:700;padding:16px;border-radius:14px;text-decoration:none;font-size:1.1rem;margin:18px 0}code{display:block;background:#1e293b;padding:10px;border-radius:8px;direction:ltr;text-align:left;word-break:break-all;margin:6px 0;font-size:.85rem}p{color:#94a3b8;line-height:1.7}.k{color:#64748b;font-size:.8rem;margin-top:14px}</style></head>
+<body><main><h1>📱 ربط الهاتف</h1><p>افتح هذه الصفحة <b>من هاتف الأندرويد</b> المثبَّت عليه تطبيق Device Relay ثم اضغط:</p>
+<a class="btn" href="${esc(deep)}" id="open">افتح التطبيق واملأ الإعدادات</a>
+<p>لو لم يفتح التطبيق: ثبّته من <a style="color:#34d399" href="https://github.com/joknok72-ctrl/device-relay/releases/tag/latest">Releases</a> ثم أعد المحاولة، أو أدخل القيم يدويًا:</p>
+<div class="k">رابط السيرفر</div><code>${esc(server)}</code>
+<div class="k">Bearer Token</div><code>${esc(token || '(لم يُمرَّر)')}</code>
+<div class="k">Device ID (اختياري)</div><code>${esc(device || '(سيُولَّد تلقائيًا)')}</code>
+<p style="margin-top:22px">بعد الاتصال: فعّل <b>خدمة إمكانية الوصول</b> و(اختياريًا) <b>قراءة الإشعارات</b> من داخل التطبيق.</p></main>
+<script>setTimeout(()=>{try{location.href=document.getElementById('open').href}catch(e){}},600)</script></body></html>`)
+})
+
 // ---------------- Auth middleware ----------------
 const authMiddleware = async (c: any, next: () => Promise<void>) => {
   if (!c.env.RELAY_TOKEN) return c.json({ error: 'server misconfigured: RELAY_TOKEN not set' }, 500)
   const auth = await authenticate(c.env, extractToken(c.req))
   if (!auth) return unauthorized(c)
-  const rl = rateLimit(auth.role === 'admin' ? 'admin' : `tok:${auth.tokenId}`)
+  const rl = rateLimit(auth.tokenId ? `tok:${auth.tokenId}` : 'admin')
   c.header('X-RateLimit-Remaining', String(rl.remaining))
   if (!rl.ok) {
     c.header('Retry-After', String(Math.ceil((rl.retryAfterMs ?? 1000) / 1000)))
@@ -119,25 +147,37 @@ admin.use('*', async (c, next) => {
   await next()
 })
 
-/** Create a per-device token. Body: { deviceId, label?, readOnly? } → returns the token ONCE. */
-admin.post('/tokens', async (c) => {
-  let body: { deviceId?: string; label?: string; readOnly?: boolean }
-  try { body = await c.req.json() } catch { return c.json({ error: 'invalid JSON body' }, 400) }
-  const deviceId = String(body.deviceId ?? '')
-  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
-  const token = randomToken('dr')
-  const hash = await sha256Hex(token)
-  const rec: TokenRecord = { id: hash.slice(0, 8), deviceId, label: body.label?.slice(0, 64), createdAt: Date.now(), readOnly: body.readOnly === true }
-  await reg(c.env).putToken(hash, rec)
-  await reg(c.env).register(deviceId)
-  const origin = new URL(c.req.url).origin
-  return c.json({
-    ok: true, token, ...rec,
+/** Build every URL a human/AI needs for a token. */
+function tokenUrls(origin: string, token: string, deviceId: string, isAdmin: boolean) {
+  const pair = `${origin}/pair?server=${encodeURIComponent(origin)}&token=${encodeURIComponent(token)}&device=${encodeURIComponent(deviceId === '*' ? '' : deviceId)}`
+  return {
     agentUrl: `${origin}/agent/${token}`,
     mcpUrl: `${origin}/mcp/${token}`,
     monitorUrl: `${origin}/monitor/${token}`,
-    note: 'Store this token now; it cannot be retrieved again.',
-  }, 201)
+    ...(isAdmin ? { setupUrl: `${origin}/setup/${token}` } : {}),
+    pairUrl: pair,
+    newChatPrompt: `${origin}/agent/${token}\nافتح الرابط ونفّذ ما فيه، ثم: <مهمتك هنا>`,
+  }
+}
+
+/**
+ * Create a token. Body: { deviceId, label?, readOnly? }  → per-device token
+ *                 or   { admin: true, label? }            → another full admin token (for rotation / a second owner)
+ * Returns the token ONCE.
+ */
+admin.post('/tokens', async (c) => {
+  let body: { deviceId?: string; label?: string; readOnly?: boolean; admin?: boolean }
+  try { body = await c.req.json() } catch { return c.json({ error: 'invalid JSON body' }, 400) }
+  const isAdmin = body.admin === true
+  const deviceId = isAdmin ? '*' : String(body.deviceId ?? '')
+  if (!isAdmin && !isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  const token = randomToken(isAdmin ? 'dr_admin' : 'dr')
+  const hash = await sha256Hex(token)
+  const rec: TokenRecord = { id: hash.slice(0, 8), deviceId, label: body.label?.slice(0, 64), createdAt: Date.now(), readOnly: !isAdmin && body.readOnly === true, admin: isAdmin || undefined }
+  await reg(c.env).putToken(hash, rec)
+  if (!isAdmin) await reg(c.env).register(deviceId)
+  const origin = new URL(c.req.url).origin
+  return c.json({ ok: true, token, ...rec, ...tokenUrls(origin, token, deviceId, isAdmin), note: 'Store this token now; it cannot be retrieved again.' }, 201)
 })
 admin.get('/tokens', async (c) => c.json({ tokens: await reg(c.env).listTokens(c.req.query('deviceId') || undefined) }))
 admin.delete('/tokens/:id', async (c) => {
@@ -164,10 +204,22 @@ admin.post('/devices/:deviceId/disconnect', async (c) => {
   await room(c, deviceId).fetch(`https://do/disconnect?deviceId=${deviceId}`, { method: 'POST' })
   return c.json({ ok: true })
 })
+/** Everything the setup page needs in one call */
+admin.get('/overview', async (c) => {
+  const [devices, tokens] = await Promise.all([allDevices(c.env), reg(c.env).listTokens()])
+  const origin = new URL(c.req.url).origin
+  return c.json({ origin, version: VERSION, devices, tokens, me: c.get('auth'), webhookConfigured: !!c.env.WEBHOOK_URL })
+})
 app.route('/api/admin', admin)
 
-/** Who am I? */
-app.get('/api/me', (c) => c.json({ ...c.get('auth'), version: VERSION }))
+/** Who am I? (+ all the URLs for the token that was used) */
+app.get('/api/me', (c) => {
+  const auth = c.get('auth')
+  const token = extractToken(c.req)
+  const origin = new URL(c.req.url).origin
+  const deviceId = auth.role === 'device' ? auth.deviceId : '*'
+  return c.json({ ...auth, version: VERSION, ...tokenUrls(origin, token, deviceId, auth.role === 'admin') })
+})
 
 // ---------------- Devices ----------------
 app.get('/api/devices', async (c) => c.json({ devices: await allDevices(c.env, c.get('auth')) }))

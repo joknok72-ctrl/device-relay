@@ -48,6 +48,7 @@ export async function authenticate(env: AuthEnv, token: string): Promise<(AuthCo
   const rec: TokenRecord | undefined = await registry(env).getToken(hash)
   if (!rec) return null
   registry(env).touchToken(hash).catch(() => {})
+  if (rec.admin) return { role: 'admin', tokenId: rec.id, label: rec.label }
   return { role: 'device', deviceId: rec.deviceId, tokenId: rec.id, label: rec.label, readOnly: rec.readOnly }
 }
 
