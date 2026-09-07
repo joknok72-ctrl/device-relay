@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Device Relay — الإعداد</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    body{font-family:system-ui,Segoe UI,Tahoma,sans-serif}
+    .ltr{direction:ltr;text-align:left}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+    pre.copy{background:#020617;border:1px solid #1e293b;border-radius:10px;padding:12px;direction:ltr;text-align:left;white-space:pre-wrap;word-break:break-all;font-size:.8rem;margin:0}
+    .btn{padding:.5rem .9rem;border-radius:.6rem;font-weight:600;font-size:.875rem;display:inline-flex;align-items:center;gap:.4rem;cursor:pointer;border:0}
+    .btn-p{background:#34d399;color:#0f172a}.btn-p:hover{background:#6ee7b7}
+    .btn-s{background:#1e293b;color:#e2e8f0}.btn-s:hover{background:#334155}
+    .btn-d{background:#7f1d1d;color:#fecaca}.btn-d:hover{background:#991b1b}
+    input,select{background:#0f172a;border:1px solid #334155;border-radius:.5rem;padding:.5rem .7rem;color:#e2e8f0;font-size:.875rem}
+    .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#34d399;color:#0f172a;padding:10px 18px;border-radius:10px;font-weight:600;opacity:0;transition:.25s;pointer-events:none;z-index:50}
+    .toast.show{opacity:1}
+    .step{counter-increment:s}.step::before{content:counter(s);display:inline-flex;width:26px;height:26px;border-radius:50%;background:#34d399;color:#0f172a;font-weight:700;align-items:center;justify-content:center;margin-inline-end:8px;font-size:.8rem}
+    ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+      <h1 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-sliders text-emerald-400"></i> Device Relay <span class="text-xs font-normal text-slate-400">لوحة الإعداد · للمالك فقط</span></h1>
+      <div class="text-xs text-slate-400 flex items-center gap-3">
+        <span id="ver" class="mono"></span>
+        <a id="monitor-link" class="btn btn-s" href="#" target="_blank"><i class="fas fa-eye"></i> المراقبة الحية</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto p-4 space-y-5">
+
+    <section id="quick-start" class="bg-gradient-to-br from-emerald-950/60 to-slate-900 rounded-2xl p-5 border border-emerald-900/50">
+      <h2 class="text-xl font-bold mb-1"><i class="fas fa-bolt text-emerald-400 ml-1"></i> ابدأ في 3 خطوات</h2>
+      <p class="text-slate-400 text-sm mb-4">كل اللي تحتاجه لتشغيل AI على موبايلك من محادثة جديدة تمامًا.</p>
+      <ol class="space-y-4" style="counter-reset:s">
+        <li class="step">
+          <span class="font-semibold">اربط الموبايل</span> — افتح الرابط ده <b>من الموبايل</b> وهيفتح التطبيق ويملأ الإعدادات لوحده:
+          <div class="flex gap-2 mt-2 items-start">
+            <pre class="copy flex-1 mono" id="pair-url">…</pre>
+            <button class="btn btn-s" data-copy="#pair-url"><i class="fas fa-copy"></i></button>
+          </div>
+          <p class="text-xs text-slate-500 mt-1">أو امسح الكود: <button class="btn btn-s !py-1 !px-2" id="qr-btn"><i class="fas fa-qrcode"></i> QR</button> <span class="ms-2">— مفيش APK؟ <a class="text-emerald-400 underline" target="_blank" href="https://github.com/joknok72-ctrl/device-relay/releases/tag/latest">نزّله من هنا</a></span></p>
+          <div id="qr-box" class="hidden mt-2 bg-white p-3 rounded-xl inline-block"></div>
+        </li>
+        <li class="step">
+          <span class="font-semibold">افتح محادثة AI جديدة</span> (Genspark AI Developer / Claude Code / Cursor — أي بيئة فيها تيرمينال) والصق ده <b>بالظبط</b>:
+          <div class="flex gap-2 mt-2 items-start">
+            <pre class="copy flex-1 mono" id="chat-prompt">…</pre>
+            <button class="btn btn-p" data-copy="#chat-prompt"><i class="fas fa-copy"></i> نسخ</button>
+          </div>
+          <p class="text-xs text-slate-500 mt-1">غيّر <code>&lt;مهمتك هنا&gt;</code> لأي شيء: "افتح واتساب وابعت لأحمد أنا في الطريق". الرابط نفسه يشرح للـ AI كل شيء (توكن + أدوات + قواعد + حالة الموبايل).</p>
+        </li>
+        <li class="step">
+          <span class="font-semibold">تابع اللي بيحصل</span> — افتح <a id="monitor-link2" class="text-emerald-400 underline" href="#" target="_blank">صفحة المراقبة الحية</a> في تاب جنب المحادثة (سجل حي + آخر لقطة شاشة).
+        </li>
+      </ol>
+      <details class="mt-4 text-sm">
+        <summary class="cursor-pointer text-slate-400 hover:text-slate-200"><i class="fas fa-plug ml-1"></i> بدائل: MCP (Claude Desktop / Cursor) بدون نسخ برومبت</summary>
+        <div class="mt-2 space-y-2">
+          <p class="text-slate-400">Claude Code:</p>
+          <div class="flex gap-2"><pre class="copy flex-1 mono" id="mcp-cli">…</pre><button class="btn btn-s" data-copy="#mcp-cli"><i class="fas fa-copy"></i></button></div>
+          <p class="text-slate-400">Cursor / أي عميل MCP (<code>mcp.json</code>):</p>
+          <div class="flex gap-2"><pre class="copy flex-1 mono" id="mcp-json">…</pre><button class="btn btn-s" data-copy="#mcp-json"><i class="fas fa-copy"></i></button></div>
+        </div>
+      </details>
+    </section>
+
+    <section class="bg-slate-900 rounded-2xl p-5 border border-slate-800">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-bold"><i class="fas fa-mobile-screen text-sky-400 ml-1"></i> الأجهزة</h2>
+        <button class="btn btn-s" id="refresh"><i class="fas fa-rotate"></i> تحديث</button>
+      </div>
+      <div id="devices" class="grid md:grid-cols-2 gap-3"></div>
+      <p id="devices-empty" class="text-slate-500 text-sm hidden">لا توجد أجهزة بعد — نفّذ الخطوة 1 من الأعلى.</p>
+    </section>
+
+    <section class="bg-slate-900 rounded-2xl p-5 border border-slate-800">
+      <h2 class="font-bold mb-1"><i class="fas fa-key text-amber-400 ml-1"></i> التوكنات</h2>
+      <p class="text-slate-400 text-sm mb-4">التوكن اللي فتحت بيه الصفحة ده هو الـ <b>Admin</b>. الأفضل تعمل توكن منفصل لكل AI/جهاز — لو تسرّب تلغيه بضغطة من غير ما تأثر على الباقي.</p>
+
+      <form id="new-token" class="flex flex-wrap gap-2 items-end bg-slate-800/50 p-3 rounded-xl mb-4">
+        <label class="text-xs text-slate-400 flex flex-col gap-1">النوع
+          <select name="kind" id="kind">
+            <option value="device">توكن لجهاز واحد (للـ AI)</option>
+            <option value="readonly">مراقبة فقط لجهاز (بدون لمس)</option>
+            <option value="admin">Admin كامل (بديل/تدوير)</option>
+          </select>
+        </label>
+        <label class="text-xs text-slate-400 flex flex-col gap-1" id="device-field">الجهاز
+          <input name="deviceId" id="deviceId" list="device-list" placeholder="my-phone" class="ltr" required>
+          <datalist id="device-list"></datalist>
+        </label>
+        <label class="text-xs text-slate-400 flex flex-col gap-1">اسم توضيحي
+          <input name="label" placeholder="مثال: Claude على اللابتوب">
+        </label>
+        <button class="btn btn-p" type="submit"><i class="fas fa-plus"></i> إنشاء</button>
+      </form>
+
+      <div id="token-result" class="hidden mb-4 bg-emerald-950/40 border border-emerald-800 rounded-xl p-4 space-y-2">
+        <p class="font-semibold text-emerald-300"><i class="fas fa-circle-check"></i> تم الإنشاء — <b>انسخ الآن، لن يظهر مرة أخرى</b></p>
+        <div class="grid md:grid-cols-2 gap-2 text-sm" id="token-result-body"></div>
+      </div>
+
+      <div class="overflow-auto">
+        <table class="w-full text-sm ltr">
+          <thead class="text-slate-500 text-xs"><tr><th class="text-left py-1">id</th><th class="text-left py-1">type</th><th class="text-left py-1">device</th><th class="text-left py-1">label</th><th class="text-left py-1">created</th><th class="text-left py-1">last used</th><th></th></tr></thead>
+          <tbody id="tokens"></tbody>
+        </table>
+        <p id="tokens-empty" class="text-slate-500 text-sm hidden">لا توجد توكنات إضافية بعد.</p>
+      </div>
+    </section>
+
+    <section class="bg-slate-900 rounded-2xl p-5 border border-slate-800 text-sm">
+      <h2 class="font-bold mb-2"><i class="fas fa-shield-halved text-rose-400 ml-1"></i> الأمان والتوكن الرئيسي</h2>
+      <ul class="list-disc pr-5 space-y-1 text-slate-400">
+        <li>التوكن الرئيسي (<code>RELAY_TOKEN</code>) مخزّن كـ Secret على Cloudflare ولا يمكن قراءته من هنا. لو ضاع: أنشئ <b>Admin كامل</b> من الأعلى واستخدمه بدلًا منه — أو غيّره من التيرمينال: <code class="mono">openssl rand -hex 24 | npx wrangler secret put RELAY_TOKEN</code></li>
+        <li>أي توكن في هذه الصفحة يمكن إلغاؤه فورًا من الجدول. التوكنات مخزّنة SHA-256 فقط.</li>
+        <li>Webhook عند اتصال/انقطاع الجهاز: <span id="webhook-state" class="mono"></span> — يُضبط بـ <code class="mono">wrangler secret put WEBHOOK_URL</code>.</li>
+        <li>لا تشارك رابط هذه الصفحة؛ يحوي توكن Admin.</li>
+      </ul>
+    </section>
+  </main>
+
+  <div id="toast" class="toast">تم النسخ ✓</div>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script>
+(() => {
+  const parts = location.pathname.split('/').filter(Boolean)
+  const token = parts[0] === 'setup' && parts[1] ? decodeURIComponent(parts[1]) : ''
+  if (!token) { document.body.innerHTML = '<p class="p-8 text-center">open /setup/&lt;ADMIN_TOKEN&gt;</p>'; return }
+  const H = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
+  const $ = (s) => document.querySelector(s)
+
+  const toast = (t) => { const e = $('#toast'); e.textContent = t || 'تم النسخ ✓'; e.classList.add('show'); setTimeout(() => e.classList.remove('show'), 1600) }
+  const copy = (text) => navigator.clipboard.writeText(text).then(() => toast()).catch(() => { prompt('انسخ:', text) })
+  document.addEventListener('click', (e) => { const b = e.target.closest('[data-copy]'); if (b) copy($(b.dataset.copy).textContent) })
+
+  const ago = (ts) => { if (!ts) return '—'; const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? s + 's' : s < 3600 ? Math.round(s / 60) + 'm' : s < 86400 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd' }
+  const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+
+  function fillQuickStart(me) {
+    $('#pair-url').textContent = me.pairUrl
+    $('#chat-prompt').textContent = me.agentUrl + '\nافتح الرابط ونفّذ ما فيه، ثم: <مهمتك هنا>'
+    $('#mcp-cli').textContent = `claude mcp add --transport http phone ${me.mcpUrl}`
+    $('#mcp-json').textContent = JSON.stringify({ mcpServers: { phone: { url: me.mcpUrl } } }, null, 2)
+    $('#monitor-link').href = me.monitorUrl; $('#monitor-link2').href = me.monitorUrl
+    $('#qr-btn').onclick = () => { const box = $('#qr-box'); box.classList.toggle('hidden'); if (!box.innerHTML && window.QRCode) QRCode.toCanvas(me.pairUrl, { width: 220 }, (err, cv) => { if (!err) box.appendChild(cv) }) }
+  }
+
+  function renderDevices(devs) {
+    const el = $('#devices'); el.innerHTML = ''
+    $('#devices-empty').classList.toggle('hidden', devs.length > 0)
+    $('#device-list').innerHTML = devs.map(d => `<option value="${esc(d.deviceId)}">`).join('')
+    for (const d of devs) {
+      const card = document.createElement('article')
+      card.className = 'bg-slate-800/60 rounded-xl p-3 border border-slate-700/60'
+      card.innerHTML = `
+        <div class="flex items-center justify-between">
+          <div class="font-semibold ltr mono">${d.online ? '<span class="text-emerald-400">●</span>' : '<span class="text-slate-500">○</span>'} ${esc(d.deviceId)} ${d.label ? `<span class="text-slate-400 font-normal">— ${esc(d.label)}</span>` : ''}</div>
+          <span class="text-xs ${d.online ? 'text-emerald-300' : 'text-slate-500'}">${d.online ? 'ONLINE' : 'offline · ' + ago(d.lastSeen)}</span>
+        </div>
+        <div class="text-xs text-slate-400 mt-1 ltr">${esc(d.model || '?')} · Android ${esc(d.android || '?')} · app ${esc(d.appVersion || '?')} · ${d.screen ? d.screen.w + '×' + d.screen.h : '?'} · a11y ${d.accessibilityEnabled ? '✔' : '✖'}${typeof d.battery === 'number' ? ' · 🔋' + d.battery + '%' : ''}</div>
+        <div class="text-xs text-slate-500 mt-1">${d.commandsSent} أمر · ${d.commandsOk} ✔ · ${d.commandsFailed} ✖</div>
+        <div class="flex flex-wrap gap-2 mt-2">
+          <button class="btn btn-s !py-1" data-act="token" data-id="${esc(d.deviceId)}"><i class="fas fa-key"></i> توكن لهذا الجهاز</button>
+          <button class="btn btn-s !py-1" data-act="label" data-id="${esc(d.deviceId)}"><i class="fas fa-tag"></i> تسمية</button>
+          <button class="btn btn-s !py-1" data-act="clear" data-id="${esc(d.deviceId)}"><i class="fas fa-broom"></i> مسح السجل</button>
+          ${d.online ? `<button class="btn btn-s !py-1" data-act="disc" data-id="${esc(d.deviceId)}"><i class="fas fa-plug-circle-xmark"></i> فصل</button>` : ''}
+          <button class="btn btn-d !py-1" data-act="del" data-id="${esc(d.deviceId)}"><i class="fas fa-trash"></i></button>
+        </div>`
+      el.appendChild(card)
+    }
+  }
+
+  function renderTokens(toks) {
+    const tb = $('#tokens'); tb.innerHTML = ''
+    $('#tokens-empty').classList.toggle('hidden', toks.length > 0)
+    for (const t of toks) {
+      const tr = document.createElement('tr'); tr.className = 'border-t border-slate-800'
+      const type = t.admin ? '<span class="text-rose-300">admin</span>' : t.readOnly ? '<span class="text-sky-300">read-only</span>' : '<span class="text-emerald-300">device</span>'
+      tr.innerHTML = `<td class="py-1 mono text-xs">${t.id}</td><td class="py-1">${type}</td><td class="py-1 mono text-xs">${esc(t.deviceId)}</td><td class="py-1">${esc(t.label || '')}</td><td class="py-1 text-slate-400">${ago(t.createdAt)}</td><td class="py-1 text-slate-400">${ago(t.lastUsedAt)}</td>
+        <td class="py-1 text-right"><button class="btn btn-d !py-0.5 !px-2" data-revoke="${t.id}" title="إلغاء"><i class="fas fa-ban"></i></button></td>`
+      tb.appendChild(tr)
+    }
+  }
+
+  async function load() {
+    const r = await fetch('/api/admin/overview', { headers: H })
+    if (r.status === 401 || r.status === 403) { document.body.innerHTML = '<p class="p-8 text-center text-rose-400">هذا التوكن ليس Admin</p>'; return }
+    const ov = await r.json()
+    $('#ver').textContent = 'v' + ov.version
+    $('#webhook-state').textContent = ov.webhookConfigured ? 'مضبوط ✔' : 'غير مضبوط'
+    renderDevices(ov.devices); renderTokens(ov.tokens)
+    const me = await (await fetch('/api/me', { headers: H })).json()
+    fillQuickStart(me)
+  }
+
+  function showTokenResult(t) {
+    const rows = [
+      ['التوكن', t.token], ['برومبت المحادثة الجديدة', t.agentUrl + '\nافتح الرابط ونفّذ ما فيه، ثم: <مهمتك هنا>'],
+      ['MCP', t.mcpUrl], ['مراقبة', t.monitorUrl], ['ربط الموبايل', t.pairUrl], ...(t.setupUrl ? [['لوحة الإعداد (Admin)', t.setupUrl]] : []),
+    ]
+    $('#token-result-body').innerHTML = rows.map(([k, v], i) => `<div><div class="text-xs text-slate-400 mb-1">${k}</div><div class="flex gap-1"><pre class="copy flex-1 mono !text-xs" id="tr-${i}">${esc(v)}</pre><button class="btn btn-s !px-2" data-copy="#tr-${i}"><i class="fas fa-copy"></i></button></div></div>`).join('')
+    $('#token-result').classList.remove('hidden'); $('#token-result').scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  $('#kind').onchange = () => { const admin = $('#kind').value === 'admin'; $('#device-field').classList.toggle('hidden', admin); $('#deviceId').required = !admin }
+  $('#new-token').onsubmit = async (e) => {
+    e.preventDefault()
+    const f = new FormData(e.target); const kind = f.get('kind')
+    const body = kind === 'admin' ? { admin: true, label: f.get('label') } : { deviceId: f.get('deviceId'), label: f.get('label'), readOnly: kind === 'readonly' }
+    const r = await fetch('/api/admin/tokens', { method: 'POST', headers: H, body: JSON.stringify(body) })
+    const j = await r.json()
+    if (!r.ok) return toast('خطأ: ' + (j.error || r.status))
+    showTokenResult(j); load()
+  }
+  document.addEventListener('click', async (e) => {
+    const rv = e.target.closest('[data-revoke]')
+    if (rv && confirm('إلغاء التوكن ' + rv.dataset.revoke + '؟')) { await fetch('/api/admin/tokens/' + rv.dataset.revoke, { method: 'DELETE', headers: H }); toast('تم الإلغاء'); load() }
+    const a = e.target.closest('[data-act]'); if (!a) return
+    const id = a.dataset.id
+    if (a.dataset.act === 'token') { $('#kind').value = 'device'; $('#kind').onchange(); $('#deviceId').value = id; $('#new-token').scrollIntoView({ behavior: 'smooth' }); $('#new-token [name=label]').focus() }
+    if (a.dataset.act === 'label') { const l = prompt('اسم توضيحي للجهاز ' + id + ':'); if (l !== null) { await fetch(`/api/admin/devices/${id}/label`, { method: 'POST', headers: H, body: JSON.stringify({ label: l }) }); load() } }
+    if (a.dataset.act === 'clear') { await fetch(`/api/admin/devices/${id}/clear-logs`, { method: 'POST', headers: H }); toast('تم مسح السجل'); load() }
+    if (a.dataset.act === 'disc') { await fetch(`/api/admin/devices/${id}/disconnect`, { method: 'POST', headers: H }); toast('تم الفصل — التطبيق سيعيد الاتصال تلقائيًا'); setTimeout(load, 1500) }
+    if (a.dataset.act === 'del' && confirm('حذف الجهاز ' + id + ' وكل توكناته من القائمة؟')) { await fetch(`/api/devices/${id}`, { method: 'DELETE', headers: H }); load() }
+  })
+  $('#refresh').onclick = load
+  load(); setInterval(load, 20000)
+})()
+</script>
+</body>
+</html>

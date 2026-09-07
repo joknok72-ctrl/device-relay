@@ -89,15 +89,31 @@ private val Amber = Color(0xFFFBBF24)
 private val Muted = Color(0xFF94A3B8)
 
 class MainActivity : ComponentActivity() {
+    /** Pairing payload from devicerelay://pair?server=&token=&device= (or https .../pair?...) */
+    private val pairing = androidx.compose.runtime.mutableStateOf<RelayConfig?>(null)
+
+    private fun handlePairIntent(intent: Intent?) {
+        val u = intent?.data ?: return
+        val isPair = (u.scheme == "devicerelay" && u.host == "pair") || u.path?.endsWith("/pair") == true
+        if (!isPair) return
+        val server = u.getQueryParameter("server") ?: return
+        val token = u.getQueryParameter("token") ?: return
+        val device = u.getQueryParameter("device") ?: ""
+        pairing.value = RelayConfig(serverUrl = server, token = token, deviceId = device, autoConnect = true)
+    }
+
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); handlePairIntent(intent) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handlePairIntent(intent)
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
                     primary = Green, background = Bg, surface = CardBg, onPrimary = Bg,
                 ),
             ) {
-                Surface(Modifier.fillMaxSize(), color = Bg) { RelayScreen() }
+                Surface(Modifier.fillMaxSize(), color = Bg) { RelayScreen(pairing.value) { pairing.value = null } }
             }
         }
     }
@@ -105,7 +121,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RelayScreen() {
+fun RelayScreen(pairing: RelayConfig? = null, onPairingConsumed: () -> Unit = {}) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val ui by RelayConnectionService.ui.collectAsStateWithLifecycle()
@@ -115,9 +131,20 @@ fun RelayScreen() {
     var showToken by remember { mutableStateOf(false) }
     var a11yEnabled by remember { mutableStateOf(AutomationAccessibilityService.isEnabled) }
     var notifAccess by remember { mutableStateOf(RelayNotificationListener.isEnabled) }
+    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     LaunchedEffect(Unit) {
         cfg = SettingsRepo.get(ctx); loaded = true
+    }
+    // Deep-link pairing: fill settings, save, and connect immediately
+    LaunchedEffect(pairing) {
+        val p = pairing ?: return@LaunchedEffect
+        val current = SettingsRepo.get(ctx)
+        cfg = p.copy(deviceId = p.deviceId.ifBlank { current.deviceId })
+        SettingsRepo.save(ctx, cfg)
+        if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        RelayConnectionService.start(ctx)
+        onPairingConsumed()
     }
     // Refresh accessibility status whenever the app returns to foreground
     val owner = LocalLifecycleOwner.current
@@ -127,8 +154,6 @@ fun RelayScreen() {
             notifAccess = RelayNotificationListener.isEnabled
         }
     }
-
-    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     fun connect() {
         scope.launch {
