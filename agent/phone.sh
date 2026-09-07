@@ -13,6 +13,9 @@
 #   ./phone.sh diff | findimg <file.png> [threshold] | loop '<json game_loop args>'
 #   ./phone.sh macros | macro <name> | savemacro <name> '<json steps>' ["description"]
 #   ./phone.sh ocr [x,y,w,h] | taptext "PLAY" | waittext "LEVEL" [appear|vanish] [ms] | colors '#a,#b' | stats | live on|off
+#   ./phone.sh look [grid] ['#a,#b'] [x,y,w,h]   # v1.8 observe: look.png + OCR lines + app + colours + diff in ONE call
+#   ./phone.sh press "Skip" [fallbackX fallbackY] # v1.8 smart_tap: ui -> OCR -> fallback; verifies screen changed
+#   ./phone.sh popups ["extra label",...] | until '<action json>' '<observation json>' [maxTries] | history [n]
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -84,7 +87,7 @@ print(json.dumps(d,ensure_ascii=False,indent=1))' ;;
   remember) call remember "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1]}))' "$*")" | pretty ;;
   recall)  call recall | python3 -c '
 import json,sys; d=json.load(sys.stdin)
-for n in d.get("notes",[]): print("  [%d] %s" % (n["index"], n["text"]))
+for n in d.get("notes",[]): print("  [%d] %s%s" % (n["index"], ("(%s) " % n["app"]) if n.get("app") else "", n["text"]))
 print("(%d notes)" % d.get("count",0))' ;;
   forget)  call recall "{\"forget\":${1:--1}}" | pretty ;;
   watch)   ap=true; [[ "${2:-}" == "vanish" ]] && ap=false; call watch_color "{\"color\":\"$1\",\"appear\":$ap,\"timeoutMs\":${3:-5000}}" | pretty ;;
@@ -111,6 +114,33 @@ print("(%d lines)" % len(r.get("data",{}).get("lines",[])))' ;;
   waittext) ap=true; [[ "${2:-}" == "vanish" ]] && ap=false; call wait_for_text "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1],"appear":sys.argv[2]=="true","timeoutMs":int(sys.argv[3])}))' "$1" "$ap" "${3:-8000}")" | pretty ;;
   colors)  call find_colors "$(python3 -c 'import json,sys; print(json.dumps({"colors":sys.argv[1].split(",")}))' "$1")" | pretty ;;
   stats)   call session_stats | pretty ;;
+  look)    call observe "$(python3 -c 'import json,sys
+a={"maxWidth":int(sys.argv[4])}
+if sys.argv[1] and sys.argv[1] != "0": a["grid"]=int(sys.argv[1])
+if sys.argv[2]: a["colors"]=sys.argv[2].split(",")
+if sys.argv[3]:
+  x,y,w,h=map(int,sys.argv[3].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
+print(json.dumps(a))' "${1:-0}" "${2:-}" "${3:-}" "${LOOK_WIDTH:-720}")" | python3 -c '
+import json,sys,base64; d=json.load(sys.stdin); img=d.pop("image",None)
+if img: open("look.png","wb").write(base64.b64decode(img["base64"])); print("saved look.png (%dx%d scale=%s)" % (img["w"],img["h"],img["scale"]))
+app=d.get("app") or {}; print("app:", app.get("label"), "(%s)" % app.get("package"), " screen:", d.get("screen"))
+ch=d.get("changed") or {}; print("changed: %s%% %s" % (ch.get("pct"), "(baseline)" if ch.get("baseline") else ""))
+for c in (d.get("colors") if isinstance(d.get("colors"),list) else []): print("  color %s: %s" % (c["color"], ("(%d,%d) n=%d" % (c["cx"],c["cy"],c["count"])) if c.get("found") else "not found"))
+t=d.get("text") or {}
+for l in t.get("lines",[]) if isinstance(t,dict) else []: print("  (%4d,%4d) %s" % (l["cx"], l["cy"], l["text"]))
+if isinstance(t,dict) and t.get("ok") is False: print("  ocr:", t.get("error"))
+if not d.get("ok"): print("ERROR:", d.get("error")); sys.exit(1)' ;;
+  press)   call smart_tap "$(python3 -c 'import json,sys
+a={"text":sys.argv[1]}
+if len(sys.argv)>3: a["fallback"]={"x":int(sys.argv[2]),"y":int(sys.argv[3])}
+print(json.dumps(a))' "$@")" | pretty ;;
+  popups)  call dismiss_popups "$(python3 -c 'import json,sys; print(json.dumps({"extra":[s for s in sys.argv[1:] if s]}))' "$@")" | pretty ;;
+  until)   call do_until "$(python3 -c 'import json,sys; print(json.dumps({"action":json.loads(sys.argv[1]),"until":json.loads(sys.argv[2]),"maxTries":int(sys.argv[3])}))' "$1" "$2" "${3:-8}")" | pretty ;;
+  history) call recent_actions "{\"limit\":${1:-20}}" | python3 -c '
+import json,sys; d=json.load(sys.stdin)
+for a in d.get("actions",[]):
+    extra={k:v for k,v in a.items() if k not in ("ts","ago","status","ms","type","error")}
+    print("  %6s ago  %-8s %-14s %5s ms  %s %s" % (a["ago"], a["status"], a["type"], a.get("ms",""), json.dumps(extra,ensure_ascii=False) if extra else "", a.get("error","")))' ;;
   live)    en=false; [[ "${1:-on}" == "on" ]] && en=true; call live_preview "{\"enabled\":$en,\"fps\":${2:-2}}" | pretty ;;
   savemacro) call save_macro "$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"steps":json.loads(sys.argv[2]),"description":sys.argv[3]}))' "$1" "$2" "${3:-}")" | pretty ;;
   drag)    call drag "{\"x1\":$1,\"y1\":$2,\"x2\":$3,\"y2\":$4,\"holdMs\":${5:-500}}" | pretty ;;
@@ -145,5 +175,5 @@ print("(%d lines)" % len(r.get("data",{}).get("lines",[])))' ;;
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,34p' "$0" ;;
+  *) sed -n '2,37p' "$0" ;;
 esac
