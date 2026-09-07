@@ -64,6 +64,30 @@ class RelayConnectionService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var connectJob: Job? = null
     private var helloJob: Job? = null
+    private var streamJob: Job? = null
+
+    /** Live preview: push small JPEG frames to the relay (viewers only) at fps until disabled. */
+    private fun setStream(ws: WebSocket, enabled: Boolean, fps: Float?, maxWidth: Int?, quality: Int?) {
+        streamJob?.cancel(); streamJob = null
+        if (!enabled) return
+        val periodMs = (1000f / (fps ?: 2f).coerceIn(0.2f, 4f)).toLong()
+        val w = (maxWidth ?: 360).coerceIn(120, 720); val q = (quality ?: 55).coerceIn(10, 90)
+        streamJob = scope.launch {
+            var fails = 0
+            while (true) {
+                val t0 = SystemClock.elapsedRealtime()
+                val svc = AutomationAccessibilityService.instance
+                val frame = svc?.let { runCatching { withContext(Dispatchers.Main) { it.previewFrame(w, q) } }.getOrNull() }
+                if (frame != null) {
+                    fails = 0
+                    val b64 = android.util.Base64.encodeToString(frame.first, android.util.Base64.NO_WRAP)
+                    if (!ws.send(RelayJson.encodeToString(com.devicerelay.client.net.FrameMessage.serializer(), com.devicerelay.client.net.FrameMessage(data = b64, mime = frame.second, ts = System.currentTimeMillis())))) break
+                } else if (++fails > 10) break
+                val wait = periodMs - (SystemClock.elapsedRealtime() - t0)
+                delay(if (wait > 50) wait else 50)
+            }
+        }
+    }
     private var socket: WebSocket? = null
     private var stopping = false
     private var backoffMs = 1_000L
@@ -143,11 +167,11 @@ class RelayConnectionService : Service() {
             }
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) { ws.close(code, reason) }
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) { helloJob?.cancel(); done.complete("$code $reason") }
+            override fun onClosed(ws: WebSocket, code: Int, reason: String) { helloJob?.cancel(); streamJob?.cancel(); done.complete("$code $reason") }
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 val msg = response?.let { "HTTP ${it.code}" } ?: (t.message ?: t.javaClass.simpleName)
                 Log.w(TAG, "ws failure: $msg", t)
-                helloJob?.cancel()
+                helloJob?.cancel(); streamJob?.cancel()
                 done.complete(msg)
             }
         })
@@ -163,6 +187,9 @@ class RelayConnectionService : Service() {
         val svc = AutomationAccessibilityService.instance
         val result: ResultMessage = if (cmd.action.type == "ping") {
             ResultMessage(id = cmd.id, ok = true, durationMs = 0)
+        } else if (cmd.action.type == "stream") {
+            if (AutomationAccessibilityService.instance == null && cmd.action.enabled == true) ResultMessage(id = cmd.id, ok = false, error = "accessibility service not enabled")
+            else { setStream(ws, cmd.action.enabled == true, cmd.action.fps, cmd.action.maxWidth, cmd.action.quality); ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = kotlinx.serialization.json.buildJsonObject { put("streaming", kotlinx.serialization.json.JsonPrimitive(cmd.action.enabled == true)) }) }
         } else if (svc == null) {
             ResultMessage(id = cmd.id, ok = false, error = "accessibility service not enabled")
         } else {
@@ -204,6 +231,7 @@ class RelayConnectionService : Service() {
             "long_press" -> base + (a.duration ?: 800L)
             "drag" -> base + (a.duration ?: 600L) + (a.holdMs ?: 500L)
             "watch_color", "wait_pixel" -> base + (a.timeoutMs ?: 5000L)
+            "read_text" -> 25_000L
             else -> base
         }
     }

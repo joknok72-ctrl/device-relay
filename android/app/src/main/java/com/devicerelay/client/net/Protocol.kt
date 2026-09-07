@@ -59,7 +59,15 @@ data class Action(
     val cell: Int? = null,               // screen_diff
     val image: String? = null,           // find_image: base64 template
     val maxResults: Int? = null,         // find_image
+    // v1.7
+    val lang: String? = null,            // read_text: latin|ar|zh|ja|ko|hi
+    val colors: List<String>? = null,    // find_colors
+    val enabled: Boolean? = null,        // stream
+    val fps: Float? = null,              // stream
 )
+
+@Serializable
+data class FrameMessage(val kind: String = "frame", val data: String, val mime: String, val ts: Long)
 
 @Serializable
 data class SeqPoint(val x: Float, val y: Float, val delayMs: Long? = null, val durationMs: Long? = null)

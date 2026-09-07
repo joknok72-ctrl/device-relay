@@ -119,6 +119,10 @@ class AutomationAccessibilityService : AccessibilityService() {
         "watch_color" -> watchColor(action)
         "wait_pixel" -> waitPixel(action)
         "find_image" -> findImage(action)
+        // v1.7
+        "read_text" -> readText(action)
+        "find_colors" -> findColors(action)
+        "stream" -> Outcome.Fail("stream is handled by the connection service") // never reached
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -569,6 +573,61 @@ class AutomationAccessibilityService : AccessibilityService() {
         return Outcome.Ok(data = buildJsonObject {
             put("found", picked.isNotEmpty()); put("count", picked.size); put("scale", f)
             put("matches", buildJsonArray { for ((sc, x, y) in picked) { val ox = rx + x * f; val oy = ry + y * f; add(buildJsonObject { put("score", Math.round(sc * 1000) / 1000.0); put("x", ox); put("y", oy); put("w", tplFull.width); put("h", tplFull.height); put("cx", ox + tplFull.width / 2); put("cy", oy + tplFull.height / 2) }) } })
+        })
+    }
+
+    // ---------------------------------------------------------------- v1.7 OCR + multi-colour
+    /** Public so the connection service can grab preview frames. */
+    suspend fun previewFrame(maxWidth: Int, quality: Int): Pair<ByteArray, String>? {
+        val bmp = captureBitmap() ?: return null
+        val scale = (maxWidth.toFloat() / bmp.width).coerceAtMost(1f)
+        val scaled = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
+        val out = ByteArrayOutputStream(); scaled.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(10, 90), out)
+        return out.toByteArray() to "image/jpeg"
+    }
+
+    private fun recognizerFor(lang: String?) = when (lang) {
+        "zh" -> com.google.mlkit.vision.text.TextRecognition.getClient(com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions.Builder().build())
+        "ja" -> com.google.mlkit.vision.text.TextRecognition.getClient(com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions.Builder().build())
+        "ko" -> com.google.mlkit.vision.text.TextRecognition.getClient(com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions.Builder().build())
+        "hi" -> com.google.mlkit.vision.text.TextRecognition.getClient(com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions.Builder().build())
+        else -> com.google.mlkit.vision.text.TextRecognition.getClient(com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS)
+    }
+
+    private suspend fun readText(a: Action): Outcome {
+        var bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        var ox = 0; var oy = 0
+        a.region?.let { r ->
+            val x = r.x.coerceIn(0, bmp.width - 1); val y = r.y.coerceIn(0, bmp.height - 1)
+            val w = r.w.coerceIn(8, bmp.width - x); val h = r.h.coerceIn(8, bmp.height - y)
+            bmp = Bitmap.createBitmap(bmp, x, y, w, h); ox = x; oy = y
+        }
+        val recognizer = recognizerFor(a.lang)
+        return try {
+            val result = kotlinx.coroutines.tasks.await(recognizer.process(com.google.mlkit.vision.common.InputImage.fromBitmap(bmp, 0)))
+            val lines = buildJsonArray {
+                for (block in result.textBlocks) for (line in block.lines) {
+                    val b = line.boundingBox ?: continue
+                    add(buildJsonObject {
+                        put("text", line.text)
+                        put("x", b.left + ox); put("y", b.top + oy); put("w", b.width()); put("h", b.height())
+                        put("cx", b.centerX() + ox); put("cy", b.centerY() + oy)
+                        line.confidence?.let { put("confidence", Math.round(it * 100) / 100.0) }
+                    })
+                }
+            }
+            Outcome.Ok(data = buildJsonObject { put("count", lines.size); put("lines", lines); put("text", result.text.take(4000)); if (a.region != null) put("region", buildJsonObject { put("x", ox); put("y", oy); put("w", bmp.width); put("h", bmp.height) }) })
+        } catch (e: Exception) {
+            Outcome.Fail("ocr failed: ${e.message}")
+        } finally { runCatching { recognizer.close() } }
+    }
+
+    private suspend fun findColors(a: Action): Outcome {
+        val colors = a.colors?.take(8) ?: return Outcome.Fail("find_colors requires colors")
+        val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        val tol = (a.tolerance ?: 24).coerceIn(0, 128)
+        return Outcome.Ok(data = buildJsonObject {
+            put("results", buildJsonArray { for (c in colors) add(buildJsonObject { put("color", c); for ((k, v) in scanColor(bmp, c, tol, a.region)) put(k, v) }) })
         })
     }
 
