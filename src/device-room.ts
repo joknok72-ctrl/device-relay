@@ -131,6 +131,25 @@ export class DeviceRoom extends DurableObject<Bindings> {
 
     if (url.pathname.endsWith('/info')) return Response.json(this.snapshotInfo())
     if (url.pathname.endsWith('/logs')) return Response.json(this.logs)
+    if (url.pathname.endsWith('/stats')) {
+      // derived from the last 100 log entries: success rate, latency, per-action breakdown
+      const done = this.logs.filter((l) => ['ok', 'failed', 'timeout'].includes(l.status))
+      const ok = done.filter((l) => l.status === 'ok')
+      const lat = ok.map((l) => l.durationMs ?? 0).filter((n) => n > 0).sort((a, b) => a - b)
+      const byType: Record<string, { n: number; ok: number; avgMs: number }> = {}
+      for (const l of done) {
+        const t = byType[l.action.type] ??= { n: 0, ok: 0, avgMs: 0 }
+        t.n++; if (l.status === 'ok') { t.ok++; t.avgMs += l.durationMs ?? 0 }
+      }
+      for (const t of Object.values(byType)) t.avgMs = t.ok ? Math.round(t.avgMs / t.ok) : 0
+      const failures = done.filter((l) => l.status !== 'ok').slice(0, 5).map((l) => ({ action: l.action.type, error: l.error, ts: l.ts }))
+      return Response.json({
+        window: done.length, successRate: done.length ? Math.round((ok.length / done.length) * 100) : null,
+        latencyMs: lat.length ? { p50: lat[Math.floor(lat.length / 2)], p90: lat[Math.floor(lat.length * 0.9)], max: lat[lat.length - 1] } : null,
+        byAction: byType, recentFailures: failures, queued: this.inputQueue.length + (this.inputBusy ? 1 : 0), online: this.phoneSockets().length > 0,
+        totals: { sent: this.info.commandsSent, ok: this.info.commandsOk, failed: this.info.commandsFailed },
+      })
+    }
     if (url.pathname.endsWith('/last-screenshot')) return Response.json(this.lastScreenshot ?? { ts: 0, data: null })
     if (url.pathname.endsWith('/macros')) {
       if (request.method === 'GET') return Response.json({ macros: this.macros })
@@ -333,6 +352,15 @@ export class DeviceRoom extends DurableObject<Bindings> {
           this.lastScreenshot = { ts: Date.now(), data: msg.screenshot, mime: msg.screenshotMime ?? 'image/png' }
           this.broadcastViewers({ kind: 'screenshot', id: msg.id, ts: this.lastScreenshot.ts, mime: this.lastScreenshot.mime, data: msg.screenshot })
         }
+        break
+      }
+      case 'frame': {
+        // live preview frame → viewers only (never stored). Auto-stop if nobody is watching.
+        if (this.viewerSockets().length === 0) {
+          try { ws.send(JSON.stringify({ kind: 'command', id: crypto.randomUUID(), ts: Date.now(), action: { type: 'stream', enabled: false } })) } catch { /* ignore */ }
+          break
+        }
+        this.broadcastViewers({ kind: 'frame', ts: msg.ts, mime: msg.mime, data: msg.data })
         break
       }
       case 'pong':
