@@ -133,7 +133,7 @@ export class DeviceRoom extends DurableObject<Bindings> {
         this.broadcastViewers({ kind: 'status', info: this.snapshotInfo() })
         if (!wasOnline) this.webhook('online')
       } else {
-        server.send(JSON.stringify({ kind: 'snapshot', info: this.snapshotInfo(), logs: this.logs, screenshot: this.lastScreenshot }))
+        server.send(JSON.stringify({ kind: 'snapshot', info: this.snapshotInfo(), logs: this.logs, screenshot: this.lastScreenshot, recording: this.recording ? { active: true, name: this.recording.name, steps: this.recording.steps.length } : { active: false } }))
       }
       return new Response(null, { status: 101, webSocket: client })
     }

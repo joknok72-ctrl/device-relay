@@ -14,6 +14,11 @@
     @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
     .phone-frame{aspect-ratio:9/19.5;background:#000;border-radius:24px;border:6px solid #1e293b;overflow:hidden;display:flex;align-items:center;justify-content:center}
     .phone-frame img{width:100%;height:100%;object-fit:contain}
+    .phone-frame{position:relative}
+    #overlay-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+    #screen-badge{position:absolute;top:8px;left:8px;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(14,165,233,.85);color:#fff}
+    #rec-badge{position:absolute;top:8px;right:8px;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(225,29,72,.9);color:#fff;animation:blink 1s steps(2) infinite}
+    @keyframes blink{50%{opacity:.4}}
     ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
   </style>
 </head>
@@ -40,6 +45,9 @@
       </div>
       <div class="phone-frame mx-auto max-w-xs">
         <img id="shot-img" alt="screenshot" class="hidden">
+        <canvas id="overlay-canvas" width="1080" height="2340"></canvas>
+        <span id="screen-badge" class="hidden"></span>
+        <span id="rec-badge" class="hidden"><i class="fas fa-circle text-[8px]"></i> REC</span>
         <p id="shot-empty" class="text-slate-600 text-sm px-6 text-center">لم تُلتقط أي صورة بعد. عندما ينفّذ الـ AI أمر capture_screen ستظهر هنا مباشرة.</p>
       </div>
     </section>
@@ -111,6 +119,7 @@
   }
 
   function renderStatus(info) {
+    if (info.screen && info.screen.w) { screenW = info.screen.w; screenH = info.screen.h }
     const b = $('online-badge')
     b.textContent = info.online ? 'ONLINE' : 'OFFLINE'
     b.className = 'text-xs px-2 py-1 rounded-full ' + (info.online ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300')
@@ -139,6 +148,52 @@
     while (tb.children.length > 150) { const last = tb.lastElementChild; rows.forEach((v, k) => { if (v === last) rows.delete(k) }); last.remove() }
   }
   let live = false, lastFrame = 0
+  // ---- v2.0 overlays: what the AI taps / detects / reads, drawn on top of the screenshot in ORIGINAL pixel space
+  let screenW = 1080, screenH = 2400
+  const events = []  // {ts, ...overlay}
+  function pushOverlay(o) {
+    events.push(o); if (events.length > 60) events.shift()
+    if (o.type === 'screen') { const b = $('screen-badge'); if (o.name) { b.textContent = `${o.name} ${(o.confidence * 100 | 0)}%`; b.classList.remove('hidden') } else b.classList.add('hidden') }
+    drawOverlays()
+  }
+  function drawOverlays() {
+    const cv = $('overlay-canvas'); const img = $('shot-img')
+    if (cv.width !== screenW || cv.height !== screenH) { cv.width = screenW; cv.height = screenH }
+    // match the contained image box (object-fit: contain)
+    const fw = cv.clientWidth, fh = cv.clientHeight, ar = screenW / screenH
+    let bw = fw, bh = fw / ar; if (bh > fh) { bh = fh; bw = fh * ar }
+    cv.style.left = ((fw - bw) / 2) + 'px'; cv.style.top = ((fh - bh) / 2) + 'px'; cv.style.width = bw + 'px'; cv.style.height = bh + 'px'
+    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height)
+    const now = Date.now(); const lw = Math.max(3, screenW / 250)
+    ctx.font = `${Math.round(screenW / 32)}px sans-serif`; ctx.textBaseline = 'top'
+    for (const o of events) {
+      const age = now - o.ts; const ttl = o.type === 'ocr' ? 6000 : o.type === 'detect' ? 5000 : 2500
+      if (age > ttl) continue
+      const a = 1 - age / ttl; ctx.globalAlpha = Math.max(0.15, a); ctx.lineWidth = lw
+      if (o.type === 'tap') {
+        ctx.strokeStyle = o.reflex ? '#f472b6' : '#facc15'; ctx.fillStyle = ctx.strokeStyle
+        for (const p of o.points || []) { ctx.beginPath(); ctx.arc(p.x, p.y, screenW / 28 * (1 + (1 - a) * 0.8), 0, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.arc(p.x, p.y, lw * 1.5, 0, Math.PI * 2); ctx.fill() }
+        if (o.repeat) ctx.fillText(`×${o.repeat}`, (o.points[0].x + screenW / 24), o.points[0].y - screenW / 40)
+      } else if (o.type === 'swipe') {
+        ctx.strokeStyle = '#38bdf8'; ctx.beginPath(); ctx.moveTo(o.from.x, o.from.y); ctx.lineTo(o.to.x, o.to.y); ctx.stroke()
+        ctx.fillStyle = '#38bdf8'; ctx.beginPath(); ctx.arc(o.to.x, o.to.y, lw * 2.5, 0, Math.PI * 2); ctx.fill()
+      } else if (o.type === 'path') {
+        ctx.strokeStyle = '#38bdf8'; ctx.beginPath(); (o.points || []).forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke()
+      } else if (o.type === 'detect' || o.type === 'ocr') {
+        const col = o.type === 'ocr' ? '#a3e635' : (o.color || '#f97316')
+        ctx.strokeStyle = col; ctx.fillStyle = col
+        for (const b of o.boxes || []) {
+          if (b.color) { ctx.strokeStyle = b.color; ctx.fillStyle = b.color }
+          if (b.w && b.h) ctx.strokeRect(b.x, b.y, b.w, b.h)
+          if (b.cx !== undefined && !(o.type === 'ocr')) { ctx.beginPath(); ctx.moveTo(b.cx - lw * 3, b.cy); ctx.lineTo(b.cx + lw * 3, b.cy); ctx.moveTo(b.cx, b.cy - lw * 3); ctx.lineTo(b.cx, b.cy + lw * 3); ctx.stroke() }
+          if (b.label) ctx.fillText(String(b.label).slice(0, 24), (b.x ?? b.cx) + 4, (b.y ?? b.cy) - screenW / 30)
+        }
+      }
+    }
+    ctx.globalAlpha = 1
+  }
+  setInterval(drawOverlays, 150)
+  window.addEventListener('resize', drawOverlays)
   function showFrame(m) {
     if (!m || !m.data) return
     lastFrame = Date.now()
@@ -177,11 +232,13 @@
     ws.onclose = () => { c.innerHTML = '<i class="fas fa-circle text-xs"></i> انقطع — إعادة اتصال…'; c.className = 'px-2 py-1 rounded bg-slate-800 text-slate-400'; setTimeout(() => current === deviceId && connect(deviceId), 2000) }
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data)
-      if (m.kind === 'snapshot') { renderStatus(m.info); (m.logs || []).forEach(e => upsertLog(e, false)); showShot(m.screenshot) }
+      if (m.kind === 'snapshot') { renderStatus(m.info); (m.logs || []).forEach(e => upsertLog(e, false)); showShot(m.screenshot); if (m.recording) { const b = $('rec-badge'); b.classList.toggle('hidden', !m.recording.active); if (m.recording.active) b.innerHTML = `<i class="fas fa-circle text-[8px]"></i> REC ${m.recording.name || ''}` } }
       else if (m.kind === 'status') renderStatus(m.info)
       else if (m.kind === 'log') upsertLog(m.entry)
       else if (m.kind === 'screenshot') showShot(m)
       else if (m.kind === 'frame') showFrame(m)
+      else if (m.kind === 'overlay') pushOverlay(m)
+      else if (m.kind === 'recording') { const b = $('rec-badge'); b.classList.toggle('hidden', !m.active); if (m.active) b.innerHTML = `<i class="fas fa-circle text-[8px]"></i> REC ${m.name || ''}` }
     }
   }
 
