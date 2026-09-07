@@ -60,7 +60,7 @@ ws.onmessage = (ev) => {
     if (a.type === 'read_text') res.data = { count: 3, lines: [
       { text: 'SCORE 1250', x: 40, y: 60, w: 300, h: 60, cx: 190, cy: 90 },
       { text: 'PLAY', x: 440, y: 950, w: 200, h: 80, cx: 540, cy: 990 },
-      { text: 'Continue', x: 400, y: 1600, w: 280, h: 70, cx: 540, cy: 1635 } ], text: 'SCORE 1250\nPLAY\nContinue' }
+      { text: 'Continue', x: 400, y: 1600, w: 280, h: 70, cx: 540, cy: 1635 } ], text: 'SCORE 1250\nPLAY\nContinue', ...(a.region ? { region: a.region } : {}) }
     if (a.type === 'find_colors') res.data = { results: a.colors.map(c => c === '#ff0000' ? { color: c, found: true, count: 1200, cx: 540, cy: 1500, bounds: { x: 500, y: 1450, w: 80, h: 100 } } : { color: c, found: false, count: 0 }) }
     if (a.type === 'stream') { streaming = !!a.enabled; res.data = { streaming }; if (streaming) { const push = () => { if (!streaming) return; ws.send(JSON.stringify({ kind: 'frame', data: FAKE_SCREEN, mime: 'image/png', ts: Date.now() })); setTimeout(push, 500) }; setTimeout(push, 100) } }
     if (a.type === 'screen_hash') { hashCounter++; res.data = { hash: hashCounter < 3 ? 'aaaa' : 'bbbb', w: 1080, h: 2400 } }

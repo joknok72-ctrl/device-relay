@@ -44,12 +44,13 @@ check stats-byaction '"tap":{' "$R"
 check stats-failures '"recentFailures":[{"action":"tap_element"' "$R"
 
 echo "== live preview"
-check live-on '"streaming":true' "$(call '{"name":"live_preview","arguments":{"enabled":true,"fps":2}}')"
-# a viewer must be connected for frames to flow; open a viewer ws for 1.5s and count frames
+# viewer connects FIRST (frames are only relayed while someone watches), then stream is enabled
 FRAMES=$(node -e '
 const ws = new WebSocket(process.argv[1]); let n=0
 ws.onmessage = e => { try { if (JSON.parse(e.data).kind==="frame") n++ } catch{} }
-setTimeout(()=>{ console.log(n); process.exit(0) }, 1800)' "ws://localhost:3000/api/ws/viewer/$D?token=$T")
+ws.onopen = () => fetch(process.argv[2]+"/api/devices/"+process.argv[3]+"/tools/call",{method:"POST",headers:{Authorization:"Bearer "+process.argv[4],"Content-Type":"application/json"},body:JSON.stringify({name:"live_preview",arguments:{enabled:true,fps:2}})}).then(r=>r.json()).then(j=>{ if(!j.ok) console.error("live_preview failed", j) })
+setTimeout(()=>{ console.log(n); process.exit(0) }, 2200)' "ws://localhost:3000/api/ws/viewer/$D?token=$T" "$U" "$D" "$T")
+check live-on-with-viewer 'yes' "$([[ ${FRAMES:-0} -ge 1 ]] && echo yes || echo "no ($FRAMES frames)")"
 check live-frames-to-viewer 'yes' "$([[ ${FRAMES:-0} -ge 2 ]] && echo yes || echo "no ($FRAMES frames)")"
 check live-off '"streaming":false' "$(call '{"name":"live_preview","arguments":{"enabled":false}}')"
 check live-invalid-fps 'yes' "$(call '{"name":"live_preview","arguments":{"enabled":false,"fps":99}}' | j '"yes" if d["ok"] else "no"')"
