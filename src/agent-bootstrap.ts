@@ -8,7 +8,7 @@ import { TOOLS } from './tools'
  */
 export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = []): string {
   const notesBlock = notes.length === 0
-    ? '  (none yet — use `remember` when you learn a layout/coordinate/trick worth keeping)'
+    ? '  (none yet — use "remember" when you learn a layout/coordinate/trick worth keeping)'
     : notes.map((n, i) => `  [${i}] ${new Date(n.ts).toISOString().slice(0, 10)}  ${n.text}`).join('\n')
   const online = devices.filter((d) => d.online)
   const target = online[0] ?? devices[0]
@@ -82,13 +82,13 @@ ${notesBlock}
 8. Use "batch" to chain predictable steps (open → waitfor → tap → type → shot) in ONE call; it stops at the first failure and returns every step result.
 9. Input actions are serialized per phone (a queue); read-only actions (shot/ui/notifs) run in parallel. Results include queuedMs when they had to wait.
 10. For OTP codes / incoming messages use "notifs" (get_notifications) instead of opening apps.
-11. Read section 5b first; after finishing, `remember` anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
+11. Read section 5b first; after finishing, "remember" anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
 
 ## 7. GAME PLAYBOOK (canvas / OpenGL apps have NO ui tree — vision + precise input only)
 Setup (once per game):
   a. ./phone.sh shot g.png 1080 jpeg 100     # high-res + grid every 100px → read exact coordinates off the labelled grid
-  b. Identify controls/HUD. `remember` their coordinates: "GameX: jump=(950,2100) fire=(200,2100) hp-bar y=180 x 120..960".
-  c. Sample key colours with get_pixels (e.g. HP bar red, enemy colour) and `remember` them for find_color.
+  b. Identify controls/HUD. "remember" their coordinates: "GameX: jump=(950,2100) fire=(200,2100) hp-bar y=180 x 120..960".
+  c. Sample key colours with get_pixels (e.g. HP bar red, enemy colour) and "remember" them for find_color.
 Loop (each turn, ONE round-trip):
   ./phone.sh see tap 540 1500                # act_and_see: action + wait + screenshot in one call
   ./phone.sh see swipe 300 1800 800 1800 150 # ... or any input tool
@@ -103,6 +103,6 @@ Cheap perception (no image transfer):
   get_pixels [{x,y}...]         → read HP/cooldown/state colours in ~50ms
   find_color "#rrggbb" tol region → locate enemies/gems/buttons; returns centre + bbox + count
   wait_for_screen change|stable → wait for a level to load / animation to end instead of guessing sleeps
-Rules for games: never spam raw `tap` in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then `remember` how you dismissed it.
+Rules for games: never spam raw `tap` in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }
