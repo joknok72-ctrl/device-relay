@@ -1,9 +1,10 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, Note, PhoneMessage } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, Macro, Note, PhoneMessage } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
 const MAX_NOTES = 40
+const MAX_MACROS = 30
 const MAX_QUEUE = 32
 
 export interface CommandResult {
@@ -42,6 +43,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private lastScreenshot: { ts: number; data: string; mime: string } | null = null
   /** Persistent notes written by AI agents (game layouts, coordinates, learnings) — survive across chats. */
   private notes: Note[] = []
+  /** Named replayable tool sequences saved by agents. */
+  private macros: Macro[] = []
 
   private inputBusy = false
   private inputQueue: Array<() => void> = []
@@ -56,6 +59,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (logs) this.logs = logs
       const notes = await ctx.storage.get<Note[]>('notes')
       if (notes) this.notes = notes
+      const macros = await ctx.storage.get<Macro[]>('macros')
+      if (macros) this.macros = macros
     })
   }
 
@@ -127,6 +132,32 @@ export class DeviceRoom extends DurableObject<Bindings> {
     if (url.pathname.endsWith('/info')) return Response.json(this.snapshotInfo())
     if (url.pathname.endsWith('/logs')) return Response.json(this.logs)
     if (url.pathname.endsWith('/last-screenshot')) return Response.json(this.lastScreenshot ?? { ts: 0, data: null })
+    if (url.pathname.endsWith('/macros')) {
+      if (request.method === 'GET') return Response.json({ macros: this.macros })
+      if (request.method === 'POST') {
+        const m = (await request.json()) as Partial<Macro>
+        const name = String(m.name ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 40)
+        if (!name || !Array.isArray(m.steps) || m.steps.length === 0 || m.steps.length > 25) return Response.json({ ok: false, error: 'name and steps[1..25] required' }, { status: 400 })
+        const rec: Macro = { name, steps: m.steps.map((s) => ({ name: String(s.name), arguments: s.arguments ?? {} })), description: m.description?.slice(0, 200), ts: Date.now(), runs: 0 }
+        const i = this.macros.findIndex((x) => x.name === name)
+        if (i >= 0) { rec.runs = this.macros[i].runs; this.macros[i] = rec } else { this.macros.push(rec); if (this.macros.length > MAX_MACROS) this.macros.shift() }
+        await this.ctx.storage.put('macros', this.macros)
+        return Response.json({ ok: true, saved: name, count: this.macros.length })
+      }
+      if (request.method === 'DELETE') {
+        const name = url.searchParams.get('name')
+        const before = this.macros.length
+        this.macros = name ? this.macros.filter((x) => x.name !== name) : []
+        await this.ctx.storage.put('macros', this.macros)
+        return Response.json({ ok: true, removed: before - this.macros.length })
+      }
+    }
+    if (url.pathname.endsWith('/macro-ran') && request.method === 'POST') {
+      const { name } = (await request.json()) as { name: string }
+      const m = this.macros.find((x) => x.name === name)
+      if (m) { m.runs = (m.runs ?? 0) + 1; await this.ctx.storage.put('macros', this.macros) }
+      return Response.json({ ok: true })
+    }
     if (url.pathname.endsWith('/notes')) {
       if (request.method === 'GET') return Response.json({ notes: this.notes })
       if (request.method === 'POST') {
