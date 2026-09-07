@@ -14,7 +14,7 @@ import { authenticate, canAccess, extractToken, randomToken, rateLimit, registry
 
 export { DeviceRoom, DeviceRegistry }
 
-const VERSION = '1.5.0'
+const VERSION = '1.6.0'
 
 type Auth = AuthContext & { readOnly?: boolean }
 type Env = { Bindings: AuthEnv; Variables: { auth: Auth } }
@@ -79,10 +79,18 @@ app.get('/agent/:token', async (c) => {
   const infos = await allDevices(c.env, auth)
   const target = infos.find((d) => d.online) ?? infos[0]
   let notes: import('./types').Note[] = []
+  let macros: import('./types').Macro[] = []
   if (target) {
-    try { notes = ((await (await room(c, target.deviceId).fetch(`https://do/notes?deviceId=${target.deviceId}`)).json()) as { notes: import('./types').Note[] }).notes } catch { /* ignore */ }
+    const r = room(c, target.deviceId)
+    try {
+      const [n, m] = await Promise.all([
+        r.fetch(`https://do/notes?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ notes: import('./types').Note[] }>),
+        r.fetch(`https://do/macros?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ macros: import('./types').Macro[] }>),
+      ])
+      notes = n.notes; macros = m.macros
+    } catch { /* ignore */ }
   }
-  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos, auth, notes), 200, { 'Cache-Control': 'no-store' })
+  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos, auth, notes, macros), 200, { 'Cache-Control': 'no-store' })
 })
 
 /** MCP with token in the URL (for clients that cannot set headers) */

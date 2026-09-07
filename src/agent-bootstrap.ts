@@ -1,4 +1,4 @@
-import type { AuthContext, DeviceInfo, Note } from './types'
+import type { AuthContext, DeviceInfo, Macro, Note } from './types'
 import { TOOLS } from './tools'
 
 /**
@@ -6,7 +6,10 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = []): string {
+export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = []): string {
+  const macrosBlock = macros.length === 0
+    ? '  (none yet — use save_macro for sequences you will repeat: open game + skip intro, collect daily reward, ...)'
+    : macros.map((m) => `  run_macro "${m.name}"  (${m.steps.length} steps, ran ${m.runs ?? 0}x)${m.description ? `  — ${m.description}` : ''}`).join('\n')
   const notesBlock = notes.length === 0
     ? '  (none yet — use "remember" when you learn a layout/coordinate/trick worth keeping)'
     : notes.map((n, i) => `  [${i}] ${new Date(n.ts).toISOString().slice(0, 10)}  ${n.text}`).join('\n')
@@ -71,6 +74,9 @@ ${toolLines}
 ## 5b. Memory from previous sessions on ${target?.deviceId ?? 'this device'} (remember/recall)
 ${notesBlock}
 
+## 5c. Saved macros on this device (run_macro / save_macro / list_macros)
+${macrosBlock}
+
 ## 6. Operating rules
 1. Observe before acting: "ui" first (exact, cheap). Use "shot" when visuals matter (games, images, WebView) or when ui is empty.
 2. After every action that changes the screen, observe again and verify before the next step.
@@ -103,6 +109,15 @@ Cheap perception (no image transfer):
   get_pixels [{x,y}...]         → read HP/cooldown/state colours in ~50ms
   find_color "#rrggbb" tol region → locate enemies/gems/buttons; returns centre + bbox + count
   wait_for_screen change|stable → wait for a level to load / animation to end instead of guessing sleeps
+Reflexes (v1.6 — the phone waits/reacts, you don't poll):
+  watch_color "#rrggbb" region appear=true|false timeoutMs → blocks until colour appears/vanishes; returns cx,cy,waitedMs
+  wait_pixel x y "#rrggbb" appear                        → same for one pixel (cooldown ready, lane clear)
+  tap_color "#rrggbb" [region] [offsetX/Y]              → find + tap in one call
+  screen_diff                                             → which regions changed since last call (changedPct, boxes) — cheap "what happened?"
+  find_image <base64 template> [region] threshold         → locate an icon/sprite you cropped earlier (capture_screen region=...)
+  game_loop when={find_color…} then={tap x:"$cx" y:"$cy"} stopWhen={…} iterations → server runs the whole loop; ONE call replaces 20-60
+  save_macro name steps[] / run_macro name              → reusable sequences (open game, skip intro, daily reward)
+Decision guide: known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
 Rules for games: never spam raw "tap" in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }
