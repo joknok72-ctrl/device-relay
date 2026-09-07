@@ -19,6 +19,8 @@
 #   ./phone.sh objects '#rrggbb' [tol] [x,y,w,h]        # v1.9 find_objects: every blob (cx,cy,area) sorted by size
 #   ./phone.sh react '#rrggbb' [x,y,w,h] [maxTriggers] [timeoutMs]   # v1.9 auto_react: phone-side reflex taps
 #   ./phone.sh label "main-menu" | which | screens | unlabel <name|*>   # v1.9 screen memory
+#   ./phone.sh rec start <name> ["desc"] | rec stop [name] | rec status | rec cancel   # v2.0 record_macro (learn by doing)
+#   ./phone.sh react2 '<json: {color, lanes:[...], stopColor, ...}>'                  # v2.0 multi-lane reflex loop
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -160,6 +162,16 @@ print(json.dumps(a))' "$1" "${2:-}" "${3:-20}" "${4:-10000}")" | pretty ;;
 import json,sys; d=json.load(sys.stdin)
 for s in d.get("labels",[]): print("  %-24s %-32s %s" % (s["name"], s.get("app") or "", " ".join(s.get("words",[]))))
 print("(%d labelled screens)" % d.get("count",0))' ;;
+  rec)     sub="${1:-status}"; shift || true; case "$sub" in
+             start)  call record_macro "$(python3 -c 'import json,sys; print(json.dumps({"start":True,"name":sys.argv[1],"description":sys.argv[2]}))' "${1:?name}" "${2:-}")" | pretty ;;
+             stop)   call record_macro "$(python3 -c 'import json,sys; a={"start":False}
+if len(sys.argv)>1 and sys.argv[1]: a["name"]=sys.argv[1]
+print(json.dumps(a))' "${1:-}")" | pretty ;;
+             status) call record_macro '{"status":true}' | pretty ;;
+             cancel) call record_macro '{"cancel":true}' | pretty ;;
+             *) echo "rec: start <name> | stop [name] | status | cancel" >&2; exit 1 ;;
+           esac ;;
+  react2)  call auto_react "$1" | pretty ;;
   unlabel) call identify_screen "{\"delete\":\"${1:-*}\"}" | pretty ;;
   history) call recent_actions "{\"limit\":${1:-20}}" | python3 -c '
 import json,sys; d=json.load(sys.stdin)
@@ -200,5 +212,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,40p' "$0" ;;
+  *) sed -n '2,42p' "$0" ;;
 esac

@@ -78,6 +78,8 @@ curl -sS "$RELAY_URL/phone.sh" -o phone.sh && chmod +x phone.sh
 ./phone.sh objects '#rrggbb' [tol] [x,y,w,h]   # v1.9 find_objects: each blob (cx,cy,area) sorted by size
 ./phone.sh react '#rrggbb' [x,y,w,h] [maxTriggers] [timeoutMs]   # v1.9 auto_react: phone taps the colour the instant it appears (reflex loop)
 ./phone.sh label "main-menu" | which | screens     # v1.9 screen memory: label current screen / identify / list
+./phone.sh rec start <name> | rec stop | rec status | rec cancel   # v2.0 record_macro: your next input calls become a replayable macro
+./phone.sh react2 '<json auto_react args with lanes/stopColor>'    # v2.0 multi-lane reflex loop
 ./phone.sh call <tool> '<json args>'   # any tool below
 
 ## 4. Raw HTTP (if you prefer curl / another language)
@@ -147,6 +149,11 @@ Reflexes v2 + object detection + screen memory (v1.9):
   auto_react "#rrggbb" region maxTriggers timeoutMs [tapX/tapY | tapOffsetX/Y] → the PHONE taps the colour within ~80ms of it appearing, repeatedly. Use for whack-a-mole, rhythm hit-lines (thin region), "tap when green", catching items. One call replaces a whole reflex loop over the network.
   label_screen "name"  once per distinct screen (menu, playing, level-complete, game-over, shop, ad). Afterwards observe returns screenName and identify_screen gives confidence.
   identify_screen  → where am I? null = new screen → look + label it. Usable as do_until/game_loop condition (matches when any label is recognised).
+Learning + multi-lane reflexes (v2.0):
+  record_macro start=true name="open-level"  → then do the steps normally (open_app, smart_tap, tap, type_text, wait...) → record_macro start=false. Real pauses are kept as wait steps. Next session: run_macro "open-level". Record BEFORE doing any sequence you expect to repeat.
+  auto_react lanes=[{color,region,tapX,tapY},{...}] → up to 6 independent triggers in ONE phone-side loop (rhythm game: one lane per column; each lane taps its own button). A lane may swipe instead: {color,region,swipe:{dx:0,dy:-600}} = "jump when red obstacle appears".
+  auto_react stopColor="#rrggbb" stopRegion={...} → loop ends the instant the game-over / level-complete colour shows, so you never tap into a menu by mistake.
+  The human /monitor page now draws your taps, swipes, detections, OCR boxes, the screenName badge and a REC badge live — tell the user to open it if they want to see what you see.
 Composite intelligence (v1.8 — fewer, smarter round-trips):
   observe [grid] [colors] [region]   → image + OCR lines + app + colour hits + what changed, in parallel. Your default look in games.
   smart_tap "label" [fallback{x,y}]  → ui element → OCR text → fallback; returns via + changed. Use for any named button.
@@ -161,7 +168,7 @@ OCR (v1.7 — read text where there is no ui tree):
   find_colors ["#a","#b",...]  → several colours in one frame (enemies + gems + HP at once)
   session_stats                → your own success rate / latency; adapt if flaky
   live_preview true            → stream frames to the human's /monitor page when they want to watch
-Decision guide: several same-colour targets → find_objects then tap_sequence. Must react in <200ms → auto_react (phone-side). Lost / "which screen is this?" → identify_screen. Named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
+Decision guide: about to do a repeatable sequence → record_macro first. Rhythm/multi-column reflexes → auto_react with lanes + stopColor. Several same-colour targets → find_objects then tap_sequence. Must react in <200ms → auto_react (phone-side). Lost / "which screen is this?" → identify_screen. Named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
 Rules for games: never spam raw "tap" in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }
