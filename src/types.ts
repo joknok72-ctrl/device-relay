@@ -60,7 +60,7 @@ export type Action =
 export interface Point { x: number; y: number }
 export interface SeqPoint extends Point { delayMs?: number; durationMs?: number }
 export interface Region { x: number; y: number; w: number; h: number }
-export interface Note { text: string; ts: number }
+export interface Note { text: string; ts: number; /** package name of the app open when the note was saved */ app?: string }
 /** Named, replayable tool sequence stored per device. */
 export interface Macro { name: string; steps: { name: string; arguments?: Record<string, unknown> }[]; description?: string; ts: number; runs?: number }
 

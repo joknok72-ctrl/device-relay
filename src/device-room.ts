@@ -180,10 +180,13 @@ export class DeviceRoom extends DurableObject<Bindings> {
     if (url.pathname.endsWith('/notes')) {
       if (request.method === 'GET') return Response.json({ notes: this.notes })
       if (request.method === 'POST') {
-        const { text } = (await request.json()) as { text?: string }
+        const { text, app } = (await request.json()) as { text?: string; app?: string }
         const t = String(text ?? '').trim().slice(0, 2000)
         if (!t) return Response.json({ ok: false, error: 'text required' }, { status: 400 })
-        this.notes.push({ text: t, ts: Date.now() })
+        const note: Note = { text: t, ts: Date.now() }
+        const tag = String(app ?? '').trim().slice(0, 120)
+        if (tag) note.app = tag
+        this.notes.push(note)
         if (this.notes.length > MAX_NOTES) this.notes.splice(0, this.notes.length - MAX_NOTES)
         await this.ctx.storage.put('notes', this.notes)
         return Response.json({ ok: true, count: this.notes.length })

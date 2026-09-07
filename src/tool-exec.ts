@@ -93,6 +93,11 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'tap_text') return tapText(env, deviceId, args, opts)
   if (mapped.special === 'wait_for_text') return waitForText(env, deviceId, args, opts)
   if (mapped.special === 'session_stats') return (await (await room(env, deviceId).fetch(`https://do/stats?deviceId=${deviceId}`)).json()) as ToolResult
+  if (mapped.special === 'observe') return observe(env, deviceId, args, opts)
+  if (mapped.special === 'smart_tap') return smartTap(env, deviceId, args, opts)
+  if (mapped.special === 'do_until') return doUntil(env, deviceId, args, opts)
+  if (mapped.special === 'dismiss_popups') return dismissPopups(env, deviceId, args, opts)
+  if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
 
   let actionInput: Record<string, unknown> | undefined = mapped.action
   if (mapped.special === 'scroll') {
@@ -225,12 +230,24 @@ async function hashOf(env: Bindings, deviceId: string): Promise<{ ok: boolean; h
   return { ok: r.ok && !!d?.hash, hash: d?.hash, error: r.error }
 }
 
+/** Best-effort current foreground package (empty string when unknown). */
+async function currentPackage(env: Bindings, deviceId: string): Promise<string> {
+  try {
+    const r = await executeTool(env, deviceId, 'get_current_app', {})
+    const d = r.data as { package?: string } | undefined
+    return r.ok && typeof d?.package === 'string' ? d.package : ''
+  } catch { return '' }
+}
+
 /** Persistent per-device notes (memory across chats). */
 async function remember(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
   const text = String(args.text ?? '').trim()
   if (!text) return { ok: false, error: 'remember requires text' }
-  const r = await room(env, deviceId).fetch(`https://do/notes?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-  return (await r.json()) as ToolResult
+  const app = typeof args.app === 'string' && args.app.trim() ? args.app.trim() : await currentPackage(env, deviceId)
+  const r = await room(env, deviceId).fetch(`https://do/notes?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, app: app || undefined }) })
+  const out = (await r.json()) as ToolResult
+  if (app) out.app = app
+  return out
 }
 async function recall(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
   if (args.forget !== undefined && args.forget !== null) {
@@ -239,8 +256,201 @@ async function recall(env: Bindings, deviceId: string, args: Record<string, unkn
     return (await r.json()) as ToolResult
   }
   const r = await room(env, deviceId).fetch(`https://do/notes?deviceId=${deviceId}`)
-  const { notes } = (await r.json()) as { notes: { text: string; ts: number }[] }
-  return { ok: true, count: notes.length, notes: notes.map((n, i) => ({ index: i, text: n.text, ts: n.ts })) }
+  const { notes } = (await r.json()) as { notes: { text: string; ts: number; app?: string }[] }
+  let filter = typeof args.app === 'string' ? args.app.trim() : ''
+  if (filter === 'current') filter = await currentPackage(env, deviceId)
+  const all = notes.map((n, i) => ({ index: i, text: n.text, ts: n.ts, ...(n.app ? { app: n.app } : {}) }))
+  const list = filter ? all.filter((n) => n.app === filter) : all
+  return { ok: true, count: list.length, total: all.length, ...(filter ? { app: filter } : {}), notes: list }
+}
+
+// ---------------------------------------------------------------- v1.8 composite intelligence
+
+/** observe: screenshot + OCR + current app + colours + diff, all in parallel (read-only actions bypass the queue). */
+async function observe(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const t0 = Date.now()
+  const wantImage = args.image !== false, wantOcr = args.ocr !== false, wantDiff = args.diff !== false
+  const colors = Array.isArray(args.colors) ? (args.colors as unknown[]).filter((c) => typeof c === 'string').slice(0, 8) : []
+  const shotArgs: Record<string, unknown> = {}
+  for (const k of ['maxWidth', 'grid', 'region']) if (args[k] !== undefined) shotArgs[k] = args[k]
+  const tasks: Promise<[string, ToolResult]>[] = [
+    executeTool(env, deviceId, 'get_current_app', {}, opts).then((r) => ['app', r] as [string, ToolResult]),
+  ]
+  if (wantImage) tasks.push(executeTool(env, deviceId, 'capture_screen', shotArgs, opts).then((r) => ['shot', r]))
+  if (wantOcr) tasks.push(executeTool(env, deviceId, 'read_text', args.region ? { region: args.region } : {}, opts).then((r) => ['ocr', r]))
+  if (colors.length) tasks.push(executeTool(env, deviceId, 'find_colors', { colors, tolerance: args.tolerance, region: args.region }, opts).then((r) => ['colors', r]))
+  if (wantDiff) tasks.push(executeTool(env, deviceId, 'screen_diff', {}, opts).then((r) => ['diff', r]))
+  const settled = await Promise.all(tasks.map((p) => p.catch((e) => ['error', { ok: false, error: String(e) }] as [string, ToolResult])))
+  const parts: Record<string, ToolResult> = {}
+  for (const [k, r] of settled) parts[k] = r
+
+  const out: ToolResult = { ok: true, durationMs: Date.now() - t0 }
+  const appD = parts.app?.data as { package?: string; label?: string } | undefined
+  out.app = parts.app?.ok ? { package: appD?.package, label: appD?.label } : { ok: false, error: parts.app?.error }
+  if (parts.shot) {
+    if (parts.shot.ok) { out.image = parts.shot.image; out.screen = parts.shot.screen } else out.imageError = parts.shot.error
+  }
+  if (parts.ocr) {
+    const d = parts.ocr.data as { lines?: unknown[]; text?: string } | undefined
+    out.text = parts.ocr.ok ? { count: d?.lines?.length ?? 0, lines: d?.lines ?? [] } : { ok: false, error: parts.ocr.error }
+  }
+  if (parts.colors) {
+    const d = parts.colors.data as { results?: unknown[] } | undefined
+    out.colors = parts.colors.ok ? d?.results ?? [] : { ok: false, error: parts.colors.error }
+  }
+  if (parts.diff) {
+    const d = parts.diff.data as { changedPct?: number; regions?: unknown[]; baseline?: boolean } | undefined
+    out.changed = parts.diff.ok ? { pct: d?.changedPct ?? 0, regions: (d?.regions ?? []).slice(0, 6), baseline: d?.baseline === true } : { ok: false, error: parts.diff.error }
+  }
+  // the call is ok if at least the screenshot (or, image=false, the OCR/app) worked
+  out.ok = wantImage ? !!parts.shot?.ok : (parts.ocr?.ok ?? parts.app?.ok ?? false)
+  if (!out.ok) out.error = parts.shot?.error ?? parts.ocr?.error ?? parts.app?.error ?? 'observe failed'
+  return out
+}
+
+/** smart_tap: ui element → OCR text → fallback point, then optional change verification. */
+async function smartTap(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const q = String(args.text ?? '').trim()
+  const id = typeof args.elementId === 'string' ? args.elementId.trim() : ''
+  if (!q && !id) return { ok: false, error: 'smart_tap requires text (or elementId)' }
+  const index = Math.max(0, Number(args.index) || 0)
+  const t0 = Date.now()
+  const tried: string[] = []
+  let target: { x: number; y: number } | undefined, via: 'ui' | 'ocr' | 'fallback' | undefined, match: unknown
+
+  const ui = await uiElements(env, deviceId)
+  tried.push(`ui:${ui.ok ? ui.elements.length : 'err'}`)
+  if (ui.ok && ui.elements.length) {
+    const hits = ui.elements.filter((e) => {
+      const idOk = !id || e.id?.toLowerCase() === id.toLowerCase()
+      const textOk = !q || [e.text, e.desc, e.hint].some((t) => typeof t === 'string' && t.toLowerCase().includes(q.toLowerCase()))
+      return idOk && textOk
+    })
+    const exact = q ? hits.filter((e) => [e.text, e.desc].some((t) => typeof t === 'string' && t.trim().toLowerCase() === q.toLowerCase())) : []
+    const pool = exact.length ? exact : hits
+    const h = pool[Math.min(index, pool.length - 1)]
+    if (h) { target = { x: h.cx, y: h.cy }; via = 'ui'; match = { i: h.i, text: h.text, id: h.id } }
+  }
+  if (!target && q) {
+    const o = await ocrLines(env, deviceId, args.region, opts)
+    tried.push(`ocr:${o.ok ? o.lines.length : 'err'}`)
+    if (o.ok) {
+      const hits = matchLines(o.lines, q)
+      const h = hits[Math.min(index, hits.length - 1)]
+      if (h) { target = { x: h.cx, y: h.cy }; via = 'ocr'; match = { text: h.text, confidence: (h as { confidence?: number }).confidence } }
+    }
+  }
+  const fb = args.fallback as { x?: unknown; y?: unknown } | undefined
+  if (!target && fb && Number.isFinite(Number(fb.x)) && Number.isFinite(Number(fb.y))) { target = { x: Number(fb.x), y: Number(fb.y) }; via = 'fallback' }
+  if (!target) return { ok: false, found: false, error: `"${q || id}" not found via ui or ocr (no fallback given)`, tried, durationMs: Date.now() - t0 }
+
+  const verify = args.verify !== false
+  const before = verify ? await hashOf(env, deviceId) : { ok: false }
+  const t = await executeTool(env, deviceId, 'tap', target, opts)
+  const out: ToolResult = { ...t, found: true, via, match, tapped: target, tried }
+  if (t.ok && verify && before.ok) {
+    const waitMs = Math.min(Math.max(Number(args.waitMs ?? 500) || 0, 0), 5000)
+    if (waitMs) await new Promise((r) => setTimeout(r, waitMs))
+    const after = await hashOf(env, deviceId)
+    out.changed = after.ok ? after.hash !== before.hash : undefined
+    if (out.changed === false) out.hint = 'screen did not change after the tap — target may be disabled, or needs a longer waitMs'
+  }
+  out.durationMs = Date.now() - t0
+  return out
+}
+
+/** do_until: repeat action until an observation matches (checked before every try). */
+async function doUntil(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  type Call = { name?: string; arguments?: Record<string, unknown> }
+  const action = args.action as Call | undefined, until = args.until as Call | undefined
+  if (!action?.name || !TOOLS.some((t) => t.name === action.name)) return { ok: false, error: 'action must be a valid tool {name, arguments}' }
+  if (['do_until', 'game_loop', 'batch', 'run_macro', 'act_and_see'].includes(action.name)) return { ok: false, error: `action cannot be ${action.name}` }
+  if (!until?.name || !OBSERVATION_TOOLS.has(until.name)) return { ok: false, error: `until must be an observation tool: ${[...OBSERVATION_TOOLS].join('|')}` }
+  const maxTries = Math.min(Math.max(Number(args.maxTries) || 8, 1), 30)
+  const interval = Math.min(Math.max(Number(args.intervalMs ?? 600) || 0, 0), 5000)
+  const minChange = Number(args.minChange ?? 2) || 2
+  const t0 = Date.now()
+  const sub = { ...opts, depth: (opts.depth ?? 0) + 1 }
+  const trace: unknown[] = []
+  let tries = 0
+  for (let i = 0; i <= maxTries; i++) {
+    if (Date.now() - t0 > 55_000) return { ok: false, error: 'do_until exceeded 55s', tries, matched: false, trace, durationMs: Date.now() - t0 }
+    const o = await executeTool(env, deviceId, until.name, until.arguments ?? {}, sub)
+    const [hit, cx, cy] = observationMatched(until.name, o, minChange)
+    if (hit) return { ok: true, matched: true, tries, ...(cx !== undefined ? { cx, cy } : {}), observation: o.data ?? { ok: o.ok }, trace, durationMs: Date.now() - t0 }
+    if (i === maxTries) break
+    const r = await executeTool(env, deviceId, action.name, action.arguments ?? {}, sub)
+    tries++
+    trace.push({ i, ok: r.ok, ...(r.error ? { error: r.error } : {}), ...(r.via ? { via: r.via } : {}) })
+    if (!r.ok && !['smart_tap', 'tap_text', 'tap_color', 'find_and_tap'].includes(action.name)) return { ok: false, error: `action failed at try ${tries}: ${r.error}`, tries, matched: false, trace, durationMs: Date.now() - t0 }
+    if (interval) await new Promise((r) => setTimeout(r, interval))
+  }
+  return { ok: false, matched: false, error: `condition not met after ${tries} tries`, tries, trace, durationMs: Date.now() - t0 }
+}
+
+const DISMISS_LABELS = ['skip ad', 'skip', 'close', 'not now', 'no thanks', 'no, thanks', 'maybe later', 'later', 'dismiss', 'got it', 'cancel', 'deny', "don't allow", 'continue', 'ok', 'okay', 'allow', 'accept', 'agree', 'i agree', 'x', '×', 'reject all', 'accept all', 'while using the app', 'only this time', 'تخطي', 'إغلاق', 'لاحقا', 'ليس الآن', 'موافق', 'متابعة', 'إلغاء', 'فهمت']
+const DISMISS_IDS = ['close', 'btn_close', 'dismiss', 'skip', 'cancel', 'negative', 'button2', 'permission_deny_button', 'permission_allow_foreground_only_button']
+
+/** dismiss_popups: find & tap common dismiss labels via ui + OCR, repeat while something is found. */
+async function dismissPopups(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const extra = Array.isArray(args.extra) ? (args.extra as unknown[]).filter((s) => typeof s === 'string').map((s) => (s as string).toLowerCase().trim()) : []
+  const labels = [...extra, ...DISMISS_LABELS]
+  const rounds = Math.min(Math.max(Number(args.rounds) || 2, 1), 5)
+  const useOcr = args.ocr !== false
+  const t0 = Date.now()
+  const dismissed: unknown[] = []
+  const norm = (s: unknown) => (typeof s === 'string' ? s.toLowerCase().replace(/\s+/g, ' ').trim() : '')
+  for (let r = 0; r < rounds; r++) {
+    let target: { x: number; y: number; label: string; via: string } | undefined
+    const ui = await uiElements(env, deviceId)
+    if (ui.ok) {
+      // rank: exact label match on clickable elements first, then id match, then substring
+      let best: { score: number; e: UiElement; label: string } | undefined
+      for (const e of ui.elements) {
+        const texts = [e.text, e.desc, e.hint].map(norm).filter(Boolean)
+        const idn = norm(e.id).split('/').pop() ?? ''
+        let score = 0, label = ''
+        for (let li = 0; li < labels.length; li++) {
+          const l = labels[li]
+          if (texts.some((t) => t === l)) { score = Math.max(score, 100 - li); label = l }
+          else if (l.length >= 4 && texts.some((t) => t.includes(l))) { score = Math.max(score, 40 - li * 0.5); label = label || l }
+        }
+        if (!score && idn && DISMISS_IDS.some((d) => idn === d || idn.endsWith(d))) { score = 60; label = `id:${idn}` }
+        if (score && e.clickable === false) score -= 30
+        if (score > 0 && (!best || score > best.score)) best = { score, e, label }
+      }
+      if (best) target = { x: best.e.cx, y: best.e.cy, label: best.label, via: 'ui' }
+    }
+    if (!target && useOcr) {
+      const o = await ocrLines(env, deviceId, undefined, opts)
+      if (o.ok) {
+        for (const l of labels) {
+          const hit = o.lines.find((ln) => norm(ln.text) === l) ?? (l.length >= 4 ? o.lines.find((ln) => norm(ln.text).includes(l)) : undefined)
+          if (hit) { target = { x: hit.cx, y: hit.cy, label: hit.text, via: 'ocr' }; break }
+        }
+      }
+    }
+    if (!target) break
+    const t = await executeTool(env, deviceId, 'tap', { x: target.x, y: target.y }, opts)
+    dismissed.push({ ...target, ok: t.ok })
+    if (!t.ok) break
+    await new Promise((res) => setTimeout(res, 600))
+  }
+  return { ok: true, dismissed: dismissed.length, actions: dismissed, durationMs: Date.now() - t0 }
+}
+
+/** recent_actions: compact view of the DO log for the agent. */
+async function recentActions(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
+  const logs = (await (await room(env, deviceId).fetch(`https://do/logs?deviceId=${deviceId}`)).json()) as { id: string; ts: number; action: Record<string, unknown>; status: string; error?: string; durationMs?: number }[]
+  const summarize = (a: Record<string, unknown>) => {
+    const o: Record<string, unknown> = { type: a.type }
+    for (const k of ['x', 'y', 'x1', 'y1', 'x2', 'y2', 'text', 'elementId', 'url', 'color', 'count', 'direction', 'enabled']) if (a[k] !== undefined) o[k] = typeof a[k] === 'string' ? String(a[k]).slice(0, 40) : a[k]
+    if (Array.isArray(a.points)) o.points = (a.points as unknown[]).length
+    if (Array.isArray(a.colors)) o.colors = a.colors
+    return o
+  }
+  return { ok: true, count: Math.min(limit, logs.length), actions: logs.slice(0, limit).map((l) => ({ ts: l.ts, ago: `${Math.round((Date.now() - l.ts) / 1000)}s`, status: l.status, ms: l.durationMs, ...(l.error ? { error: l.error } : {}), ...summarize(l.action) })) }
 }
 
 // ---------------------------------------------------------------- v1.6 reflexes, loops, macros
@@ -398,7 +608,7 @@ async function runMacro(env: Bindings, deviceId: string, args: Record<string, un
 }
 
 // ---------------------------------------------------------------- composite tools
-interface UiElement { i: number; text?: string; desc?: string; hint?: string; id?: string; cx: number; cy: number; [k: string]: unknown }
+interface UiElement { i: number; text?: string; desc?: string; hint?: string; id?: string; cx: number; cy: number; clickable?: boolean; [k: string]: unknown }
 
 function matchElement(elements: UiElement[], text?: unknown, elementId?: unknown): UiElement | undefined {
   const q = typeof text === 'string' && text.trim() ? text.trim().toLowerCase() : undefined

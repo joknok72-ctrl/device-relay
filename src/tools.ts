@@ -548,17 +548,99 @@ export const TOOLS: ToolDef[] = [
       required: ['enabled'],
     },
   },
+  // ---------------------------------------------------------------- v1.8 composite intelligence
+  {
+    name: 'observe',
+    description:
+      'ONE call = full situational awareness: screenshot (optional grid/region) + OCR text lines with coordinates + current app + optional colour search + what changed since the last observe. ' +
+      'All parts run in parallel on the phone, so it costs about the same as a screenshot. Use it as your default "look" in games and unknown apps instead of 3-4 separate calls. ' +
+      'Parts that the phone cannot do (e.g. OCR on an old app version) are reported as {ok:false} without failing the whole call.',
+    parameters: {
+      type: 'object',
+      properties: {
+        maxWidth: { type: 'integer', description: 'Screenshot width 120-2160 (default 540)', minimum: 120, maximum: 2160, default: 540 },
+        grid: { type: 'integer', description: 'Draw a labelled coordinate grid every N px (0=off)', minimum: 0, maximum: 500 },
+        region: { type: 'object', description: '{x,y,w,h} crop for screenshot + OCR (original pixels)' },
+        colors: { type: 'array', description: 'Optional "#rrggbb" colours to locate (find_colors)', items: { type: 'string' } },
+        tolerance: { type: 'integer', description: 'Colour tolerance 0-255 (default 30)', minimum: 0, maximum: 255, default: 30 },
+        ocr: { type: 'boolean', description: 'Include OCR text (default true)', default: true },
+        image: { type: 'boolean', description: 'Include the screenshot image (default true; false = text/colours only, much smaller)', default: true },
+        diff: { type: 'boolean', description: 'Include screen_diff vs previous call (default true)', default: true },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'smart_tap',
+    description:
+      'Tap "anything" by name, resolving the target in this order: accessibility UI element (text/id/description) → OCR text on screen → optional fallback {x,y}. ' +
+      'Returns via=ui|ocr|fallback plus the tapped point, and (with verify=true) whether the screen changed afterwards. ' +
+      'This is the tool to use when you know WHAT to press but not exactly WHERE — menus, buttons, game HUD labels, ads "Skip".',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Visible label / content-description / OCR text to press (case-insensitive, substring ok)' },
+        elementId: { type: 'string', description: 'Optional view id (tried first if given)' },
+        region: { type: 'object', description: 'Limit the OCR search to {x,y,w,h}' },
+        index: { type: 'integer', description: 'Which match to tap when several (default 0)', minimum: 0, default: 0 },
+        fallback: { type: 'object', description: 'Optional {x,y} to tap when nothing matches' },
+        verify: { type: 'boolean', description: 'Check that the screen changed after the tap (default true)', default: true },
+        waitMs: { type: 'integer', description: 'Delay before verification 0-5000 (default 500)', minimum: 0, maximum: 5000, default: 500 },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'do_until',
+    description:
+      'Repeat an action UNTIL an observation matches (the inverse of game_loop): e.g. tap "Skip" until text "PLAY" appears, press_back until a colour is found, swipe until an element exists. ' +
+      'Checks the condition BEFORE each repetition (so it does nothing if already satisfied). Observation tools: find_color, find_colors, get_pixels, wait_pixel, watch_color, screen_diff, find_image, wait_for_element, read_text, wait_for_text. ' +
+      'Returns tries, matched, and the final observation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'object', description: '{name, arguments} tool to repeat (any input tool incl. smart_tap/tap_text/press_back)' },
+        until: { type: 'object', description: '{name, arguments} observation that ends the loop when it matches' },
+        maxTries: { type: 'integer', description: '1-30 (default 8)', minimum: 1, maximum: 30, default: 8 },
+        intervalMs: { type: 'integer', description: 'Pause after each action 0-5000 (default 600)', minimum: 0, maximum: 5000, default: 600 },
+        minChange: { type: 'number', description: 'For screen_diff: changedPct threshold (default 2)', default: 2 },
+      },
+      required: ['action', 'until'],
+    },
+  },
+  {
+    name: 'dismiss_popups',
+    description:
+      'Close ads, permission dialogs, rating prompts, "daily reward" overlays, cookie banners: scans UI elements AND OCR text for common dismiss labels ' +
+      '(Close, X, Skip, Skip ad, Not now, No thanks, Later, Cancel, Deny, Dismiss, Got it, OK, Allow, Continue...) and taps the best one. Repeats up to rounds times while something is found. ' +
+      'Add your own labels with extra. Returns the list of what was tapped. Safe to call before every new step in games.',
+    parameters: {
+      type: 'object',
+      properties: {
+        extra: { type: 'array', description: 'Additional labels to treat as dismiss buttons', items: { type: 'string' } },
+        rounds: { type: 'integer', description: 'Max popups to close in a row 1-5 (default 2)', minimum: 1, maximum: 5, default: 2 },
+        ocr: { type: 'boolean', description: 'Also use OCR (default true; needs app v1.7+)', default: true },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'recent_actions',
+    description: 'Your own action history on this device (most recent first): action type + key args, status, duration, error. Use it at the start of a session to see what the previous session did, or to debug a stuck flow.',
+    parameters: { type: 'object', properties: { limit: { type: 'integer', description: '1-100 (default 20)', minimum: 1, maximum: 100, default: 20 } }, required: [] },
+  },
   {
     name: 'remember',
     description:
       'Save a persistent note about THIS device that future AI sessions will see in the bootstrap (e.g. "Clash: attack button at (980,2150); shop tab at (140,2250)", "Keyboard sends Enter via type_text submit"). ' +
+      'The note is auto-tagged with the app currently open (package), so notes are grouped per game/app; pass app to override. ' +
       'Use it whenever you learn a layout, coordinate, or trick worth reusing. Max 40 notes, 2000 chars each.',
-    parameters: { type: 'object', properties: { text: { type: 'string', description: 'The note' } }, required: ['text'] },
+    parameters: { type: 'object', properties: { text: { type: 'string', description: 'The note' }, app: { type: 'string', description: 'Package name to tag (default: current app)' } }, required: ['text'] },
   },
   {
     name: 'recall',
-    description: 'List saved notes for this device (index, text, timestamp). Call at the start of a task to reuse earlier learnings. Pass forget=index (or forget=-1 for all) to delete.',
-    parameters: { type: 'object', properties: { forget: { type: 'integer', description: 'Delete note at index; -1 deletes all' } }, required: [] },
+    description: 'List saved notes for this device (index, text, app tag, timestamp). Call at the start of a task to reuse earlier learnings. Filter with app=<package> (or app="current"). Pass forget=index (or forget=-1 for all) to delete.',
+    parameters: { type: 'object', properties: { forget: { type: 'integer', description: 'Delete note at index; -1 deletes all' }, app: { type: 'string', description: 'Only notes tagged with this package ("current" = app open now)' } }, required: [] },
   },
   { name: 'wake_screen', description: 'Wake the display if it is off (you may still need to swipe up / unlock).', parameters: { type: 'object', properties: {}, required: [] } },
   { name: 'open_quick_settings', description: 'Open the quick-settings panel (Wi-Fi, Bluetooth, flashlight toggles...).', parameters: { type: 'object', properties: {}, required: [] } },
@@ -584,8 +666,13 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions'; error?: string } {
   switch (name) {
+    case 'observe': return { special: 'observe' }
+    case 'smart_tap': return { special: 'smart_tap' }
+    case 'do_until': return { special: 'do_until' }
+    case 'dismiss_popups': return { special: 'dismiss_popups' }
+    case 'recent_actions': return { special: 'recent_actions' }
     case 'capture_screen': return { action: { type: 'screenshot', maxWidth: args.maxWidth, quality: args.quality, format: args.format, grid: args.grid, region: args.region } }
     case 'tap_sequence': return { action: { type: 'tap_sequence', points: args.points } }
     case 'multi_tap': return { action: { type: 'multi_tap', points: args.points, duration: args.duration ?? 60 } }
@@ -731,7 +818,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '1.7.0',
+      version: '1.8.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
@@ -748,6 +835,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
+  'observe', 'recent_actions',
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */
