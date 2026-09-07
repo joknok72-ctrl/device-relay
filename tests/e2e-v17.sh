@@ -38,6 +38,7 @@ R=$(call '{"name":"game_loop","arguments":{"when":{"name":"read_text","arguments
 check loop-ocr '"acted":1' "$R"
 
 echo "== session_stats"
+call '{"name":"tap_element","arguments":{"text":"DOES-NOT-EXIST"}}' >/dev/null  # provoke one failure
 R=$(call '{"name":"session_stats"}')
 check stats-rate '"successRate":' "$R"
 check stats-latency '"p50":' "$R"
