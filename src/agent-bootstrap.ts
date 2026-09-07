@@ -103,6 +103,6 @@ Cheap perception (no image transfer):
   get_pixels [{x,y}...]         → read HP/cooldown/state colours in ~50ms
   find_color "#rrggbb" tol region → locate enemies/gems/buttons; returns centre + bbox + count
   wait_for_screen change|stable → wait for a level to load / animation to end instead of guessing sleeps
-Rules for games: never spam raw `tap` in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
+Rules for games: never spam raw "tap" in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }
