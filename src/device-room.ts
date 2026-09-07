@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, Macro, Note, PhoneMessage, ScreenLabel } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, Macro, Note, PhoneMessage, Recording, ScreenLabel } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
@@ -48,6 +48,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private macros: Macro[] = []
   /** Named screen fingerprints (perceptual hash + optional OCR words) for identify_screen. */
   private screens: ScreenLabel[] = []
+  /** v2.0 macro recording draft (record_macro). */
+  private recording: Recording | null = null
 
   private inputBusy = false
   private inputQueue: Array<() => void> = []
@@ -66,6 +68,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (macros) this.macros = macros
       const screens = await ctx.storage.get<ScreenLabel[]>('screens')
       if (screens) this.screens = screens
+      const rec = await ctx.storage.get<Recording>('recording')
+      if (rec) this.recording = rec
     })
   }
 
@@ -195,6 +199,41 @@ export class DeviceRoom extends DurableObject<Bindings> {
         await this.ctx.storage.put('screens', this.screens)
         return Response.json({ ok: true, removed: before - this.screens.length })
       }
+    }
+    if (url.pathname.endsWith('/recording')) {
+      if (request.method === 'GET') return Response.json({ recording: this.recording })
+      if (request.method === 'POST') {
+        const b = (await request.json()) as { name?: string; description?: string; keepWaits?: boolean }
+        if (this.recording) return Response.json({ ok: false, error: `already recording '${this.recording.name || '(unnamed)'}' since ${new Date(this.recording.startedAt).toISOString()} — stop or cancel first`, recording: this.recording }, { status: 409 })
+        this.recording = { name: b.name, description: b.description, keepWaits: b.keepWaits !== false, startedAt: Date.now(), lastAt: Date.now(), steps: [] }
+        await this.ctx.storage.put('recording', this.recording)
+        this.broadcastViewers({ kind: 'recording', active: true, name: b.name })
+        return Response.json({ ok: true, recording: this.recording })
+      }
+      if (request.method === 'DELETE') {
+        const r = this.recording; this.recording = null
+        await this.ctx.storage.delete('recording')
+        this.broadcastViewers({ kind: 'recording', active: false })
+        return Response.json({ ok: true, recording: r })
+      }
+    }
+    if (url.pathname.endsWith('/record-step') && request.method === 'POST') {
+      if (!this.recording) return Response.json({ ok: false, recording: false })
+      const { name, arguments: args } = (await request.json()) as { name: string; arguments?: Record<string, unknown> }
+      const now = Date.now()
+      const gap = now - this.recording.lastAt
+      if (this.recording.keepWaits && this.recording.steps.length > 0 && gap >= 300) this.recording.steps.push({ name: 'wait', arguments: { ms: Math.min(gap, 5000) } })
+      this.recording.steps.push({ name, arguments: args ?? {} })
+      this.recording.lastAt = now
+      if (this.recording.steps.length > 25) this.recording.steps.length = 25
+      await this.ctx.storage.put('recording', this.recording)
+      return Response.json({ ok: true, steps: this.recording.steps.length })
+    }
+    if (url.pathname.endsWith('/overlay') && request.method === 'POST') {
+      // agent-side visual events for the human monitor (taps, detections, ocr boxes, screen name). Never stored.
+      const o = (await request.json()) as Record<string, unknown>
+      this.broadcastViewers({ kind: 'overlay', ts: Date.now(), ...o })
+      return Response.json({ ok: true })
     }
     if (url.pathname.endsWith('/macro-ran') && request.method === 'POST') {
       const { name } = (await request.json()) as { name: string }

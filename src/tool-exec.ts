@@ -55,6 +55,13 @@ export function pngSize(b64: string): { w: number; h: number } | null {
 function room(env: Bindings, deviceId: string) {
   return env.DEVICE_ROOM.get(env.DEVICE_ROOM.idFromName(deviceId))
 }
+/** Input tools that must not be captured by record_macro (meta / non-replayable). */
+const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups'])
+
+/** Push a visual event to /monitor viewers (fire-and-forget). */
+function overlay(env: Bindings, deviceId: string, o: Record<string, unknown>) {
+  room(env, deviceId).fetch(`https://do/overlay?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o) }).catch(() => {})
+}
 
 export async function deviceInfo(env: Bindings, deviceId: string): Promise<DeviceInfo> {
   const r = await room(env, deviceId).fetch(`https://do/info?deviceId=${deviceId}`)
@@ -67,6 +74,11 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.error) return { ok: false, error: mapped.error }
   if (opts.readOnly && !READ_ONLY_TOOLS.has(name)) return { ok: false, error: `token is read-only: tool '${name}' not allowed` }
 
+  if (mapped.special === 'record_macro') return recordMacro(env, deviceId, args)
+  // v2.0: while a recording is active, top-level input tools are appended to the draft (fire-and-forget)
+  if (!(opts.depth ?? 0) && !READ_ONLY_TOOLS.has(name) && !NO_RECORD.has(name)) {
+    room(env, deviceId).fetch(`https://do/record-step?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args ?? {} }) }).catch(() => {})
+  }
   if (mapped.special === 'batch') return runBatch(env, deviceId, args, opts)
 
   if (mapped.special === 'wait') {
@@ -132,6 +144,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   const out: ToolResult = { ok: res.ok, error: res.error, durationMs: res.durationMs }
   if (res.queuedMs) out.queuedMs = res.queuedMs
   if (res.data !== undefined) out.data = res.data
+  if (res.ok) emitOverlay(env, deviceId, action as unknown as Record<string, unknown>, res.data)
   if (name === 'capture_screen') {
     const info = await deviceInfo(env, deviceId)
     out.screen = info.screen
@@ -143,6 +156,50 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
     }
   }
   return out
+}
+
+/** Derive monitor overlay events from executed actions (taps, swipes, colour/object/OCR detections). */
+function emitOverlay(env: Bindings, deviceId: string, action: Record<string, unknown>, data: unknown) {
+  const d = (data ?? {}) as Record<string, unknown>
+  switch (action.type) {
+    case 'tap': case 'double_tap': case 'long_press': return overlay(env, deviceId, { type: 'tap', points: [{ x: action.x, y: action.y }] })
+    case 'swipe': case 'drag': return overlay(env, deviceId, { type: 'swipe', from: { x: action.x1, y: action.y1 }, to: { x: action.x2, y: action.y2 } })
+    case 'tap_sequence': case 'multi_tap': return overlay(env, deviceId, { type: 'tap', points: (action.points as { x: number; y: number }[]).map((p) => ({ x: p.x, y: p.y })) })
+    case 'repeat_tap': return overlay(env, deviceId, { type: 'tap', points: [{ x: action.x, y: action.y }], repeat: action.count })
+    case 'swipe_path': { const pts = action.points as { x: number; y: number }[]; return overlay(env, deviceId, { type: 'path', points: pts }) }
+    case 'find_color': if (d.found) return overlay(env, deviceId, { type: 'detect', color: action.color, boxes: [{ ...(d.bounds as object), cx: d.cx, cy: d.cy }] }); return
+    case 'find_colors': { const res = (d.results as { found: boolean; color: string; bounds?: object; cx?: number; cy?: number }[] | undefined) ?? []; const boxes = res.filter((r) => r.found).map((r) => ({ ...(r.bounds ?? {}), cx: r.cx, cy: r.cy, color: r.color })); if (boxes.length) overlay(env, deviceId, { type: 'detect', boxes }); return }
+    case 'find_objects': { const objs = (d.objects as { bounds: object; cx: number; cy: number; i: number }[] | undefined) ?? []; if (objs.length) overlay(env, deviceId, { type: 'detect', color: action.color, boxes: objs.map((o) => ({ ...o.bounds, cx: o.cx, cy: o.cy, label: `#${o.i}` })) }); return }
+    case 'find_image': { const m = (d.matches as { x: number; y: number; w: number; h: number; cx: number; cy: number }[] | undefined) ?? []; if (m.length) overlay(env, deviceId, { type: 'detect', boxes: m }); return }
+    case 'read_text': { const lines = (d.lines as { x?: number; y?: number; w?: number; h?: number; cx: number; cy: number; text: string }[] | undefined) ?? []; if (lines.length) overlay(env, deviceId, { type: 'ocr', boxes: lines.slice(0, 40).map((l) => ({ x: l.x, y: l.y, w: l.w, h: l.h, cx: l.cx, cy: l.cy, label: l.text })) }); return }
+    case 'auto_react': { const taps = (d.taps as { x: number; y: number }[] | undefined) ?? []; if (taps.length) overlay(env, deviceId, { type: 'tap', points: taps.map((t) => ({ x: t.x, y: t.y })), reflex: true }); return }
+    case 'watch_color': case 'wait_pixel': if (d.matched && d.cx !== undefined) overlay(env, deviceId, { type: 'detect', color: action.color, boxes: [{ cx: d.cx, cy: d.cy, ...(d.bounds as object ?? {}) }] }); return
+  }
+}
+
+/** record_macro: start / stop+save / status / cancel */
+async function recordMacro(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const r = room(env, deviceId)
+  const current = async () => ((await (await r.fetch(`https://do/recording?deviceId=${deviceId}`)).json()) as { recording: { name?: string; description?: string; steps: unknown[]; startedAt: number } | null }).recording
+  if (args.status === true) { const rec = await current(); return { ok: true, recording: !!rec, draft: rec } }
+  if (args.cancel === true) { const res = (await (await r.fetch(`https://do/recording?deviceId=${deviceId}`, { method: 'DELETE' })).json()) as { recording: unknown }; return { ok: true, cancelled: !!res.recording, discardedSteps: (res.recording as { steps?: unknown[] } | null)?.steps?.length ?? 0 } }
+  if (args.start === true) {
+    const res = await r.fetch(`https://do/recording?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: args.name, description: args.description, keepWaits: args.keepWaits !== false }) })
+    const j = (await res.json()) as ToolResult
+    if (!j.ok) return j
+    return { ok: true, recording: true, name: args.name, hint: 'now perform the steps with normal input tools; call record_macro start=false to save (max 25 steps; observe/read-only tools are not recorded)' }
+  }
+  if (args.start === false) {
+    const rec = await current()
+    if (!rec) return { ok: false, error: 'not recording — call record_macro start=true first' }
+    const name = String(args.name ?? rec.name ?? '').trim()
+    if (!name) return { ok: false, error: 'name required (pass it at start or at stop)', draft: rec }
+    if (!rec.steps.length) { await r.fetch(`https://do/recording?deviceId=${deviceId}`, { method: 'DELETE' }); return { ok: false, error: 'nothing was recorded — draft discarded' } }
+    const saved = await saveMacro(env, deviceId, { name, steps: rec.steps, description: args.description ?? rec.description })
+    if (saved.ok) await r.fetch(`https://do/recording?deviceId=${deviceId}`, { method: 'DELETE' })
+    return { ...saved, steps: rec.steps.length, recordedMs: Date.now() - rec.startedAt }
+  }
+  return { ok: false, error: 'record_macro needs start=true|false, status=true or cancel=true' }
 }
 
 /** batch: run N tools sequentially in one request. */
@@ -513,6 +570,7 @@ async function identifyScreen(env: Bindings, deviceId: string, args: Record<stri
   const ranked = scoreScreens(screens, fp)
   const best = ranked[0]
   const hit = best && best.confidence >= minConf
+  overlay(env, deviceId, { type: 'screen', name: hit ? best.name : null, confidence: best?.confidence ?? 0 })
   return { ok: true, screenName: hit ? best.name : null, confidence: best?.confidence ?? 0, best, runnerUp: ranked[1], count: screens.length, app: fp.app || undefined, ...(hit ? {} : { hint: 'no confident match — this may be a new screen; label_screen it' }) }
 }
 

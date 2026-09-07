@@ -1,4 +1,27 @@
-import type { Action, Point, Region, SeqPoint } from './types'
+import type { Action, Point, ReactLane, Region, SeqPoint } from './types'
+
+const HEX = /^#?[0-9a-fA-F]{6}$/
+const normHex = (c: string) => '#' + c.trim().replace('#', '').toLowerCase()
+function parseLane(v: unknown, i: number): { lane?: ReactLane; error?: string } {
+  if (!v || typeof v !== 'object') return { error: `lanes[${i}] must be an object` }
+  const l = v as Record<string, unknown>
+  if (typeof l.color !== 'string' || !HEX.test(l.color.trim())) return { error: `lanes[${i}].color must be "#RRGGBB"` }
+  const lane: ReactLane = { color: normHex(l.color) }
+  if (isNum(l.tolerance)) lane.tolerance = clamp(Math.round(l.tolerance), 0, 128)
+  if (isNum(l.minCount)) lane.minCount = clamp(Math.round(l.minCount), 1, 1_000_000)
+  if (isNum(l.tapX) && isNum(l.tapY)) { lane.tapX = Math.round(l.tapX); lane.tapY = Math.round(l.tapY) }
+  if (isNum(l.tapOffsetX)) lane.tapOffsetX = Math.round(l.tapOffsetX)
+  if (isNum(l.tapOffsetY)) lane.tapOffsetY = Math.round(l.tapOffsetY)
+  if (isNum(l.cooldownMs)) lane.cooldownMs = clamp(Math.round(l.cooldownMs), 0, 5000)
+  if (typeof l.name === 'string' && l.name.trim()) lane.name = l.name.trim().slice(0, 24)
+  const region = parseRegion(l.region); if (region) lane.region = region
+  if (l.swipe && typeof l.swipe === 'object') {
+    const s = l.swipe as Record<string, unknown>
+    if (!isNum(s.dx) || !isNum(s.dy)) return { error: `lanes[${i}].swipe needs dx, dy` }
+    lane.swipe = { dx: clamp(Math.round(s.dx), -4000, 4000), dy: clamp(Math.round(s.dy), -4000, 4000), durationMs: isNum(s.durationMs) ? clamp(Math.round(s.durationMs), 20, 3000) : 120 }
+  }
+  return { lane }
+}
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi)
@@ -197,6 +220,18 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       if (isNum(a.tapOffsetY)) action.tapOffsetY = Math.round(a.tapOffsetY)
       if (isNum(a.tapX) && isNum(a.tapY)) { action.tapX = Math.round(a.tapX); action.tapY = Math.round(a.tapY) }
       const region = parseRegion(a.region); if (region) action.region = region
+      if (Array.isArray(a.lanes)) {
+        if (a.lanes.length > 6) return { error: 'auto_react supports at most 6 lanes' }
+        const lanes: ReactLane[] = []
+        for (let i = 0; i < a.lanes.length; i++) { const r = parseLane(a.lanes[i], i); if (r.error) return { error: r.error }; lanes.push(r.lane!) }
+        if (lanes.length) action.lanes = lanes
+      }
+      if (typeof a.stopColor === 'string') {
+        if (!HEX.test(a.stopColor.trim())) return { error: 'stopColor must be "#RRGGBB"' }
+        action.stopColor = normHex(a.stopColor)
+        const sr = parseRegion(a.stopRegion); if (sr) action.stopRegion = sr
+        if (isNum(a.stopMinCount)) action.stopMinCount = clamp(Math.round(a.stopMinCount), 1, 1_000_000)
+      }
       return { action }
     }
     case 'stream': {

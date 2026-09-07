@@ -573,7 +573,8 @@ export const TOOLS: ToolDef[] = [
       'REFLEX MODE for fast games: the PHONE itself watches for a colour and taps the moment it appears, repeatedly, with no network round-trip (latency ~50-100ms instead of 500-1000ms). ' +
       'Each time the colour is present (>= minCount px) it taps at the blob centre (+ tapOffsetX/Y), or at a fixed tapX/tapY if given, then waits cooldownMs. Stops after maxTriggers taps or timeoutMs. ' +
       'Perfect for: whack-a-mole, tap-the-green-tile, rhythm notes reaching a line (use a thin region), catching falling items, "tap when bar turns green" mini-games. ' +
-      'Returns triggers (count), taps[] with timestamps and positions, and why it stopped.',
+      'v2.0: add lanes[] for MULTIPLE independent triggers in one loop (e.g. 4 rhythm lanes, each colour/region → its own tap point; or swipe reactions like {swipe:{dx:0,dy:-600}} for "jump when obstacle red appears"), ' +
+      'and stopColor (+stopRegion) to end the loop when e.g. the GAME OVER banner colour shows. Returns triggers (count), taps[] with timestamps/positions/lane, and why it stopped.',
     parameters: {
       type: 'object',
       properties: {
@@ -589,8 +590,31 @@ export const TOOLS: ToolDef[] = [
         timeoutMs: { type: 'integer', description: 'Total time budget 500-40000 (default 10000)', minimum: 500, maximum: 40000, default: 10000 },
         intervalMs: { type: 'integer', description: 'Poll interval 30-2000 (default 80)', minimum: 30, maximum: 2000, default: 80 },
         cooldownMs: { type: 'integer', description: 'Pause after each tap 0-5000 (default 250) so one target is not tapped twice', minimum: 0, maximum: 5000, default: 250 },
+        lanes: { type: 'array', description: 'Up to 6 extra triggers: [{name?, color, region?, tolerance?, minCount?, tapX?, tapY?, tapOffsetX?, tapOffsetY?, swipe?:{dx,dy,durationMs?}, cooldownMs?}]. The top-level color/region is lane 0.', items: { type: 'object' } },
+        stopColor: { type: 'string', description: '"#rrggbb": stop the loop as soon as this colour is present (game over / level complete)' },
+        stopRegion: { type: 'object', description: '{x,y,w,h} where to look for stopColor' },
+        stopMinCount: { type: 'integer', description: 'Min px of stopColor (default 200)', minimum: 1, default: 200 },
       },
       required: ['color'],
+    },
+  },
+  {
+    name: 'record_macro',
+    description:
+      'Learn by doing: start=true begins recording — every INPUT tool you call afterwards on this device (tap, swipe, smart_tap, type_text, tap_sequence, open_app, press_back, wait, ...) is appended to a draft, with the real pause between calls stored as wait steps. ' +
+      'start=false stops and saves the draft as a macro (name required at start or stop) that run_macro replays. Use it whenever you are about to do a sequence you will need again (login flow, open game + skip intro + start level, daily reward). ' +
+      'status=true returns the current draft without changing it; cancel=true discards it.',
+    parameters: {
+      type: 'object',
+      properties: {
+        start: { type: 'boolean', description: 'true = start recording, false = stop and save' },
+        name: { type: 'string', description: 'Macro name (a-z 0-9 - _)' },
+        description: { type: 'string', description: 'What the macro does' },
+        status: { type: 'boolean', description: 'Just report the draft' },
+        cancel: { type: 'boolean', description: 'Discard the draft' },
+        keepWaits: { type: 'boolean', description: 'Store real pauses between steps as wait steps (default true, capped at 5s each)', default: true },
+      },
+      required: [],
     },
   },
   {
@@ -735,10 +759,11 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro'; error?: string } {
   switch (name) {
     case 'find_objects': return { action: { type: 'find_objects', color: args.color, tolerance: args.tolerance, region: args.region, minSize: args.minSize, maxResults: args.maxResults } }
-    case 'auto_react': return { action: { type: 'auto_react', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, tapOffsetX: args.tapOffsetX, tapOffsetY: args.tapOffsetY, tapX: args.tapX, tapY: args.tapY, maxTriggers: args.maxTriggers, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs, cooldownMs: args.cooldownMs } }
+    case 'auto_react': return { action: { type: 'auto_react', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, tapOffsetX: args.tapOffsetX, tapOffsetY: args.tapOffsetY, tapX: args.tapX, tapY: args.tapY, maxTriggers: args.maxTriggers, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs, cooldownMs: args.cooldownMs, lanes: args.lanes, stopColor: args.stopColor, stopRegion: args.stopRegion, stopMinCount: args.stopMinCount } }
+    case 'record_macro': return { special: 'record_macro' }
     case 'label_screen': return { special: 'label_screen' }
     case 'identify_screen': return { special: 'identify_screen' }
     case 'observe': return { special: 'observe' }
@@ -891,7 +916,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '1.9.0',
+      version: '2.0.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

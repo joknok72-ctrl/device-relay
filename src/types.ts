@@ -58,14 +58,20 @@ export type Action =
   | { type: 'stream'; enabled: boolean; fps?: number; maxWidth?: number; quality?: number }
   // v1.9
   | { type: 'find_objects'; color: string; tolerance?: number; region?: Region; minSize?: number; maxResults?: number }
-  | { type: 'auto_react'; color: string; tolerance?: number; region?: Region; minCount?: number; tapOffsetX?: number; tapOffsetY?: number; tapX?: number; tapY?: number; maxTriggers?: number; timeoutMs?: number; intervalMs?: number; cooldownMs?: number }
+  | { type: 'auto_react'; color: string; tolerance?: number; region?: Region; minCount?: number; tapOffsetX?: number; tapOffsetY?: number; tapX?: number; tapY?: number; maxTriggers?: number; timeoutMs?: number; intervalMs?: number; cooldownMs?: number;
+      /** v2.0: extra lanes (each its own colour/region/reaction); the top-level fields act as lane 0 */
+      lanes?: ReactLane[]; /** v2.0: stop the loop when this colour is present (e.g. GAME OVER red banner) */ stopColor?: string; stopRegion?: Region; stopMinCount?: number }
 
 export interface Point { x: number; y: number }
 export interface SeqPoint extends Point { delayMs?: number; durationMs?: number }
 export interface Region { x: number; y: number; w: number; h: number }
 export interface Note { text: string; ts: number; /** package name of the app open when the note was saved */ app?: string }
+/** One auto_react lane: colour trigger → tap or swipe. */
+export interface ReactLane { color: string; tolerance?: number; region?: Region; minCount?: number; tapX?: number; tapY?: number; tapOffsetX?: number; tapOffsetY?: number; swipe?: { dx: number; dy: number; durationMs?: number }; cooldownMs?: number; name?: string }
 /** Named screen fingerprint: 112-bit perceptual hash (hex) + a few OCR words, used by identify_screen. */
 export interface ScreenLabel { name: string; hash: string; words: string[]; app?: string; ts: number }
+/** In-progress macro recording (record_macro). */
+export interface Recording { name?: string; description?: string; keepWaits: boolean; startedAt: number; lastAt: number; steps: { name: string; arguments?: Record<string, unknown> }[] }
 /** Named, replayable tool sequence stored per device. */
 export interface Macro { name: string; steps: { name: string; arguments?: Record<string, unknown> }[]; description?: string; ts: number; runs?: number }
 
