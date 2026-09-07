@@ -77,6 +77,12 @@ data class Action(
     val stopColor: String? = null,       // auto_react: stop when present
     val stopRegion: Region? = null,
     val stopMinCount: Int? = null,
+    // v2.1
+    val maxColors: Int? = null,          // sample_colors
+    val quant: Int? = null,              // sample_colors
+    val ignoreGrey: Boolean? = null,     // sample_colors
+    val samples: Int? = null,            // track_object
+    val predictMs: Long? = null,         // track_object
 )
 
 @Serializable

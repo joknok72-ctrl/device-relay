@@ -130,6 +130,9 @@ class AutomationAccessibilityService : AccessibilityService() {
         // v1.9
         "find_objects" -> findObjects(action)
         "auto_react" -> autoReact(action)
+        // v2.1
+        "sample_colors" -> sampleColors(action)
+        "track_object" -> trackObject(action)
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -526,6 +529,92 @@ class AutomationAccessibilityService : AccessibilityService() {
         val color = a.color ?: return Outcome.Fail("find_objects requires color")
         val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
         return Outcome.Ok(data = scanObjects(bmp, color, (a.tolerance ?: 24).coerceIn(0, 128), a.region, (a.minSize ?: 12).coerceIn(1, 2000), (a.maxResults ?: 10).coerceIn(1, 40)))
+    }
+
+    // ---------------------------------------------------------------- v2.1 colour discovery + motion tracking
+
+    /** Dominant colours: quantise each sampled pixel to a bucket, count, skip greys, report top buckets with average colour + centroid. */
+    private suspend fun sampleColors(a: Action): Outcome {
+        val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        val region = a.region
+        val rx = region?.x?.coerceIn(0, bmp.width - 1) ?: 0; val ry = region?.y?.coerceIn(0, bmp.height - 1) ?: 0
+        val rw = region?.w?.coerceIn(1, bmp.width - rx) ?: (bmp.width - rx); val rh = region?.h?.coerceIn(1, bmp.height - ry) ?: (bmp.height - ry)
+        val q = (a.quant ?: 32).coerceIn(8, 64); val maxColors = (a.maxColors ?: 8).coerceIn(1, 24); val skipGrey = a.ignoreGrey != false
+        val step = if (rw * rh > 1_500_000) 6 else if (rw * rh > 400_000) 4 else 2
+        class Bucket(var n: Long = 0, var r: Long = 0, var g: Long = 0, var b: Long = 0, var sx: Long = 0, var sy: Long = 0)
+        val buckets = HashMap<Int, Bucket>()
+        val row = IntArray(rw); var analysed = 0L
+        var y = ry
+        while (y < ry + rh) {
+            bmp.getPixels(row, 0, rw, rx, y, rw, 1)
+            var i = 0
+            while (i < rw) {
+                val c = row[i]; val r = (c shr 16) and 0xFF; val g = (c shr 8) and 0xFF; val b = c and 0xFF
+                analysed++
+                val mx = maxOf(r, g, b); val mn = minOf(r, g, b)
+                if (!skipGrey || (mx - mn) >= 40) {
+                    val key = (r / q shl 16) or (g / q shl 8) or (b / q)
+                    val bk = buckets.getOrPut(key) { Bucket() }
+                    bk.n++; bk.r += r; bk.g += g; bk.b += b; bk.sx += (rx + i); bk.sy += y
+                }
+                i += step
+            }
+            y += step
+        }
+        val top = buckets.values.sortedByDescending { it.n }.take(maxColors)
+        return Outcome.Ok(data = buildJsonObject {
+            put("analysedPx", analysed); put("quant", q); put("sampleStep", step)
+            if (region != null) put("region", buildJsonObject { put("x", rx); put("y", ry); put("w", rw); put("h", rh) })
+            put("colors", buildJsonArray {
+                for (bk in top) add(buildJsonObject {
+                    put("hex", String.format("#%02x%02x%02x", (bk.r / bk.n).toInt(), (bk.g / bk.n).toInt(), (bk.b / bk.n).toInt()))
+                    put("share", Math.round(bk.n * 1000.0 / analysed) / 10.0)
+                    put("count", bk.n * step * step)
+                    put("cx", (bk.sx / bk.n).toInt()); put("cy", (bk.sy / bk.n).toInt())
+                })
+            })
+        })
+    }
+
+    /** Sample a colour blob's centre N times and fit velocity (least squares) to predict where it will be. */
+    private suspend fun trackObject(a: Action): Outcome {
+        val color = a.color ?: return Outcome.Fail("track_object requires color")
+        val tol = (a.tolerance ?: 24).coerceIn(0, 128); val minCount = (a.minCount ?: 20).coerceAtLeast(1)
+        val n = (a.samples ?: 5).coerceIn(2, 12); val interval = (a.intervalMs ?: 120L).coerceIn(40, 1000); val predictMs = (a.predictMs ?: 300L).coerceIn(0, 3000)
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val ts = ArrayList<Long>(); val xs = ArrayList<Int>(); val ys = ArrayList<Int>(); val counts = ArrayList<Long>()
+        for (i in 0 until n) {
+            val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+            val r = scanColor(bmp, color, tol, a.region)
+            val count = r["count"]?.toString()?.toLongOrNull() ?: 0L
+            if (count >= minCount) {
+                ts.add(android.os.SystemClock.elapsedRealtime() - t0); xs.add(r["cx"]?.toString()?.toIntOrNull() ?: 0); ys.add(r["cy"]?.toString()?.toIntOrNull() ?: 0); counts.add(count)
+            }
+            if (i < n - 1) delay(interval)
+        }
+        if (xs.isEmpty()) return Outcome.Ok(data = buildJsonObject { put("found", false); put("visible", 0); put("samples", buildJsonArray {}) })
+        val samplesJson = buildJsonArray { for (i in xs.indices) add(buildJsonObject { put("t", ts[i]); put("x", xs[i]); put("y", ys[i]); put("count", counts[i]) }) }
+        // least-squares slope of x(t), y(t) in px/s
+        fun slope(v: List<Int>): Double {
+            if (v.size < 2) return 0.0
+            val mt = ts.average(); val mv = v.average()
+            var num = 0.0; var den = 0.0
+            for (i in v.indices) { val dt = ts[i] - mt; num += dt * (v[i] - mv); den += dt * dt }
+            return if (den == 0.0) 0.0 else num / den * 1000.0
+        }
+        val vx = slope(xs); val vy = slope(ys)
+        val speed = Math.hypot(vx, vy)
+        val angle = Math.toDegrees(Math.atan2(vy, vx))
+        val dir = if (speed < 15) "still" else when {
+            angle > -45 && angle <= 45 -> "right"; angle > 45 && angle <= 135 -> "down"; angle > -135 && angle <= -45 -> "up"; else -> "left"
+        }
+        val lastX = xs.last(); val lastY = ys.last()
+        return Outcome.Ok(data = buildJsonObject {
+            put("found", true); put("visible", xs.size); put("samples", samplesJson)
+            put("cx", lastX); put("cy", lastY)
+            put("vx", Math.round(vx)); put("vy", Math.round(vy)); put("speed", Math.round(speed)); put("direction", dir); put("angle", Math.round(angle))
+            put("predicted", buildJsonObject { put("x", Math.round(lastX + vx * predictMs / 1000.0).toInt()); put("y", Math.round(lastY + vy * predictMs / 1000.0).toInt()); put("inMs", predictMs) })
+        })
     }
 
     /** Phone-side reflex loop: watch a colour, tap the instant it appears, repeat. No network round-trips between taps. */
