@@ -80,17 +80,19 @@ app.get('/agent/:token', async (c) => {
   const target = infos.find((d) => d.online) ?? infos[0]
   let notes: import('./types').Note[] = []
   let macros: import('./types').Macro[] = []
+  let screens: import('./types').ScreenLabel[] = []
   if (target) {
     const r = room(c, target.deviceId)
     try {
-      const [n, m] = await Promise.all([
+      const [n, m, s] = await Promise.all([
         r.fetch(`https://do/notes?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ notes: import('./types').Note[] }>),
         r.fetch(`https://do/macros?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ macros: import('./types').Macro[] }>),
+        r.fetch(`https://do/screens?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ screens: import('./types').ScreenLabel[] }>),
       ])
-      notes = n.notes; macros = m.macros
+      notes = n.notes; macros = m.macros; screens = s.screens
     } catch { /* ignore */ }
   }
-  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos, auth, notes, macros), 200, { 'Cache-Control': 'no-store' })
+  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos, auth, notes, macros, screens), 200, { 'Cache-Control': 'no-store' })
 })
 
 /** MCP with token in the URL (for clients that cannot set headers) */

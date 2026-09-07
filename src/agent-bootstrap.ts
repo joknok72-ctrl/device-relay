@@ -1,4 +1,4 @@
-import type { AuthContext, DeviceInfo, Macro, Note } from './types'
+import type { AuthContext, DeviceInfo, Macro, Note, ScreenLabel } from './types'
 import { TOOLS } from './tools'
 
 /**
@@ -6,7 +6,10 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = []): string {
+export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = [], screens: ScreenLabel[] = []): string {
+  const screensBlock = screens.length === 0
+    ? '  (none yet — label_screen "main-menu" etc. once per distinct screen; then observe/identify_screen tell you where you are)'
+    : screens.map((s) => `  ${s.name}${s.app ? `  (${s.app})` : ''}${s.words.length ? `  words: ${s.words.slice(0, 5).join(' ')}` : ''}`).join('\n')
   const macrosBlock = macros.length === 0
     ? '  (none yet — use save_macro for sequences you will repeat: open game + skip intro, collect daily reward, ...)'
     : macros.map((m) => `  run_macro "${m.name}"  (${m.steps.length} steps, ran ${m.runs ?? 0}x)${m.description ? `  — ${m.description}` : ''}`).join('\n')
@@ -72,6 +75,9 @@ curl -sS "$RELAY_URL/phone.sh" -o phone.sh && chmod +x phone.sh
 ./phone.sh popups                      # v1.8 dismiss_popups: close ads/permission/rating dialogs
 ./phone.sh until '<action json>' '<observation json>' [maxTries]   # v1.8 do_until
 ./phone.sh history [n]                 # v1.8 recent_actions: what was done on this phone (also by previous sessions)
+./phone.sh objects '#rrggbb' [tol] [x,y,w,h]   # v1.9 find_objects: each blob (cx,cy,area) sorted by size
+./phone.sh react '#rrggbb' [x,y,w,h] [maxTriggers] [timeoutMs]   # v1.9 auto_react: phone taps the colour the instant it appears (reflex loop)
+./phone.sh label "main-menu" | which | screens     # v1.9 screen memory: label current screen / identify / list
 ./phone.sh call <tool> '<json args>'   # any tool below
 
 ## 4. Raw HTTP (if you prefer curl / another language)
@@ -90,6 +96,9 @@ ${notesBlock}
 
 ## 5c. Saved macros on this device (run_macro / save_macro / list_macros)
 ${macrosBlock}
+
+## 5d. Labelled screens on this device (label_screen / identify_screen — observe returns screenName)
+${screensBlock}
 
 ## 6. Operating rules
 0. START of every session: recall (notes for this app are in 5b) + history 10 (what the last session did) + look. Then act.
@@ -133,6 +142,11 @@ Reflexes (v1.6 — the phone waits/reacts, you don't poll):
   find_image <base64 template> [region] threshold         → locate an icon/sprite you cropped earlier (capture_screen region=...)
   game_loop when={find_color…} then={tap x:"$cx" y:"$cy"} stopWhen={…} iterations → server runs the whole loop; ONE call replaces 20-60
   save_macro name steps[] / run_macro name              → reusable sequences (open game, skip intro, daily reward)
+Reflexes v2 + object detection + screen memory (v1.9):
+  find_objects "#rrggbb" [region] minSize  → EVERY blob of that colour (cx,cy,bounds,area) sorted by size. find_color gives one averaged centre (often empty space between enemies); find_objects gives each target.
+  auto_react "#rrggbb" region maxTriggers timeoutMs [tapX/tapY | tapOffsetX/Y] → the PHONE taps the colour within ~80ms of it appearing, repeatedly. Use for whack-a-mole, rhythm hit-lines (thin region), "tap when green", catching items. One call replaces a whole reflex loop over the network.
+  label_screen "name"  once per distinct screen (menu, playing, level-complete, game-over, shop, ad). Afterwards observe returns screenName and identify_screen gives confidence.
+  identify_screen  → where am I? null = new screen → look + label it. Usable as do_until/game_loop condition (matches when any label is recognised).
 Composite intelligence (v1.8 — fewer, smarter round-trips):
   observe [grid] [colors] [region]   → image + OCR lines + app + colour hits + what changed, in parallel. Your default look in games.
   smart_tap "label" [fallback{x,y}]  → ui element → OCR text → fallback; returns via + changed. Use for any named button.
@@ -147,7 +161,7 @@ OCR (v1.7 — read text where there is no ui tree):
   find_colors ["#a","#b",...]  → several colours in one frame (enemies + gems + HP at once)
   session_stats                → your own success rate / latency; adapt if flaky
   live_preview true            → stream frames to the human's /monitor page when they want to watch
-Decision guide: named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
+Decision guide: several same-colour targets → find_objects then tap_sequence. Must react in <200ms → auto_react (phone-side). Lost / "which screen is this?" → identify_screen. Named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
 Rules for games: never spam raw "tap" in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }

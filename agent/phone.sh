@@ -16,6 +16,9 @@
 #   ./phone.sh look [grid] ['#a,#b'] [x,y,w,h]   # v1.8 observe: look.png + OCR lines + app + colours + diff in ONE call
 #   ./phone.sh press "Skip" [fallbackX fallbackY] # v1.8 smart_tap: ui -> OCR -> fallback; verifies screen changed
 #   ./phone.sh popups ["extra label",...] | until '<action json>' '<observation json>' [maxTries] | history [n]
+#   ./phone.sh objects '#rrggbb' [tol] [x,y,w,h]        # v1.9 find_objects: every blob (cx,cy,area) sorted by size
+#   ./phone.sh react '#rrggbb' [x,y,w,h] [maxTriggers] [timeoutMs]   # v1.9 auto_react: phone-side reflex taps
+#   ./phone.sh label "main-menu" | which | screens | unlabel <name|*>   # v1.9 screen memory
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -136,6 +139,28 @@ if len(sys.argv)>3: a["fallback"]={"x":int(sys.argv[2]),"y":int(sys.argv[3])}
 print(json.dumps(a))' "$@")" | pretty ;;
   popups)  call dismiss_popups "$(python3 -c 'import json,sys; print(json.dumps({"extra":[s for s in sys.argv[1:] if s]}))' "$@")" | pretty ;;
   until)   call do_until "$(python3 -c 'import json,sys; print(json.dumps({"action":json.loads(sys.argv[1]),"until":json.loads(sys.argv[2]),"maxTries":int(sys.argv[3])}))' "$1" "$2" "${3:-8}")" | pretty ;;
+  objects) call find_objects "$(python3 -c 'import json,sys
+a={"color":sys.argv[1],"tolerance":int(sys.argv[2])}
+if sys.argv[3]:
+  x,y,w,h=map(int,sys.argv[3].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
+print(json.dumps(a))' "$1" "${2:-24}" "${3:-}")" | python3 -c '
+import json,sys; r=json.load(sys.stdin)
+if not r.get("ok"): print(r); sys.exit(1)
+d=r.get("data",{})
+for o in d.get("objects",[]): b=o.get("bounds",{}); print("  #%d (%4d,%4d) area=%-6d box=%dx%d @(%d,%d)" % (o["i"], o["cx"], o["cy"], o["area"], b.get("w",0), b.get("h",0), b.get("x",0), b.get("y",0)))
+print("(%d objects, %d total blobs)" % (len(d.get("objects",[])), d.get("total",0)))' ;;
+  react)   call auto_react "$(python3 -c 'import json,sys
+a={"color":sys.argv[1],"maxTriggers":int(sys.argv[3]),"timeoutMs":int(sys.argv[4])}
+if sys.argv[2]:
+  x,y,w,h=map(int,sys.argv[2].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
+print(json.dumps(a))' "$1" "${2:-}" "${3:-20}" "${4:-10000}")" | pretty ;;
+  label)   call label_screen "$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1]}))' "$1")" | pretty ;;
+  which)   call identify_screen | pretty ;;
+  screens) call identify_screen '{"list":true}' | python3 -c '
+import json,sys; d=json.load(sys.stdin)
+for s in d.get("labels",[]): print("  %-24s %-32s %s" % (s["name"], s.get("app") or "", " ".join(s.get("words",[]))))
+print("(%d labelled screens)" % d.get("count",0))' ;;
+  unlabel) call identify_screen "{\"delete\":\"${1:-*}\"}" | pretty ;;
   history) call recent_actions "{\"limit\":${1:-20}}" | python3 -c '
 import json,sys; d=json.load(sys.stdin)
 for a in d.get("actions",[]):
@@ -175,5 +200,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,37p' "$0" ;;
+  *) sed -n '2,40p' "$0" ;;
 esac
