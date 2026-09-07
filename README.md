@@ -55,6 +55,16 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
+**🎮 Game Mode (v1.5 + v1.6) — للألعاب والتطبيقات بدون UI tree**
+- 📐 **لقطات بشبكة إحداثيات** (`grid`) + **قص منطقة** بدقة كاملة (`region`) — الـ AI يقرأ الإحداثية الدقيقة من الصورة
+- ⚡ **إدخال دقيق على الموبايل** (بدون jitter شبكة): `tap_sequence`, `repeat_tap` (auto-clicker بإيقاع ثابت), `swipe_path` (جويستيك/مسار), `multi_tap` (multi-touch)
+- 👁️ **إدراك رخيص**: `get_pixels`, `find_color` (مركز + bbox), `screen_diff` (المناطق التي تغيّرت), `find_image` (template matching على الموبايل)
+- 🪝 **ردود فعل (Reflexes)** — الموبايل ينتظر ويرد بدل الـ polling: `watch_color` (انتظر ظهور/اختفاء لون), `wait_pixel`, `wait_for_screen` (change|stable), `tap_color` (ابحث + اضغط في طلب واحد)
+- 🔁 **`act_and_see`**: فعل + انتظار + لقطة في round-trip واحد · **`game_loop`**: السيرفر يشغّل حلقة إدراك→فعل كاملة (حتى 60 جولة) في طلب واحد مع حقن `$cx/$cy`
+- 🧠 **ذاكرة عبر المحادثات**: `remember`/`recall` (ملاحظات لكل جهاز) + `save_macro`/`run_macro` (سلاسل قابلة للتكرار) — تظهر تلقائيًا في bootstrap المحادثة الجديدة
+- 📖 **GAME PLAYBOOK** داخل bootstrap: متى يستخدم كل أداة + دليل قرار
+- Timeouts ديناميكية لكل أمر (سلاسل طويلة لا تنقطع)
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -146,13 +156,15 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **31 أداة** مباشرة:
+بعدها النموذج يرى **50 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
 - عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
 - إيماءات: `tap`, `double_tap`, `long_press`, `swipe`, `drag`, `pinch`, `scroll`
 - نظام: `press_back`, `press_home`, `open_recents`, `open_notifications`, `open_quick_settings`, `lock_screen`, `wake_screen`, `wait`
 - تركيبية: **`batch(steps[], continueOnError)`** — عدة أدوات في طلب واحد
+- 🎮 ألعاب/دقة: `act_and_see`, `tap_sequence`, `multi_tap`, `swipe_path`, `repeat_tap`, `get_pixels`, `find_color`, `tap_color`, `find_image`, `screen_diff`, `watch_color`, `wait_pixel`, `wait_for_screen`, `game_loop`
+- 🧠 ذاكرة: `remember`, `recall`, `save_macro`, `run_macro`, `list_macros`
 `capture_screen` يرجّع الصورة كـ MCP image content فيراها النموذج مباشرة.
 
 ### ب) مواصفات الأدوات بأي صيغة (عامة — بدون أسرار)
@@ -200,6 +212,7 @@ python agent_runner.py shell                                     # REPL: tap 540
 | GET | `/api/me` | هوية التوكن الحالي (admin / device / readOnly) |
 | GET | `/api/devices/:id/logs` | آخر 100 أمر |
 | GET | `/api/devices/:id/last-screenshot` | آخر لقطة محفوظة (بدون التقاط جديد) |
+| GET/POST/DELETE | `/api/devices/:id/notes` | ذاكرة الجهاز (ملاحظات الـ AI) |
 | GET | `/setup/:adminToken` | لوحة الإعداد للمالك |
 | GET | `/pair?server=&token=&device=` | صفحة ربط الهاتف (deep link) |
 | GET | `/api/admin/overview` | أجهزة + توكنات + حالة (admin) |
@@ -211,7 +224,7 @@ python agent_runner.py shell                                     # REPL: tap 540
 | GET | `/api/tools/schema?format=` | مواصفات الأدوات (عام) |
 | POST | `/api/devices/:id/tools/call` | تنفيذ أداة AI بالاسم |
 | POST | `/api/devices/:id/tools/:tool` | endpoint لكل أداة |
-| GET | `/api/devices/:id/screenshot.png` · `.jpg` | لقطة خام (`?maxWidth=&format=&quality=`) |
+| GET | `/api/devices/:id/screenshot.png` · `.jpg` | لقطة خام (`?maxWidth=&format=&quality=&grid=100&region=x,y,w,h`) |
 | POST | `/mcp` · `/mcp/:token` | MCP Server (JSON-RPC, Streamable HTTP) |
 | GET | `/agent/:token` | **Bootstrap ذاتي الوصف للـ AI** (بيانات + أدوات + قواعد + حالة) |
 | GET | `/phone.sh` | سكريبت التحكم (يُخدَم من السيرفر) |
@@ -237,7 +250,17 @@ python agent_runner.py shell                                     # REPL: tap 540
 {"type":"scroll_element","elementId":"recycler","direction":"forward"}
 {"type":"set_clipboard","text":"...","paste":true}
 {"type":"get_notifications","limit":20}   {"type":"device_info"}
+// v1.5 / v1.6 (games)
+{"type":"screenshot","maxWidth":1080,"grid":100,"region":{"x":0,"y":1400,"w":1080,"h":600}}
+{"type":"tap_sequence","points":[{"x":540,"y":900,"delayMs":0},{"x":540,"y":1200,"delayMs":120,"durationMs":60}]}
+{"type":"repeat_tap","x":950,"y":2100,"count":20,"intervalMs":80}
+{"type":"swipe_path","points":[{"x":200,"y":1800},{"x":500,"y":1500},{"x":800,"y":1800}],"duration":600}
+{"type":"multi_tap","points":[{"x":200,"y":2100},{"x":900,"y":2100}],"duration":80}
+{"type":"pixel","points":[{"x":120,"y":180}]}   {"type":"find_color","color":"#ff2020","tolerance":30}
+{"type":"watch_color","color":"#00e676","appear":true,"timeoutMs":8000}   {"type":"wait_pixel","x":980,"y":2150,"color":"#ffffff"}
+{"type":"screen_diff"}   {"type":"find_image","image":"<base64>","threshold":0.85}
 ```
+> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro`.
 الرد: `{"id":"...","ok":true,"durationMs":42,"queuedMs":310}` أو `{"ok":false,"error":"device offline"}` (HTTP 502). `429` عند تجاوز الحد.
 
 ### الأمان (v1.4)
@@ -274,6 +297,8 @@ python agent_runner.py shell                                     # REPL: tap 540
 │   └── scenarios/       # سيناريوهات JSON
 ├── tests/fake-phone.mjs # محاكي هاتف للاختبار (+ mock_llm.py)
 ├── tests/e2e.sh         # 49 اختبار end-to-end (tokens/queue/batch/rate-limit/monitor/mcp)
+├── tests/e2e-v15.sh     # 40 اختبار: أدوات الألعاب (sequence/pixels/find_color/act_and_see/memory)
+├── tests/e2e-v16.sh     # 44 اختبار: reflexes / game_loop / macros
 ├── .github/workflows/   # بناء APK + نشر Worker
 └── wrangler.jsonc
 ```
@@ -285,13 +310,13 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh             # 49 checks → PASSED 49 FAILED 0
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh   # 133 checks green
 ```
 
 ## Data Architecture
 - **Durable Object `DeviceRoom`** (واحد لكل deviceId): حالة الجهاز + آخر 100 أمر + اتصالات WebSocket (Hibernation).
 - **Durable Object `DeviceRegistry`** (singleton): قائمة الأجهزة + توكنات per-device (SHA-256) + labels.
-- `DeviceRoom` يحتفظ أيضًا بآخر لقطة في الذاكرة وطابور أوامر الإدخال.
+- `DeviceRoom` يحتفظ أيضًا بآخر لقطة في الذاكرة وطابور أوامر الإدخال، و**notes** (حتى 40) و**macros** (حتى 30) دائمة لكل جهاز.
 - لا توجد قاعدة بيانات خارجية؛ التخزين داخل Durable Objects (SQLite-backed).
 
 ## غير منجز بعد / خطوات مقترحة
@@ -310,6 +335,6 @@ tests/e2e.sh             # 49 checks → PASSED 49 FAILED 0
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-07 (v1.4 — setup panel, pairing deep link, per-device/admin tokens, queue, batch, 31 tools, live monitor, Android 1.4.0)
+- **Last Updated**: 2026-09-07 (v1.6 — Game Mode: grid/region shots, on-device precision input, reflexes (watch_color/wait_pixel/screen_diff/find_image), act_and_see, game_loop, memory + macros; 50 tools; Android 1.6.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
