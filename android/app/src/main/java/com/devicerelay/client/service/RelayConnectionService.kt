@@ -232,6 +232,7 @@ class RelayConnectionService : Service() {
             "drag" -> base + (a.duration ?: 600L) + (a.holdMs ?: 500L)
             "watch_color", "wait_pixel" -> base + (a.timeoutMs ?: 5000L)
             "read_text" -> 25_000L
+            "auto_react" -> base + (a.timeoutMs ?: 10_000L)
             else -> base
         }
     }
