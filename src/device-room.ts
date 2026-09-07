@@ -1,9 +1,9 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, PhoneMessage } from './types'
-import { READ_ONLY_ACTIONS } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, Note, PhoneMessage } from './types'
+import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
-const COMMAND_TIMEOUT_MS = 15_000
 const MAX_LOGS = 100
+const MAX_NOTES = 40
 const MAX_QUEUE = 32
 
 export interface CommandResult {
@@ -40,6 +40,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private info: DeviceInfo
   private logs: LogEntry[] = []
   private lastScreenshot: { ts: number; data: string; mime: string } | null = null
+  /** Persistent notes written by AI agents (game layouts, coordinates, learnings) — survive across chats. */
+  private notes: Note[] = []
 
   private inputBusy = false
   private inputQueue: Array<() => void> = []
@@ -52,6 +54,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (saved) this.info = { ...saved, online: this.phoneSockets().length > 0 }
       const logs = await ctx.storage.get<LogEntry[]>('logs')
       if (logs) this.logs = logs
+      const notes = await ctx.storage.get<Note[]>('notes')
+      if (notes) this.notes = notes
     })
   }
 
@@ -123,6 +127,25 @@ export class DeviceRoom extends DurableObject<Bindings> {
     if (url.pathname.endsWith('/info')) return Response.json(this.snapshotInfo())
     if (url.pathname.endsWith('/logs')) return Response.json(this.logs)
     if (url.pathname.endsWith('/last-screenshot')) return Response.json(this.lastScreenshot ?? { ts: 0, data: null })
+    if (url.pathname.endsWith('/notes')) {
+      if (request.method === 'GET') return Response.json({ notes: this.notes })
+      if (request.method === 'POST') {
+        const { text } = (await request.json()) as { text?: string }
+        const t = String(text ?? '').trim().slice(0, 2000)
+        if (!t) return Response.json({ ok: false, error: 'text required' }, { status: 400 })
+        this.notes.push({ text: t, ts: Date.now() })
+        if (this.notes.length > MAX_NOTES) this.notes.splice(0, this.notes.length - MAX_NOTES)
+        await this.ctx.storage.put('notes', this.notes)
+        return Response.json({ ok: true, count: this.notes.length })
+      }
+      if (request.method === 'DELETE') {
+        const idx = Number(url.searchParams.get('index'))
+        if (Number.isInteger(idx) && idx >= 0 && idx < this.notes.length) this.notes.splice(idx, 1)
+        else this.notes = []
+        await this.ctx.storage.put('notes', this.notes)
+        return Response.json({ ok: true, count: this.notes.length })
+      }
+    }
     if (url.pathname.endsWith('/label') && request.method === 'POST') {
       const { label } = (await request.json()) as { label?: string }
       this.info.label = label?.slice(0, 64) || undefined
@@ -222,7 +245,7 @@ export class DeviceRoom extends DurableObject<Bindings> {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         resolve({ ok: false, error: 'timeout waiting for device' })
-      }, COMMAND_TIMEOUT_MS)
+      }, actionTimeoutMs(action))
       this.pending.set(id, { resolve, timer, sentAt })
     })
 
