@@ -477,6 +477,77 @@ export const TOOLS: ToolDef[] = [
     description: 'List saved macros for this device (name, description, steps count, runs). Pass delete=name to remove one.',
     parameters: { type: 'object', properties: { delete: { type: 'string', description: 'Macro name to delete' } }, required: [] },
   },
+  // ------------------------------------------------------------ v1.7 OCR + multi-colour + self-awareness
+  {
+    name: 'read_text',
+    description:
+      'OCR: read all visible text from the screen (or a region) using on-device ML Kit \u2014 works in GAMES and canvas apps where get_ui_elements returns nothing. ' +
+      'Returns blocks/lines with text, confidence-ish size, and centre (cx,cy) + bounds in original px. Use for scores, timers, dialogue, level names, currency counters, menu labels. lang: latin (default) | ar | zh | ja | ko | hi.',
+    parameters: {
+      type: 'object',
+      properties: { region: { type: 'object', description: 'Optional {x,y,w,h}' }, lang: { type: 'string', description: 'Script hint (default latin)' } },
+      required: [],
+    },
+  },
+  {
+    name: 'tap_text',
+    description: 'OCR + tap: find on-screen text (case-insensitive, partial match; exact wins) via read_text and tap its centre. The game-world equivalent of tap_element. Returns the matched line and where it tapped.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text to find, e.g. "PLAY", "Continue", "x2"' },
+        region: { type: 'object', description: 'Optional search area {x,y,w,h}' },
+        index: { type: 'integer', description: 'If several match, which one (0-based)', minimum: 0, default: 0 },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'wait_for_text',
+    description: 'Poll OCR until text appears (or disappears with appear=false). Use for "wait until LEVEL COMPLETE shows", "wait until Loading vanishes". Returns the matched line with cx,cy.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text to wait for (case-insensitive, partial)' },
+        region: { type: 'object', description: 'Optional {x,y,w,h} (smaller = faster)' },
+        appear: { type: 'boolean', description: 'true (default) wait to appear; false wait to vanish', default: true },
+        timeoutMs: { type: 'integer', description: 'default 8000, max 30000', minimum: 500, maximum: 30000, default: 8000 },
+        intervalMs: { type: 'integer', description: 'default 700 (OCR is ~200-500ms)', minimum: 300, maximum: 3000, default: 700 },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'find_colors',
+    description: 'Scan for up to 8 colours in ONE frame (enemies + gems + HP bar at once). Returns per-colour {found,count,cx,cy,bounds}. Cheaper than several find_color calls.',
+    parameters: {
+      type: 'object',
+      properties: {
+        colors: { type: 'array', description: '["#rrggbb", ...] up to 8' },
+        tolerance: { type: 'integer', description: '0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
+        region: { type: 'object', description: 'Optional {x,y,w,h}' },
+      },
+      required: ['colors'],
+    },
+  },
+  {
+    name: 'session_stats',
+    description: 'Self-check: success rate, latency p50/p90, per-action breakdown and the last failures for this device (last 100 commands). Call it when things feel slow/flaky to adapt (e.g. switch from tap to tap_sequence, add wait_for_screen, lower screenshot size).',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'live_preview',
+    description: 'Turn the human live preview stream on/off (the phone pushes small JPEG frames at fps to the /monitor page). Does NOT affect your tools. Auto-stops when nobody is watching. Use when the user says they want to watch.',
+    parameters: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean', description: 'true to start, false to stop' },
+        fps: { type: 'number', description: '0.2-4 (default 2)', minimum: 0.2, maximum: 4, default: 2 },
+        maxWidth: { type: 'integer', description: '120-720 (default 360)', minimum: 120, maximum: 720, default: 360 },
+      },
+      required: ['enabled'],
+    },
+  },
   {
     name: 'remember',
     description:
@@ -513,7 +584,7 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats'; error?: string } {
   switch (name) {
     case 'capture_screen': return { action: { type: 'screenshot', maxWidth: args.maxWidth, quality: args.quality, format: args.format, grid: args.grid, region: args.region } }
     case 'tap_sequence': return { action: { type: 'tap_sequence', points: args.points } }
@@ -527,6 +598,12 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'watch_color': return { action: { type: 'watch_color', color: args.color, tolerance: args.tolerance, region: args.region, appear: args.appear, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs, minCount: args.minCount } }
     case 'wait_pixel': return { action: { type: 'wait_pixel', x: args.x, y: args.y, color: args.color, tolerance: args.tolerance, appear: args.appear, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs } }
     case 'find_image': return { action: { type: 'find_image', image: args.image, threshold: args.threshold, region: args.region, maxResults: args.maxResults } }
+    case 'read_text': return { action: { type: 'read_text', region: args.region, lang: args.lang } }
+    case 'find_colors': return { action: { type: 'find_colors', colors: args.colors, tolerance: args.tolerance, region: args.region } }
+    case 'live_preview': return { action: { type: 'stream', enabled: args.enabled === true, fps: args.fps ?? 2, maxWidth: args.maxWidth ?? 360, quality: 55 } }
+    case 'tap_text': return { special: 'tap_text' }
+    case 'wait_for_text': return { special: 'wait_for_text' }
+    case 'session_stats': return { special: 'session_stats' }
     case 'tap_color': return { special: 'tap_color' }
     case 'game_loop': return { special: 'game_loop' }
     case 'save_macro': return { special: 'save_macro' }
@@ -654,7 +731,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '1.6.0',
+      version: '1.7.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
@@ -670,7 +747,8 @@ export function openapiSpec(serverUrl: string) {
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
+  'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */
-export const OBSERVATION_TOOLS: ReadonlySet<string> = new Set(['find_color', 'get_pixels', 'wait_pixel', 'watch_color', 'screen_diff', 'find_image', 'wait_for_element'])
+export const OBSERVATION_TOOLS: ReadonlySet<string> = new Set(['find_color', 'find_colors', 'get_pixels', 'wait_pixel', 'watch_color', 'screen_diff', 'find_image', 'wait_for_element', 'read_text', 'wait_for_text'])

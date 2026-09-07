@@ -90,6 +90,9 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'save_macro') return saveMacro(env, deviceId, args)
   if (mapped.special === 'run_macro') return runMacro(env, deviceId, args, opts)
   if (mapped.special === 'list_macros') return listMacros(env, deviceId, args)
+  if (mapped.special === 'tap_text') return tapText(env, deviceId, args, opts)
+  if (mapped.special === 'wait_for_text') return waitForText(env, deviceId, args, opts)
+  if (mapped.special === 'session_stats') return (await (await room(env, deviceId).fetch(`https://do/stats?deviceId=${deviceId}`)).json()) as ToolResult
 
   let actionInput: Record<string, unknown> | undefined = mapped.action
   if (mapped.special === 'scroll') {
@@ -264,6 +267,9 @@ function observationMatched(name: string, r: ToolResult, minChange: number): [bo
     case 'find_image': { const m = (d.matches as { cx: number; cy: number }[] | undefined) ?? []; return [m.length > 0, m[0]?.cx, m[0]?.cy] }
     case 'screen_diff': return [Number(d.changedPct ?? 0) >= minChange, (d.regions as { cx: number; cy: number }[] | undefined)?.[0]?.cx, (d.regions as { cx: number; cy: number }[] | undefined)?.[0]?.cy]
     case 'get_pixels': { const px = (d.pixels as { hex: string }[] | undefined) ?? []; return [px.length > 0, undefined, undefined] }
+    case 'find_colors': { const res = (d.results as { found: boolean; cx?: number; cy?: number }[] | undefined) ?? []; const f = res.find((x) => x.found); return [!!f, f?.cx, f?.cy] }
+    case 'read_text': { const lines = (d.lines as { cx: number; cy: number }[] | undefined) ?? []; return [lines.length > 0, lines[0]?.cx, lines[0]?.cy] }
+    case 'wait_for_text': { const m = r.match as { cx: number; cy: number } | undefined; return [r.found === true, m?.cx, m?.cy] }
     case 'wait_for_element': { const e = r.element as { cx: number; cy: number } | undefined; return [r.found === true, e?.cx, e?.cy] }
     default: return [false, undefined, undefined]
   }
@@ -319,6 +325,50 @@ async function gameLoop(env: Bindings, deviceId: string, args: Record<string, un
     if (interval) await new Promise((r) => setTimeout(r, interval))
   }
   return { ok: true, rounds: trace.length, acted, matched, stoppedBy: stoppedBy ?? 'iterations', trace, durationMs: Date.now() - t0 }
+}
+
+// ---- OCR helpers
+interface OcrLine { text: string; cx: number; cy: number; x?: number; y?: number; w?: number; h?: number }
+async function ocrLines(env: Bindings, deviceId: string, region: unknown, opts: ExecOptions): Promise<{ ok: boolean; error?: string; lines: OcrLine[] }> {
+  const r = await executeTool(env, deviceId, 'read_text', region ? { region } : {}, opts)
+  const d = r.data as { lines?: OcrLine[] } | undefined
+  return { ok: r.ok, error: r.error, lines: d?.lines ?? [] }
+}
+function matchLines(lines: OcrLine[], q: string): OcrLine[] {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return []
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+  const exact = lines.filter((l) => norm(l.text) === needle)
+  if (exact.length) return exact
+  return lines.filter((l) => norm(l.text).includes(needle))
+}
+async function tapText(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const q = String(args.text ?? '')
+  if (!q.trim()) return { ok: false, error: 'tap_text requires text' }
+  const o = await ocrLines(env, deviceId, args.region, opts)
+  if (!o.ok) return { ok: false, error: o.error ?? 'OCR failed (needs Android app v1.7+)' }
+  const hits = matchLines(o.lines, q)
+  if (!hits.length) return { ok: false, found: false, error: `text "${q}" not found on screen`, seen: o.lines.slice(0, 15).map((l) => l.text) }
+  const idx = Math.min(Math.max(Number(args.index) || 0, 0), hits.length - 1)
+  const h = hits[idx]
+  const t = await executeTool(env, deviceId, 'tap', { x: h.cx, y: h.cy }, opts)
+  return { ...t, found: true, matched: hits.length, match: h, tapped: { x: h.cx, y: h.cy } }
+}
+async function waitForText(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const q = String(args.text ?? '')
+  if (!q.trim()) return { ok: false, error: 'wait_for_text requires text' }
+  const appear = args.appear !== false
+  const timeout = Math.min(Math.max(Number(args.timeoutMs) || 8000, 500), 30_000)
+  const interval = Math.min(Math.max(Number(args.intervalMs) || 700, 300), 3000)
+  const start = Date.now(); let polls = 0
+  while (Date.now() - start < timeout) {
+    const o = await ocrLines(env, deviceId, args.region, opts); polls++
+    if (!o.ok) return { ok: false, error: o.error ?? 'OCR failed' }
+    const hits = matchLines(o.lines, q)
+    if ((hits.length > 0) === appear) return { ok: true, found: hits.length > 0, appear, match: hits[0], waitedMs: Date.now() - start, polls }
+    await new Promise((r) => setTimeout(r, interval))
+  }
+  return { ok: false, found: !appear, error: `text "${q}" did not ${appear ? 'appear' : 'disappear'} within ${timeout}ms`, waitedMs: Date.now() - start, polls }
 }
 
 // ---- macros
