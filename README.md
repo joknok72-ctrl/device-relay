@@ -55,6 +55,15 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
+**🧠 ذكاء مركّب (v1.8) — أقل استدعاءات، قرارات أذكى (Worker فقط، بدون تحديث التطبيق)**
+- 👁️ **`observe`**: لقطة + OCR + التطبيق الحالي + بحث ألوان + ما الذي تغيّر — كلها **بالتوازي في طلب واحد** (تكلفة لقطة واحدة تقريبًا). هي الـ "look" الافتراضية للـ AI في الألعاب
+- 🎯 **`smart_tap`**: اضغط "أي شيء" بالاسم: عنصر Accessibility → نص OCR → إحداثية بديلة، ويتحقق أن الشاشة تغيّرت بعد الضغط (`via`, `changed`)
+- 🔁 **`do_until`**: كرّر فعلًا حتى تتحقق ملاحظة (اضغط Skip حتى يظهر PLAY، ارجع للخلف حتى يظهر لون...) — يفحص الشرط قبل كل محاولة
+- 🧹 **`dismiss_popups`**: يغلق الإعلانات/الأذونات/طلبات التقييم/cookie banners (عربي + إنجليزي) عبر UI + OCR مع ترتيب ذكي للمرشحين
+- 🕰️ **`recent_actions`**: سجل الـ AI نفسه (حتى من الجلسة السابقة) — لا يكرر محاولة فاشلة
+- 🏷️ **ملاحظات موسومة باللعبة**: `remember` يوسم الملاحظة تلقائيًا بـ package التطبيق المفتوح؛ `recall app=current`؛ الـ bootstrap يعرضها مجمّعة لكل لعبة
+- 📋 قاعدة بداية الجلسة في الـ bootstrap: `recall` + `history` + `look` ثم تصرّف
+
 **🎮 Game Mode (v1.5 → v1.7) — للألعاب والتطبيقات بدون UI tree**
 - 📐 **لقطات بشبكة إحداثيات** (`grid`) + **قص منطقة** بدقة كاملة (`region`) — الـ AI يقرأ الإحداثية الدقيقة من الصورة
 - ⚡ **إدخال دقيق على الموبايل** (بدون jitter شبكة): `tap_sequence`, `repeat_tap` (auto-clicker بإيقاع ثابت), `swipe_path` (جويستيك/مسار), `multi_tap` (multi-touch)
@@ -160,7 +169,7 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **56 أداة** مباشرة:
+بعدها النموذج يرى **61 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
 - عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
@@ -268,7 +277,7 @@ python agent_runner.py shell                                     # REPL: tap 540
 {"type":"find_colors","colors":["#ff2020","#00e676"],"tolerance":30}
 {"type":"stream","enabled":true,"fps":2,"maxWidth":480,"quality":50}
 ```
-> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro` · `ocr/taptext/waittext` · `colors` · `stats` · `live`.
+> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro` · `ocr/taptext/waittext` · `colors` · `stats` · `live` · **v1.8:** `look [grid] [colors]` · `press "Skip" [x y]` · `popups` · `until <action> <observation>` · `history`.
 الرد: `{"id":"...","ok":true,"durationMs":42,"queuedMs":310}` أو `{"ok":false,"error":"device offline"}` (HTTP 502). `429` عند تجاوز الحد.
 
 ### الأمان (v1.4)
@@ -318,7 +327,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh   # 169 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh   # 227 checks green
 ```
 
 ## Data Architecture
@@ -343,6 +352,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh   # 169
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-07 (v1.7 — on-device OCR: read_text/tap_text/wait_for_text, find_colors, session_stats, live_preview stream to /monitor; 56 tools; 169 e2e checks; Android 1.7.0)
+- **Last Updated**: 2026-09-07 (v1.8 — composite intelligence: observe, smart_tap, do_until, dismiss_popups, recent_actions, app-tagged memory; 61 tools; 227 e2e checks; Android 1.7.0 unchanged)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
