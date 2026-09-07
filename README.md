@@ -16,6 +16,7 @@
 | ماذا | الرابط |
 |---|---|
 | **السيرفر (Production)** | https://device-relay.cracknew37.workers.dev |
+| **لوحة الإعداد (المالك)** | `https://device-relay.cracknew37.workers.dev/setup/<ADMIN_TOKEN>` — ابدأ من هنا |
 | **مراقبة حية للإنسان** | `https://device-relay.cracknew37.workers.dev/monitor/<TOKEN>` |
 | **GitHub** | https://github.com/joknok72-ctrl/device-relay |
 | **تنزيل APK (آخر نسخة)** | https://github.com/joknok72-ctrl/device-relay/releases/tag/latest |
@@ -40,6 +41,9 @@
 - 📥 **طابور أوامر**: أوامر الإدخال (tap/swipe/type…) تُنفَّذ بالتسلسل لكل هاتف؛ أوامر القراءة (screenshot/ui/notifications) تعمل بالتوازي. النتيجة تحمل `queuedMs`
 - 📦 أداة **`batch`**: تنفيذ حتى 25 أداة في طلب واحد (`continueOnError` اختياري)
 - 📸 `capture_screen` بخيارات `maxWidth` (حتى 2160) / `format=jpeg` / `quality` + `GET /screenshot.jpg`
+- 🧭 **لوحة الإعداد** `/setup/<admin>`: 3 خطوات بأزرار نسخ (ربط الموبايل +QR، برومبت المحادثة، المراقبة) + إدارة التوكنات والأجهزة من المتصفح
+- 🔗 **ربط الموبايل برابط واحد** `/pair?...` → `devicerelay://pair` يملأ إعدادات التطبيق ويتصل تلقائيًا
+- 🔑 **توكنات Admin بديلة** تُنشأ من اللوحة (تدوير بدون wrangler)؛ `/api/me` يرجّع كل روابط التوكن
 - 👁️ **صفحة مراقبة حية** `/monitor/<token>` (حالة + سجل حي + آخر لقطة) — للمتابعة فقط، لا تحكم
 - 🔔 **Webhook** اختياري (`WEBHOOK_URL` secret) عند online/offline
 - 🏷️ تسمية الأجهزة (`label`) + مسح السجل + فصل جهاز من الـ Admin API
@@ -65,21 +69,17 @@
 
 ## دليل الاستخدام (خطوة بخطوة)
 
-### 1) التوكن
-التوكن السري (`RELAY_TOKEN`) مضبوط بالفعل كـ Secret على الـ Worker. لتغييره:
-```bash
-openssl rand -hex 24 | npx wrangler secret put RELAY_TOKEN
+### 1) افتح لوحة الإعداد
 ```
+https://device-relay.cracknew37.workers.dev/setup/<ADMIN_TOKEN>
+```
+كل شيء من هنا: ربط الموبايل، برومبت المحادثة الجديدة، المراقبة، التوكنات. التوكن الرئيسي (`RELAY_TOKEN`) Secret على الـ Worker؛ لتغييره: `openssl rand -hex 24 | npx wrangler secret put RELAY_TOKEN` — أو أنشئ Admin بديل من اللوحة.
 
-### 2) تثبيت التطبيق على الهاتف
-1. من صفحة **Releases** نزّل `DeviceRelay.apk` وثبّته (اسمح بمصادر غير معروفة).
-2. افتح التطبيق وأدخل:
-   - **رابط السيرفر**: `https://device-relay.cracknew37.workers.dev`
-   - **Bearer Token**: التوكن السري
-   - **Device ID**: أي اسم (مثال `my-phone`)
-3. اضغط **تفعيل** بجانب "خدمة إمكانية الوصول" ← فعّل **Device Relay Automation**.
-4. ارجع للتطبيق واضغط **اتصال**. يجب أن تظهر الحالة "متصل ✔".
-5. (اختياري) في إعدادات البطارية اجعل التطبيق "غير مقيّد" حتى لا يقتله النظام.
+### 2) ربط الهاتف
+1. من **Releases** ثبّت `DeviceRelay.apk`.
+2. من لوحة الإعداد انسخ **رابط ربط الموبايل** (أو امسح QR) وافتحه على الهاتف → التطبيق يفتح ويملأ الإعدادات ويتصل.
+3. فعّل **خدمة إمكانية الوصول** و(اختياريًا) **قراءة الإشعارات** من داخل التطبيق.
+4. (اختياري) اجعل التطبيق "غير مقيّد" في إعدادات البطارية.
 
 ### 3) توكنات لكل جهاز (موصى به بدل مشاركة التوكن الرئيسي)
 ```bash
@@ -200,7 +200,10 @@ python agent_runner.py shell                                     # REPL: tap 540
 | GET | `/api/me` | هوية التوكن الحالي (admin / device / readOnly) |
 | GET | `/api/devices/:id/logs` | آخر 100 أمر |
 | GET | `/api/devices/:id/last-screenshot` | آخر لقطة محفوظة (بدون التقاط جديد) |
-| POST | `/api/admin/tokens` | إنشاء توكن لجهاز `{deviceId, label?, readOnly?}` (admin) |
+| GET | `/setup/:adminToken` | لوحة الإعداد للمالك |
+| GET | `/pair?server=&token=&device=` | صفحة ربط الهاتف (deep link) |
+| GET | `/api/admin/overview` | أجهزة + توكنات + حالة (admin) |
+| POST | `/api/admin/tokens` | إنشاء توكن `{deviceId, label?, readOnly?}` أو `{admin:true, label?}` (admin) |
 | GET / DELETE | `/api/admin/tokens[/:id]` | قائمة / إلغاء توكنات (admin) |
 | POST | `/api/admin/devices/:id/label` · `/clear-logs` · `/disconnect` | إدارة جهاز (admin) |
 | POST | `/api/devices/:id/command` | أمر واحد `{ "action": {...}, "wait": true }` |
@@ -307,6 +310,6 @@ tests/e2e.sh             # 49 checks → PASSED 49 FAILED 0
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-07 (v1.4 — per-device tokens, queue, batch, 31 tools, live monitor, Android 1.4.0)
+- **Last Updated**: 2026-09-07 (v1.4 — setup panel, pairing deep link, per-device/admin tokens, queue, batch, 31 tools, live monitor, Android 1.4.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
