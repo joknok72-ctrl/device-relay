@@ -29,6 +29,7 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.devicerelay.client.net.Action
+import com.devicerelay.client.net.ReactLane
 import com.devicerelay.client.net.Region
 import com.devicerelay.client.net.SeqPoint
 import java.io.ByteArrayOutputStream
@@ -536,27 +537,50 @@ class AutomationAccessibilityService : AccessibilityService() {
         val timeout = (a.timeoutMs ?: 10_000L).coerceIn(500, 40_000)
         val interval = (a.intervalMs ?: 80L).coerceIn(30, 2000)
         val cooldown = (a.cooldownMs ?: 250L).coerceIn(0, 5000)
+        // v2.0: lane 0 = top-level fields; extra lanes each have their own colour/region/reaction + cooldown
+        val lanes: List<ReactLane> = listOf(ReactLane(color = color, tolerance = tol, region = a.region, minCount = minCount, tapX = a.tapX, tapY = a.tapY, tapOffsetX = a.tapOffsetX, tapOffsetY = a.tapOffsetY, cooldownMs = cooldown, name = "lane0")) + (a.lanes ?: emptyList())
+        val readyAt = LongArray(lanes.size) // per-lane cooldown deadline (elapsedRealtime)
+        val stopColor = a.stopColor; val stopMin = (a.stopMinCount ?: 200).coerceAtLeast(1)
         val t0 = android.os.SystemClock.elapsedRealtime()
         var polls = 0; var triggers = 0; var stoppedBy = "timeout"
         val taps = ArrayList<JsonObject>()
-        while (android.os.SystemClock.elapsedRealtime() - t0 < timeout) {
+        outer@ while (android.os.SystemClock.elapsedRealtime() - t0 < timeout) {
             val bmp = captureBitmap()
             if (bmp == null) { stoppedBy = "screenshot failed"; break }
-            val r = scanColor(bmp, color, tol, a.region); polls++
-            val count = r["count"]?.toString()?.toLongOrNull() ?: 0L
-            if (count >= minCount) {
+            polls++
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (stopColor != null) {
+                val s = scanColor(bmp, stopColor, tol, a.stopRegion)
+                if ((s["count"]?.toString()?.toLongOrNull() ?: 0L) >= stopMin) { stoppedBy = "stopColor"; break }
+            }
+            var fired = false
+            for (li in lanes.indices) {
+                if (now < readyAt[li]) continue
+                val l = lanes[li]
+                val r = scanColor(bmp, l.color, (l.tolerance ?: tol).coerceIn(0, 128), l.region)
+                val count = r["count"]?.toString()?.toLongOrNull() ?: 0L
+                if (count < (l.minCount ?: minCount).coerceAtLeast(1)) continue
                 val cx = r["cx"]?.toString()?.toIntOrNull() ?: 0; val cy = r["cy"]?.toString()?.toIntOrNull() ?: 0
-                val tx = (a.tapX ?: (cx + (a.tapOffsetX ?: 0))).toFloat(); val ty = (a.tapY ?: (cy + (a.tapOffsetY ?: 0))).toFloat()
-                val g = gesture(tapPath(tx, ty), 40)
-                triggers++
+                val tx = (l.tapX ?: (cx + (l.tapOffsetX ?: 0))).toFloat(); val ty = (l.tapY ?: (cy + (l.tapOffsetY ?: 0))).toFloat()
+                val sw = l.swipe
+                val g = if (sw != null) {
+                    val p = Path().apply { moveTo(tx, ty); lineTo(tx + sw.dx, ty + sw.dy) }
+                    gesture(p, (sw.durationMs ?: 120L).coerceIn(20, 3000))
+                } else gesture(tapPath(tx, ty), 40)
+                triggers++; fired = true
                 val at = android.os.SystemClock.elapsedRealtime() - t0
-                taps.add(buildJsonObject { put("t", at); put("x", tx.toInt()); put("y", ty.toInt()); put("count", count); put("ok", g is Outcome.Ok) })
-                if (triggers >= maxTriggers) { stoppedBy = "maxTriggers"; break }
-                if (cooldown > 0) delay(cooldown)
-            } else delay(interval)
+                taps.add(buildJsonObject {
+                    put("t", at); put("lane", li); l.name?.let { put("name", it) }
+                    put("x", tx.toInt()); put("y", ty.toInt()); put("count", count); put("ok", g is Outcome.Ok)
+                    if (sw != null) { put("swipe", true); put("x2", (tx + sw.dx).toInt()); put("y2", (ty + sw.dy).toInt()) }
+                })
+                readyAt[li] = android.os.SystemClock.elapsedRealtime() + (l.cooldownMs ?: cooldown).coerceIn(0, 5000)
+                if (triggers >= maxTriggers) { stoppedBy = "maxTriggers"; break@outer }
+            }
+            if (!fired) delay(interval)
         }
         val tapsJson = buildJsonArray { for (t in taps) add(t) }
-        return Outcome.Ok(data = buildJsonObject { put("triggers", triggers); put("taps", tapsJson); put("polls", polls); put("stoppedBy", stoppedBy); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0) })
+        return Outcome.Ok(data = buildJsonObject { put("triggers", triggers); put("taps", tapsJson); put("polls", polls); put("lanes", lanes.size); put("stoppedBy", stoppedBy); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0) })
     }
 
     private suspend fun watchColor(a: Action): Outcome {

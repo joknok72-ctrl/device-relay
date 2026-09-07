@@ -72,6 +72,29 @@ data class Action(
     val tapY: Int? = null,               // auto_react
     val maxTriggers: Int? = null,        // auto_react
     val cooldownMs: Long? = null,        // auto_react
+    // v2.0
+    val lanes: List<ReactLane>? = null,  // auto_react: extra triggers
+    val stopColor: String? = null,       // auto_react: stop when present
+    val stopRegion: Region? = null,
+    val stopMinCount: Int? = null,
+)
+
+@Serializable
+data class ReactSwipe(val dx: Int, val dy: Int, val durationMs: Long? = null)
+
+@Serializable
+data class ReactLane(
+    val color: String,
+    val tolerance: Int? = null,
+    val region: Region? = null,
+    val minCount: Int? = null,
+    val tapX: Int? = null,
+    val tapY: Int? = null,
+    val tapOffsetX: Int? = null,
+    val tapOffsetY: Int? = null,
+    val swipe: ReactSwipe? = null,
+    val cooldownMs: Long? = null,
+    val name: String? = null,
 )
 
 @Serializable
