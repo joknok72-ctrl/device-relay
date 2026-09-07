@@ -565,7 +565,7 @@ async function identifyScreen(env: Bindings, deviceId: string, args: Record<stri
   const { screens } = (await (await room(env, deviceId).fetch(`https://do/screens?deviceId=${deviceId}`)).json()) as { screens: ScreenRec[] }
   const labels = screens.map((s) => ({ name: s.name, app: s.app, words: s.words.slice(0, 5), ts: s.ts }))
   if (args.list === true) return { ok: true, count: labels.length, labels }
-  if (!screens.length) return { ok: true, screenName: null, confidence: 0, count: 0, hint: 'no labels yet — use label_screen on each distinct screen' }
+  if (!screens.length) { overlay(env, deviceId, { type: 'screen', name: null, confidence: 0 }); return { ok: true, screenName: null, confidence: 0, count: 0, hint: 'no labels yet — use label_screen on each distinct screen' } }
   const fp = await fingerprint(env, deviceId, opts)
   if (!fp.ok) return { ok: false, error: fp.error }
   const minConf = Math.min(Math.max(Number(args.minConfidence ?? 0.72) || 0.72, 0), 1)
