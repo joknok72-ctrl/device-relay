@@ -20,6 +20,8 @@ export interface ExecOptions {
   readOnly?: boolean
   /** recursion depth guard for batch */
   depth?: number
+  /** set by composite tools for their internal sub-calls (not recorded by record_macro) */
+  internal?: boolean
 }
 
 /** Read JPEG width/height from SOF marker of a base64 JPEG. */
@@ -76,7 +78,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
 
   if (mapped.special === 'record_macro') return recordMacro(env, deviceId, args)
   // v2.0: while a recording is active, top-level input tools are appended to the draft (fire-and-forget)
-  if (!(opts.depth ?? 0) && !READ_ONLY_TOOLS.has(name) && !NO_RECORD.has(name)) {
+  if (!(opts.depth ?? 0) && !opts.internal && !READ_ONLY_TOOLS.has(name) && !NO_RECORD.has(name) && TOOLS.some((t) => t.name === name)) {
     room(env, deviceId).fetch(`https://do/record-step?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args ?? {} }) }).catch(() => {})
   }
   if (mapped.special === 'batch') return runBatch(env, deviceId, args, opts)
@@ -284,7 +286,7 @@ async function waitForScreen(env: Bindings, deviceId: string, args: Record<strin
   return { ok: false, [mode === 'change' ? 'changed' : 'stable']: false, error: `screen did not ${mode === 'change' ? 'change' : 'stabilise'} within ${timeout}ms`, waitedMs: Date.now() - start, polls }
 }
 async function hashOf(env: Bindings, deviceId: string): Promise<{ ok: boolean; hash?: string; error?: string }> {
-  const r = await executeTool(env, deviceId, 'screen_hash' as string, {})
+  const r = await executeTool(env, deviceId, 'screen_hash' as string, {}, { internal: true })
   const d = r.data as { hash?: string } | undefined
   return { ok: r.ok && !!d?.hash, hash: d?.hash, error: r.error }
 }
@@ -410,7 +412,7 @@ async function smartTap(env: Bindings, deviceId: string, args: Record<string, un
 
   const verify = args.verify !== false
   const before = verify ? await hashOf(env, deviceId) : { ok: false }
-  const t = await executeTool(env, deviceId, 'tap', target, opts)
+  const t = await executeTool(env, deviceId, 'tap', target, { ...opts, internal: true })
   const out: ToolResult = { ...t, found: true, via, match, tapped: target, tried }
   if (t.ok && verify && before.ok) {
     const waitMs = Math.min(Math.max(Number(args.waitMs ?? 500) || 0, 0), 5000)
@@ -495,7 +497,7 @@ async function dismissPopups(env: Bindings, deviceId: string, args: Record<strin
       }
     }
     if (!target) break
-    const t = await executeTool(env, deviceId, 'tap', { x: target.x, y: target.y }, opts)
+    const t = await executeTool(env, deviceId, 'tap', { x: target.x, y: target.y }, { ...opts, internal: true })
     dismissed.push({ ...target, ok: t.ok })
     if (!t.ok) break
     await new Promise((res) => setTimeout(res, 600))
@@ -598,7 +600,7 @@ async function tapColor(env: Bindings, deviceId: string, args: Record<string, un
   if (!f.ok) return f
   if (!d?.found || (d.count ?? 0) < minCount) return { ok: false, found: false, error: `color ${args.color} not found (count=${d?.count ?? 0} < ${minCount})`, count: d?.count ?? 0 }
   const x = Math.round((d.cx ?? 0) + (Number(args.offsetX) || 0)), y = Math.round((d.cy ?? 0) + (Number(args.offsetY) || 0))
-  const t = await executeTool(env, deviceId, 'tap', { x, y }, opts)
+  const t = await executeTool(env, deviceId, 'tap', { x, y }, { ...opts, internal: true })
   return { ...t, found: true, tapped: { x, y }, count: d.count, cx: d.cx, cy: d.cy }
 }
 
@@ -698,7 +700,7 @@ async function tapText(env: Bindings, deviceId: string, args: Record<string, unk
   if (!hits.length) return { ok: false, found: false, error: `text "${q}" not found on screen`, seen: o.lines.slice(0, 15).map((l) => l.text) }
   const idx = Math.min(Math.max(Number(args.index) || 0, 0), hits.length - 1)
   const h = hits[idx]
-  const t = await executeTool(env, deviceId, 'tap', { x: h.cx, y: h.cy }, opts)
+  const t = await executeTool(env, deviceId, 'tap', { x: h.cx, y: h.cy }, { ...opts, internal: true })
   return { ...t, found: true, matched: hits.length, match: h, tapped: { x: h.cx, y: h.cy } }
 }
 async function waitForText(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
@@ -794,11 +796,11 @@ async function findAndTap(env: Bindings, deviceId: string, args: Record<string, 
     if (!ui.ok) return { ok: false, error: ui.error ?? 'ui dump failed' }
     const hit = matchElement(ui.elements, args.text, args.elementId)
     if (hit) {
-      const tapped = await executeTool(env, deviceId, 'tap', { x: hit.cx, y: hit.cy })
+      const tapped = await executeTool(env, deviceId, 'tap', { x: hit.cx, y: hit.cy }, { internal: true })
       return { ...tapped, found: true, scrolls: attempt, element: hit }
     }
     if (attempt === maxScrolls) break
-    const sc = await executeTool(env, deviceId, 'scroll', { direction, amount: 0.5 })
+    const sc = await executeTool(env, deviceId, 'scroll', { direction, amount: 0.5 }, { internal: true })
     if (!sc.ok) return { ok: false, error: `scroll failed: ${sc.error}`, scrolls: attempt }
     await new Promise((r) => setTimeout(r, 500))
   }

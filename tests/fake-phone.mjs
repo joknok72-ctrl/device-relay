@@ -70,7 +70,25 @@ ws.onmessage = (ev) => {
     if (a.type === 'home') screen = 'home'
     if (a.type === 'recents' || a.type === 'open_app' || a.type === 'tap_element') screen = 'menu'
     if (a.type === 'find_objects') { const objs = a.color === '#ff0000' ? [ { i: 0, cx: 540, cy: 1500, area: 8000, bounds: { x: 500, y: 1450, w: 80, h: 100 } }, { i: 1, cx: 200, cy: 1200, area: 2500, bounds: { x: 175, y: 1175, w: 50, h: 50 } }, { i: 2, cx: 900, cy: 800, area: 900, bounds: { x: 885, y: 785, w: 30, h: 30 } } ].filter(o => o.bounds.w >= (a.minSize ?? 12)).slice(0, a.maxResults ?? 10) : []; res.data = { found: objs.length > 0, count: objs.length, total: objs.length, objects: objs, sampleStep: 2 } }
-    if (a.type === 'auto_react') { const hit = a.color === '#ff0000'; const n = hit ? Math.min(a.maxTriggers ?? 20, 3) : 0; const taps = []; for (let i = 0; i < n; i++) taps.push({ t: 80 + i * (a.cooldownMs ?? 250), x: a.tapX ?? 540 + (a.tapOffsetX ?? 0), y: a.tapY ?? 1500 + (a.tapOffsetY ?? 0), count: 1200 }); res.data = { triggers: n, taps, polls: n + 5, stoppedBy: n >= (a.maxTriggers ?? 20) ? 'maxTriggers' : 'timeout', elapsedMs: hit ? 80 + n * (a.cooldownMs ?? 250) : Math.min(a.timeoutMs ?? 10000, 600) } }
+    if (a.type === 'auto_react') {
+      // lane 0 = top-level; extra lanes fire in order. Only '#ff0000' and '#00ff00' are 'present' on the fake screen.
+      const lanes = [{ name: 'lane0', color: a.color, tapX: a.tapX, tapY: a.tapY, tapOffsetX: a.tapOffsetX, tapOffsetY: a.tapOffsetY, cooldownMs: a.cooldownMs }, ...(a.lanes || [])]
+      const present = (c) => c === '#ff0000' || c === '#00ff00'
+      const taps = []; let stoppedBy = 'timeout'
+      if (a.stopColor && present(a.stopColor)) stoppedBy = 'stopColor'
+      else {
+        outer: for (let round = 0; round < 3; round++) for (let li = 0; li < lanes.length; li++) {
+          const l = lanes[li]; if (!present(l.color)) continue
+          const base = l.color === '#ff0000' ? { x: 540, y: 1500 } : { x: 300, y: 700 }
+          const t = { t: 80 + taps.length * 120, lane: li, name: l.name, count: 1200 }
+          if (l.swipe) Object.assign(t, { swipe: true, x: base.x, y: base.y, x2: base.x + l.swipe.dx, y2: base.y + l.swipe.dy })
+          else Object.assign(t, { x: l.tapX ?? base.x + (l.tapOffsetX ?? 0), y: l.tapY ?? base.y + (l.tapOffsetY ?? 0) })
+          taps.push(t)
+          if (taps.length >= (a.maxTriggers ?? 20)) { stoppedBy = 'maxTriggers'; break outer }
+        }
+      }
+      res.data = { triggers: taps.length, taps, polls: taps.length + 5, stoppedBy, lanes: lanes.length, elapsedMs: taps.length ? 80 + taps.length * 120 : Math.min(a.timeoutMs ?? 10000, 600) }
+    }
     ws.send(JSON.stringify(res))
   }, delay)
 }
