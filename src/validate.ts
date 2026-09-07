@@ -162,6 +162,27 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
         timeoutMs: isNum(a.timeoutMs) ? clamp(Math.round(a.timeoutMs), 200, 30_000) : 5000,
         intervalMs: isNum(a.intervalMs) ? clamp(Math.round(a.intervalMs), 50, 2000) : 100 } }
     }
+    case 'read_text': {
+      const action: Action = { type: 'read_text' }
+      const region = parseRegion(a.region); if (region) action.region = region
+      if (typeof a.lang === 'string' && /^[a-z]{2,3}$/i.test(a.lang)) action.lang = a.lang.toLowerCase()
+      return { action }
+    }
+    case 'find_colors': {
+      if (!Array.isArray(a.colors) || a.colors.length === 0 || a.colors.length > 8) return { error: 'find_colors requires colors[1..8] of "#RRGGBB"' }
+      const colors: string[] = []
+      for (const c of a.colors) { if (typeof c !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(c.trim())) return { error: `bad color ${String(c)}` }; colors.push('#' + c.trim().replace('#', '').toLowerCase()) }
+      const action: Action = { type: 'find_colors', colors, tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24 }
+      const region = parseRegion(a.region); if (region) action.region = region
+      return { action }
+    }
+    case 'stream': {
+      const action: Action = { type: 'stream', enabled: a.enabled === true }
+      if (isNum(a.fps)) action.fps = clamp(a.fps, 0.2, 4)
+      if (isNum(a.maxWidth)) action.maxWidth = clamp(Math.round(a.maxWidth), 120, 720)
+      if (isNum(a.quality)) action.quality = clamp(Math.round(a.quality), 10, 90)
+      return { action }
+    }
     case 'find_image': {
       if (typeof a.image !== 'string' || a.image.length < 16 || a.image.length > 400_000) return { error: 'find_image requires image (base64 PNG/JPEG, <= 300KB)' }
       const action: Action = { type: 'find_image', image: a.image.replace(/^data:image\/\w+;base64,/, ''), threshold: isNum(a.threshold) ? clamp(a.threshold, 0.5, 1) : 0.85, maxResults: isNum(a.maxResults) ? clamp(Math.round(a.maxResults), 1, 20) : 5 }

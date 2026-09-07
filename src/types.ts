@@ -52,6 +52,10 @@ export type Action =
   | { type: 'watch_color'; color: string; tolerance?: number; region?: Region; appear?: boolean; timeoutMs?: number; intervalMs?: number; minCount?: number }
   | { type: 'find_image'; image: string; threshold?: number; region?: Region; maxResults?: number }
   | { type: 'wait_pixel'; x: number; y: number; color: string; tolerance?: number; appear?: boolean; timeoutMs?: number; intervalMs?: number }
+  // v1.7 — OCR, multi-colour scan, live stream
+  | { type: 'read_text'; region?: Region; lang?: string }
+  | { type: 'find_colors'; colors: string[]; tolerance?: number; region?: Region }
+  | { type: 'stream'; enabled: boolean; fps?: number; maxWidth?: number; quality?: number }
 
 export interface Point { x: number; y: number }
 export interface SeqPoint extends Point { delayMs?: number; durationMs?: number }
@@ -70,6 +74,7 @@ export function actionTimeoutMs(a: Action): number {
     case 'long_press': return base + (a.duration ?? 800)
     case 'drag': return base + (a.duration ?? 600) + (a.holdMs ?? 500)
     case 'watch_color': case 'wait_pixel': return base + (a.timeoutMs ?? 5000)
+    case 'read_text': return 25_000
     default: return base
   }
 }
@@ -81,12 +86,14 @@ export const ACTION_TYPES = [
   'pinch', 'drag', 'set_clipboard', 'get_notifications', 'device_info', 'scroll_element',
   'tap_sequence', 'multi_tap', 'swipe_path', 'repeat_tap', 'pixel', 'find_color', 'screen_hash',
   'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
+  'read_text', 'find_colors', 'stream',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */
 export const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'screenshot', 'ping', 'ui_dump', 'list_apps', 'current_app', 'get_notifications', 'device_info',
   'pixel', 'find_color', 'screen_hash', 'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
+  'read_text', 'find_colors', 'stream',
 ])
 
 /** Message sent server -> phone */
@@ -124,7 +131,10 @@ export interface HelloMessage {
   charging?: boolean
 }
 
-export type PhoneMessage = ResultMessage | HelloMessage | { kind: 'pong' }
+/** Live preview frame pushed by the phone while streaming is enabled (monitor page only). */
+export interface FrameMessage { kind: 'frame'; data: string; mime: string; ts: number }
+
+export type PhoneMessage = ResultMessage | HelloMessage | FrameMessage | { kind: 'pong' }
 
 export interface DeviceInfo {
   deviceId: string
