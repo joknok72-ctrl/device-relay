@@ -4,7 +4,7 @@
 #   export RELAY_URL=https://device-relay.xxx.workers.dev RELAY_TOKEN=... [RELAY_DEVICE=my-phone]
 #   ./phone.sh devices                 # list phones
 #   ./phone.sh ui                      # visible elements with coordinates
-#   ./phone.sh shot [out.png]          # screenshot -> file
+#   ./phone.sh shot [out.png] [maxWidth] [png|jpeg]   # screenshot -> file (default 540px PNG)
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -15,6 +15,9 @@
 #   ./phone.sh back | home | recents | notif | qs | lock | wake | app | apps | status
 #   ./phone.sh waitfor "Inbox" [timeoutMs]  # wait until element text appears
 #   ./phone.sh find "Privacy" [down|up]     # scroll until text visible, then tap it
+#   ./phone.sh drag X1 Y1 X2 Y2 [holdMs] | pinch X Y SCALE   # drag-and-drop / zoom
+#   ./phone.sh info | notifs [n] | clip "text" [paste]        # device info / notifications / clipboard
+#   ./phone.sh batch '<json steps array>' [continue]          # many tools in one request
 #   ./phone.sh call <tool> '<json args>'   # any tool
 set -euo pipefail
 : "${RELAY_URL:?set RELAY_URL}" "${RELAY_TOKEN:?set RELAY_TOKEN}"
@@ -48,7 +51,13 @@ for e in d.get("elements",[]):
     f="".join(c for c,k in (("C","clickable"),("E","editable"),("S","scrollable")) if e.get(k))
     label=(e.get("text") or e.get("desc") or e.get("hint") or "")[:60]
     print("  [%3d] (%4d,%4d) %-3s %-14s %-24s %r" % (e["i"], e["cx"], e["cy"], f, e.get("cls",""), e.get("id",""), label))' "$@" ;;
-  shot)    out="${1:-screen.png}"; d=$(dev); curl -sf "${AUTH[@]}" -D /dev/stderr -o "$out" "$RELAY_URL/api/devices/$d/screenshot.png" 2>&1 | grep -i "^x-screen\|^x-image" || true; echo "saved $out" ;;
+  shot)    out="${1:-screen.png}"; d=$(dev); q="maxWidth=${2:-540}&format=${3:-png}"; curl -sf "${AUTH[@]}" -D /dev/stderr -o "$out" "$RELAY_URL/api/devices/$d/screenshot.png?$q" 2>&1 | grep -i "^x-screen\|^x-image" || true; echo "saved $out" ;;
+  drag)    call drag "{\"x1\":$1,\"y1\":$2,\"x2\":$3,\"y2\":$4,\"holdMs\":${5:-500}}" | pretty ;;
+  pinch)   call pinch "{\"x\":$1,\"y\":$2,\"scale\":$3}" | pretty ;;
+  info)    call get_device_info | pretty ;;
+  notifs)  call get_notifications "{\"limit\":${1:-20}}" | pretty ;;
+  clip)    call set_clipboard "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1],"paste":sys.argv[2]=="paste"}))' "$1" "${2:-}")" | pretty ;;
+  batch)   call batch "$(python3 -c 'import json,sys; print(json.dumps({"steps":json.loads(sys.argv[1]),"continueOnError":sys.argv[2]=="continue"}))' "$1" "${2:-}")" | pretty ;;
   tap)     call tap "{\"x\":$1,\"y\":$2}" | pretty ;;
   dtap)    call double_tap "{\"x\":$1,\"y\":$2}" | pretty ;;
   long)    call long_press "{\"x\":$1,\"y\":$2,\"duration\":${3:-800}}" | pretty ;;
@@ -75,5 +84,5 @@ for e in d.get("elements",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,22p' "$0" ;;
+  *) sed -n '2,26p' "$0" ;;
 esac

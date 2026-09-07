@@ -8,7 +8,7 @@ export interface ToolDef {
   description: string
   parameters: {
     type: 'object'
-    properties: Record<string, { type: string; description: string; minimum?: number; maximum?: number; default?: unknown }>
+    properties: Record<string, { type: string; description: string; minimum?: number; maximum?: number; default?: unknown; items?: unknown }>
     required: string[]
   }
 }
@@ -22,8 +22,17 @@ export const TOOLS: ToolDef[] = [
       'Take a screenshot of the phone screen RIGHT NOW and return it as a PNG image (base64) plus the real screen size in pixels. ' +
       'Always call this first to see the current state, and after any action to verify the result. ' +
       'Coordinates you pass to tap/swipe must be in the ORIGINAL screen pixel space returned here (screen.w x screen.h), ' +
-      'not the downscaled image size; use image.scale to convert (original = image_px / scale).',
-    parameters: { type: 'object', properties: {}, required: [] },
+      'not the downscaled image size; use image.scale to convert (original = image_px / scale). ' +
+      'Default output is a 540px-wide PNG; pass maxWidth up to 2160 for fine detail (games, small text) or format=jpeg + quality for smaller payloads.',
+    parameters: {
+      type: 'object',
+      properties: {
+        maxWidth: { type: 'integer', description: 'Max image width in px (120-2160, default 540)', minimum: 120, maximum: 2160, default: 540 },
+        format: { type: 'string', description: 'png (default) | jpeg' },
+        quality: { type: 'integer', description: 'JPEG/PNG quality 10-100 (default 80)', minimum: 10, maximum: 100, default: 80 },
+      },
+      required: [],
+    },
   },
   {
     name: 'tap',
@@ -167,6 +176,81 @@ export const TOOLS: ToolDef[] = [
       required: [],
     },
   },
+  {
+    name: 'drag',
+    description: 'Drag-and-drop: long-press at (x1,y1) for holdMs, then move to (x2,y2) over duration ms and release. Use for rearranging icons, sliders, map panning, and games that need press-and-hold movement.',
+    parameters: {
+      type: 'object',
+      properties: {
+        x1: coord('Start X'), y1: coord('Start Y'), x2: coord('End X'), y2: coord('End Y'),
+        holdMs: { type: 'integer', description: 'Hold before moving (default 500)', minimum: 0, maximum: 5000, default: 500 },
+        duration: { type: 'integer', description: 'Move time in ms (default 600)', minimum: 50, maximum: 10000, default: 600 },
+      },
+      required: ['x1', 'y1', 'x2', 'y2'],
+    },
+  },
+  {
+    name: 'pinch',
+    description: 'Two-finger pinch centered at (x,y). scale > 1 zooms IN (fingers spread), scale < 1 zooms OUT. Use on maps, photos, web pages.',
+    parameters: {
+      type: 'object',
+      properties: {
+        x: coord('Center X'), y: coord('Center Y'),
+        scale: { type: 'number', description: 'Zoom factor, e.g. 2 = zoom in 2x, 0.5 = zoom out', minimum: 0.1, maximum: 10 },
+        duration: { type: 'integer', description: 'Gesture time in ms (default 400)', minimum: 50, maximum: 5000, default: 400 },
+      },
+      required: ['x', 'y', 'scale'],
+    },
+  },
+  {
+    name: 'scroll_element',
+    description: 'Scroll a specific scrollable container (found by text/desc or view id) using the accessibility scroll action — precise, no gesture guessing. direction forward = down/right, backward = up/left.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text/desc inside or on the scrollable element' },
+        elementId: { type: 'string', description: 'View id of the scrollable element' },
+        direction: { type: 'string', description: 'forward (default) | backward' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'set_clipboard',
+    description: 'Put text on the phone clipboard. With paste=true it also pastes into the focused field (useful for long text, passwords, or fields that reject type_text).',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text to place on the clipboard' },
+        paste: { type: 'boolean', description: 'Paste into the focused input after copying (default false)', default: false },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'get_notifications',
+    description: 'Read the currently visible status-bar notifications (app, title, text, time) WITHOUT opening the shade. Great for OTP codes, chat messages, and confirming background events. Requires "Notification access" enabled in the Device Relay app.',
+    parameters: { type: 'object', properties: { limit: { type: 'integer', description: 'Max notifications (default 20)', minimum: 1, maximum: 50, default: 20 } }, required: [] },
+  },
+  {
+    name: 'get_device_info',
+    description: 'Detailed live device info from the phone: battery %, charging, screen on/off, locked, orientation, wifi SSID/connection type, free storage, current app.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'batch',
+    description:
+      'Run several tools in ONE request, sequentially, and get all results back. Cuts round-trips dramatically (e.g. open_app → wait_for_element → tap_element → type_text → capture_screen). ' +
+      'Each step is {name, arguments}. Stops at the first failure unless continueOnError=true. Max 25 steps.',
+    parameters: {
+      type: 'object',
+      properties: {
+        steps: { type: 'array', description: 'Array of {name: string, arguments: object}' },
+        continueOnError: { type: 'boolean', description: 'Keep going after a failed step (default false)', default: false },
+      },
+      required: ['steps'],
+    },
+  },
   { name: 'wake_screen', description: 'Wake the display if it is off (you may still need to swipe up / unlock).', parameters: { type: 'object', properties: {}, required: [] } },
   { name: 'open_quick_settings', description: 'Open the quick-settings panel (Wi-Fi, Bluetooth, flashlight toggles...).', parameters: { type: 'object', properties: {}, required: [] } },
   { name: 'press_back', description: 'Press the Android BACK button.', parameters: { type: 'object', properties: {}, required: [] } },
@@ -191,9 +275,9 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch'; error?: string } {
   switch (name) {
-    case 'capture_screen': return { action: { type: 'screenshot' } }
+    case 'capture_screen': return { action: { type: 'screenshot', maxWidth: args.maxWidth, quality: args.quality, format: args.format } }
     case 'tap': return { action: { type: 'tap', x: args.x, y: args.y } }
     case 'long_press': return { action: { type: 'long_press', x: args.x, y: args.y, duration: args.duration ?? 800 } }
     case 'swipe': return { action: { type: 'swipe', x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, duration: args.duration ?? 300 } }
@@ -212,6 +296,13 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'double_tap': return { action: { type: 'double_tap', x: args.x, y: args.y } }
     case 'wake_screen': return { action: { type: 'wake' } }
     case 'open_quick_settings': return { action: { type: 'quick_settings' } }
+    case 'drag': return { action: { type: 'drag', x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, duration: args.duration ?? 600, holdMs: args.holdMs ?? 500 } }
+    case 'pinch': return { action: { type: 'pinch', x: args.x, y: args.y, scale: args.scale, duration: args.duration ?? 400 } }
+    case 'scroll_element': return { action: { type: 'scroll_element', text: args.text, elementId: args.elementId, direction: args.direction ?? 'forward' } }
+    case 'set_clipboard': return { action: { type: 'set_clipboard', text: args.text, paste: args.paste === true } }
+    case 'get_notifications': return { action: { type: 'get_notifications', limit: args.limit ?? 20 } }
+    case 'get_device_info': return { action: { type: 'device_info' } }
+    case 'batch': return { special: 'batch' }
     case 'scroll': return { special: 'scroll' }
     case 'wait_for_element': return { special: 'wait_for' }
     case 'find_and_tap': return { special: 'find_tap' }
@@ -287,6 +378,13 @@ export function openapiSpec(serverUrl: string) {
       responses: { '200': { description: 'Devices' } }, security: [{ bearerAuth: [] }],
     },
   }
+  paths['/api/devices/{deviceId}/logs'] = {
+    get: {
+      operationId: 'get_logs', summary: 'Last 100 commands for the device with status and latency',
+      parameters: [{ name: 'deviceId', in: 'path', required: true, schema: { type: 'string' } }],
+      responses: { '200': { description: 'Log entries' } }, security: [{ bearerAuth: [] }],
+    },
+  }
   paths['/api/devices/{deviceId}/screenshot.png'] = {
     get: {
       operationId: 'screenshot_png', summary: 'Capture the screen and return raw PNG bytes',
@@ -298,7 +396,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '1.0.0',
+      version: '1.4.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. ' +
         'All coordinates are in original screen pixels.',
@@ -309,3 +407,8 @@ export function openapiSpec(serverUrl: string) {
     paths,
   }
 }
+
+/** Tools that only observe (allowed for read-only tokens). */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
+])

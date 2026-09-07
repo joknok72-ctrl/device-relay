@@ -1,7 +1,8 @@
 import type { Bindings, DeviceInfo } from './types'
 import { parseAction } from './validate'
-import { toolToAction } from './tools'
+import { toolToAction, TOOLS, READ_ONLY_TOOLS } from './tools'
 import type { DeviceRegistry } from './registry'
+import type { CommandResult } from './device-room'
 
 export interface ToolResult {
   ok: boolean
@@ -10,7 +11,33 @@ export interface ToolResult {
   screen?: { w: number; h: number }
   image?: { mime: string; base64: string; w: number; h: number; scale: number }
   status?: DeviceInfo
+  queuedMs?: number
   [k: string]: unknown
+}
+
+export interface ExecOptions {
+  /** true when the caller's token is read-only: input tools are rejected */
+  readOnly?: boolean
+  /** recursion depth guard for batch */
+  depth?: number
+}
+
+/** Read JPEG width/height from SOF marker of a base64 JPEG. */
+export function jpegSize(b64: string): { w: number; h: number } | null {
+  try {
+    const bin = atob(b64.slice(0, Math.min(b64.length, 120_000)))
+    if (bin.charCodeAt(0) !== 0xff || bin.charCodeAt(1) !== 0xd8) return null
+    let i = 2
+    while (i < bin.length - 9) {
+      if (bin.charCodeAt(i) !== 0xff) { i++; continue }
+      const marker = bin.charCodeAt(i + 1)
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { h: (bin.charCodeAt(i + 5) << 8) | bin.charCodeAt(i + 6), w: (bin.charCodeAt(i + 7) << 8) | bin.charCodeAt(i + 8) }
+      }
+      i += 2 + ((bin.charCodeAt(i + 2) << 8) | bin.charCodeAt(i + 3))
+    }
+    return null
+  } catch { return null }
 }
 
 /** Read PNG width/height from IHDR chunk of a base64 PNG (no full decode). */
@@ -35,9 +62,12 @@ export async function deviceInfo(env: Bindings, deviceId: string): Promise<Devic
 }
 
 /** Execute one AI tool against a device and return a normalized result. */
-export async function executeTool(env: Bindings, deviceId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+export async function executeTool(env: Bindings, deviceId: string, name: string, args: Record<string, unknown>, opts: ExecOptions = {}): Promise<ToolResult> {
   const mapped = toolToAction(name, args ?? {})
   if (mapped.error) return { ok: false, error: mapped.error }
+  if (opts.readOnly && !READ_ONLY_TOOLS.has(name)) return { ok: false, error: `token is read-only: tool '${name}' not allowed` }
+
+  if (mapped.special === 'batch') return runBatch(env, deviceId, args, opts)
 
   if (mapped.special === 'wait') {
     const ms = Math.min(Math.max(Number(args?.ms) || 0, 0), 10_000)
@@ -78,20 +108,52 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, wait: true }),
   })
-  const res = (await r.json()) as { ok: boolean; error?: string; durationMs?: number; screenshot?: string; data?: unknown }
+  const res = (await r.json()) as CommandResult
 
   const out: ToolResult = { ok: res.ok, error: res.error, durationMs: res.durationMs }
+  if (res.queuedMs) out.queuedMs = res.queuedMs
   if (res.data !== undefined) out.data = res.data
   if (name === 'capture_screen') {
     const info = await deviceInfo(env, deviceId)
     out.screen = info.screen
     if (res.screenshot) {
-      const sz = pngSize(res.screenshot) ?? { w: 0, h: 0 }
+      const mime = res.screenshotMime ?? 'image/png'
+      const sz = (mime === 'image/jpeg' ? jpegSize(res.screenshot) : pngSize(res.screenshot)) ?? { w: 0, h: 0 }
       const scale = info.screen?.w && sz.w ? sz.w / info.screen.w : 1
-      out.image = { mime: 'image/png', base64: res.screenshot, w: sz.w, h: sz.h, scale: Number(scale.toFixed(4)) }
+      out.image = { mime, base64: res.screenshot, w: sz.w, h: sz.h, scale: Number(scale.toFixed(4)) }
     }
   }
   return out
+}
+
+/** batch: run N tools sequentially in one request. */
+async function runBatch(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  if ((opts.depth ?? 0) >= 1) return { ok: false, error: 'nested batch not allowed' }
+  const steps = args.steps
+  if (!Array.isArray(steps) || steps.length === 0 || steps.length > 25) return { ok: false, error: 'steps must be an array of 1..25 {name, arguments}' }
+  const continueOnError = args.continueOnError === true
+  const results: Array<{ name: string } & ToolResult> = []
+  let allOk = true
+  const t0 = Date.now()
+  for (const raw of steps) {
+    const st = raw as { name?: string; arguments?: Record<string, unknown>; args?: Record<string, unknown> }
+    const name = String(st?.name ?? '')
+    if (!TOOLS.some((t) => t.name === name)) {
+      results.push({ name, ok: false, error: `unknown tool ${name}` })
+      allOk = false
+      if (!continueOnError) break
+      continue
+    }
+    const r = await executeTool(env, deviceId, name, st.arguments ?? st.args ?? {}, { ...opts, depth: (opts.depth ?? 0) + 1 })
+    results.push({ name, ...r })
+    if (!r.ok) { allOk = false; if (!continueOnError) break }
+  }
+  // keep only the LAST image to bound payload size
+  let lastImg: ToolResult['image'] | undefined
+  for (let i = results.length - 1; i >= 0; i--) {
+    if (results[i].image) { if (!lastImg) lastImg = results[i].image; delete results[i].image }
+  }
+  return { ok: allOk, steps: results.length, results, durationMs: Date.now() - t0, image: lastImg }
 }
 
 /** Pick a default device: the first online one, else first known. */

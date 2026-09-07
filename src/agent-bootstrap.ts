@@ -1,4 +1,4 @@
-import type { DeviceInfo } from './types'
+import type { AuthContext, DeviceInfo } from './types'
 import { TOOLS } from './tools'
 
 /**
@@ -6,12 +6,15 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[]): string {
+export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }): string {
   const online = devices.filter((d) => d.online)
   const target = online[0] ?? devices[0]
   const deviceLine = devices.length === 0
     ? 'NO PHONE REGISTERED YET. Tell the user: open the Device Relay app on the phone and press Connect, then retry.'
-    : devices.map((d) => `  ${d.online ? '● ONLINE ' : '○ offline'}  id=${d.deviceId}  ${d.model ?? ''}  screen=${d.screen ? `${d.screen.w}x${d.screen.h}` : '?'}  a11y=${d.accessibilityEnabled ?? '?'}`).join('\n')
+    : devices.map((d) => `  ${d.online ? '● ONLINE ' : '○ offline'}  id=${d.deviceId}${d.label ? ` (${d.label})` : ''}  ${d.model ?? ''}  screen=${d.screen ? `${d.screen.w}x${d.screen.h}` : '?'}  a11y=${d.accessibilityEnabled ?? '?'}${typeof d.battery === 'number' ? `  battery=${d.battery}%${d.charging ? '⚡' : ''}` : ''}${d.queued ? `  queued=${d.queued}` : ''}`).join('\n')
+  const scope = auth?.role === 'device'
+    ? `This token is scoped to ONE device (id=${auth.deviceId})${auth.readOnly ? ' and is READ-ONLY (observe tools only: screenshot/ui/notifications/status)' : ''}.`
+    : 'This token is the ADMIN token: it can control every device and manage per-device tokens (/api/admin/tokens).'
 
   const toolLines = TOOLS.map((t) => {
     const params = Object.entries(t.parameters.properties).map(([k, v]) => `${k}${t.parameters.required.includes(k) ? '' : '?'}:${v.type}`).join(', ')
@@ -26,6 +29,8 @@ Everything you need is below. Do not ask the human for URLs, tokens or ids.
 export RELAY_URL="${origin}"
 export RELAY_TOKEN="${token}"
 export RELAY_DEVICE="${target?.deviceId ?? ''}"
+${scope}
+Human live monitor (share with the user if they want to watch): ${origin}/monitor/${token}
 
 ## 2. Live device status (at the time of this request)
 ${deviceLine}
@@ -43,8 +48,10 @@ curl -sS "$RELAY_URL/phone.sh" -o phone.sh && chmod +x phone.sh
 ./phone.sh type "hello" submit     # type into focused field (+ Enter). Focus a field first with tapel.
 ./phone.sh waitfor "Inbox" 8000    # wait until an element with that text appears (ms timeout)
 ./phone.sh find "Privacy"          # scroll down until text appears, then tap it
-./phone.sh tap 540 990 | dtap X Y | long X Y [ms] | swipe X1 Y1 X2 Y2 [ms] | scroll down|up|left|right
-./phone.sh back | home | recents | notif | qs | lock | wake | wait 1000 | app | apps | url https://...
+./phone.sh tap 540 990 | dtap X Y | long X Y [ms] | swipe X1 Y1 X2 Y2 [ms] | drag X1 Y1 X2 Y2 | pinch X Y SCALE | scroll down|up|left|right
+./phone.sh back | home | recents | notif | qs | lock | wake | wait 1000 | app | apps | url https://... | info | notifs | clip "text" [paste]
+./phone.sh batch '[{"name":"open_app","arguments":{"text":"Chrome"}},{"name":"wait_for_element","arguments":{"text":"Search"}},{"name":"capture_screen"}]'
+./phone.sh shot screen.png 1080 jpeg   # high-res JPEG when you need fine detail
 ./phone.sh call <tool> '<json args>'   # any tool below
 
 ## 4. Raw HTTP (if you prefer curl / another language)
@@ -66,5 +73,8 @@ ${toolLines}
 5. Handle popups / permission dialogs / keyboards sensibly, then continue toward the goal.
 6. If the phone is offline or a11y=false, tell the human exactly what to enable on the phone; do not loop.
 7. Never invent screen content; never claim success without an observed confirmation. Report steps + final result briefly.
+8. Use "batch" to chain predictable steps (open → waitfor → tap → type → shot) in ONE call; it stops at the first failure and returns every step result.
+9. Input actions are serialized per phone (a queue); read-only actions (shot/ui/notifs) run in parallel. Results include queuedMs when they had to wait.
+10. For OTP codes / incoming messages use "notifs" (get_notifications) instead of opening apps.
 `
 }
