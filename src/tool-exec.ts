@@ -1,6 +1,6 @@
 import type { Bindings, DeviceInfo } from './types'
 import { parseAction } from './validate'
-import { toolToAction, TOOLS, READ_ONLY_TOOLS } from './tools'
+import { toolToAction, TOOLS, READ_ONLY_TOOLS, OBSERVATION_TOOLS } from './tools'
 import type { DeviceRegistry } from './registry'
 import type { CommandResult } from './device-room'
 
@@ -85,6 +85,11 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'wait_for_screen') return waitForScreen(env, deviceId, args)
   if (mapped.special === 'remember') return remember(env, deviceId, args)
   if (mapped.special === 'recall') return recall(env, deviceId, args)
+  if (mapped.special === 'tap_color') return tapColor(env, deviceId, args, opts)
+  if (mapped.special === 'game_loop') return gameLoop(env, deviceId, args, opts)
+  if (mapped.special === 'save_macro') return saveMacro(env, deviceId, args)
+  if (mapped.special === 'run_macro') return runMacro(env, deviceId, args, opts)
+  if (mapped.special === 'list_macros') return listMacros(env, deviceId, args)
 
   let actionInput: Record<string, unknown> | undefined = mapped.action
   if (mapped.special === 'scroll') {
@@ -233,6 +238,113 @@ async function recall(env: Bindings, deviceId: string, args: Record<string, unkn
   const r = await room(env, deviceId).fetch(`https://do/notes?deviceId=${deviceId}`)
   const { notes } = (await r.json()) as { notes: { text: string; ts: number }[] }
   return { ok: true, count: notes.length, notes: notes.map((n, i) => ({ index: i, text: n.text, ts: n.ts })) }
+}
+
+// ---------------------------------------------------------------- v1.6 reflexes, loops, macros
+
+/** find_color + tap in one round-trip */
+async function tapColor(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const f = await executeTool(env, deviceId, 'find_color', { color: args.color, tolerance: args.tolerance, region: args.region }, opts)
+  const d = f.data as { found?: boolean; count?: number; cx?: number; cy?: number } | undefined
+  const minCount = Math.max(1, Number(args.minCount ?? 20) || 20)
+  if (!f.ok) return f
+  if (!d?.found || (d.count ?? 0) < minCount) return { ok: false, found: false, error: `color ${args.color} not found (count=${d?.count ?? 0} < ${minCount})`, count: d?.count ?? 0 }
+  const x = Math.round((d.cx ?? 0) + (Number(args.offsetX) || 0)), y = Math.round((d.cy ?? 0) + (Number(args.offsetY) || 0))
+  const t = await executeTool(env, deviceId, 'tap', { x, y }, opts)
+  return { ...t, found: true, tapped: { x, y }, count: d.count, cx: d.cx, cy: d.cy }
+}
+
+/** Does an observation result count as a match? Returns [matched, cx, cy]. */
+function observationMatched(name: string, r: ToolResult, minChange: number): [boolean, number | undefined, number | undefined] {
+  if (!r.ok) return [false, undefined, undefined]
+  const d = (r.data ?? r) as Record<string, unknown>
+  switch (name) {
+    case 'find_color': case 'tap_color': return [d.found === true, d.cx as number | undefined, d.cy as number | undefined]
+    case 'watch_color': case 'wait_pixel': return [d.matched === true || d.found === true, d.cx as number | undefined, d.cy as number | undefined]
+    case 'find_image': { const m = (d.matches as { cx: number; cy: number }[] | undefined) ?? []; return [m.length > 0, m[0]?.cx, m[0]?.cy] }
+    case 'screen_diff': return [Number(d.changedPct ?? 0) >= minChange, (d.regions as { cx: number; cy: number }[] | undefined)?.[0]?.cx, (d.regions as { cx: number; cy: number }[] | undefined)?.[0]?.cy]
+    case 'get_pixels': { const px = (d.pixels as { hex: string }[] | undefined) ?? []; return [px.length > 0, undefined, undefined] }
+    case 'wait_for_element': { const e = r.element as { cx: number; cy: number } | undefined; return [r.found === true, e?.cx, e?.cy] }
+    default: return [false, undefined, undefined]
+  }
+}
+function injectXY(args: Record<string, unknown> | undefined, cx?: number, cy?: number): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(args ?? {})) {
+    if (v === '$cx') out[k] = cx ?? 0
+    else if (v === '$cy') out[k] = cy ?? 0
+    else if (typeof v === 'string' && /^\$c[xy][+-]\d+$/.test(v)) { const base = v[2] === 'x' ? (cx ?? 0) : (cy ?? 0); out[k] = base + Number(v.slice(3)) }
+    else out[k] = v
+  }
+  return out
+}
+
+/** Server-side perception→action loop */
+async function gameLoop(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  type Call = { name?: string; arguments?: Record<string, unknown> }
+  const when = args.when as Call | undefined, then = args.then as Call | undefined, els = args.else as Call | undefined, stop = args.stopWhen as Call | undefined
+  if (!when?.name || !OBSERVATION_TOOLS.has(when.name)) return { ok: false, error: `when must be an observation tool: ${[...OBSERVATION_TOOLS].join('|')}` }
+  if (!then?.name || !TOOLS.some((t) => t.name === then.name)) return { ok: false, error: 'then must be a valid tool {name, arguments}' }
+  if (['game_loop', 'batch', 'act_and_see', 'run_macro'].includes(then.name)) return { ok: false, error: `then cannot be ${then.name}` }
+  if (stop && (!stop.name || !OBSERVATION_TOOLS.has(stop.name))) return { ok: false, error: 'stopWhen must be an observation tool' }
+  const iterations = Math.min(Math.max(Number(args.iterations) || 20, 1), 60)
+  const interval = Math.min(Math.max(Number(args.intervalMs ?? 200) || 0, 0), 5000)
+  const maxMs = Math.min(Math.max(Number(args.maxMs) || 30_000, 1000), 55_000)
+  const minChange = Number(args.minChange ?? 2) || 2
+  const t0 = Date.now()
+  const trace: unknown[] = []
+  let acted = 0, matched = 0, stoppedBy: string | undefined
+  const sub = { ...opts, depth: (opts.depth ?? 0) + 1 }
+  for (let i = 0; i < iterations; i++) {
+    if (Date.now() - t0 > maxMs) { stoppedBy = 'maxMs'; break }
+    if (stop) {
+      const s = await executeTool(env, deviceId, stop.name!, stop.arguments ?? {}, sub)
+      if (observationMatched(stop.name!, s, minChange)[0]) { stoppedBy = 'stopWhen'; trace.push({ i, stop: true }); break }
+    }
+    const w = await executeTool(env, deviceId, when.name, when.arguments ?? {}, sub)
+    if (!w.ok && !['watch_color', 'wait_pixel'].includes(when.name)) { trace.push({ i, when: 'error', error: w.error }); return { ok: false, error: `observation failed: ${w.error}`, rounds: i + 1, acted, matched, trace, durationMs: Date.now() - t0 } }
+    const [hit, cx, cy] = observationMatched(when.name, w, minChange)
+    const step: Record<string, unknown> = { i, hit, ...(cx !== undefined ? { cx, cy } : {}) }
+    if (hit) {
+      matched++
+      const r = await executeTool(env, deviceId, then.name, injectXY(then.arguments, cx, cy), sub)
+      acted++
+      step.then = { name: then.name, ok: r.ok, ...(r.error ? { error: r.error } : {}) }
+      if (!r.ok) { trace.push(step); return { ok: false, error: `then failed at round ${i}: ${r.error}`, rounds: i + 1, acted, matched, trace, durationMs: Date.now() - t0 } }
+    } else if (els?.name) {
+      const r = await executeTool(env, deviceId, els.name, injectXY(els.arguments, cx, cy), sub)
+      step.else = { name: els.name, ok: r.ok, ...(r.error ? { error: r.error } : {}) }
+    }
+    trace.push(step)
+    if (interval) await new Promise((r) => setTimeout(r, interval))
+  }
+  return { ok: true, rounds: trace.length, acted, matched, stoppedBy: stoppedBy ?? 'iterations', trace, durationMs: Date.now() - t0 }
+}
+
+// ---- macros
+async function saveMacro(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const steps = args.steps
+  if (!Array.isArray(steps)) return { ok: false, error: 'steps must be an array' }
+  for (const s of steps as { name?: string }[]) if (!s?.name || !TOOLS.some((t) => t.name === s.name) || ['run_macro', 'save_macro'].includes(s.name)) return { ok: false, error: `invalid step tool: ${s?.name}` }
+  const r = await room(env, deviceId).fetch(`https://do/macros?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: args.name, steps, description: args.description }) })
+  return (await r.json()) as ToolResult
+}
+async function listMacros(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  if (typeof args.delete === 'string' && args.delete) {
+    const r = await room(env, deviceId).fetch(`https://do/macros?deviceId=${deviceId}&name=${encodeURIComponent(args.delete)}`, { method: 'DELETE' })
+    return (await r.json()) as ToolResult
+  }
+  const { macros } = (await (await room(env, deviceId).fetch(`https://do/macros?deviceId=${deviceId}`)).json()) as { macros: { name: string; description?: string; steps: unknown[]; runs?: number; ts: number }[] }
+  return { ok: true, count: macros.length, macros: macros.map((m) => ({ name: m.name, description: m.description, steps: m.steps.length, runs: m.runs ?? 0, ts: m.ts })) }
+}
+async function runMacro(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const name = String(args.name ?? '').trim().toLowerCase()
+  const { macros } = (await (await room(env, deviceId).fetch(`https://do/macros?deviceId=${deviceId}`)).json()) as { macros: { name: string; steps: unknown[] }[] }
+  const m = macros.find((x) => x.name === name)
+  if (!m) return { ok: false, error: `macro '${name}' not found`, available: macros.map((x) => x.name) }
+  const r = await runBatch(env, deviceId, { steps: m.steps, continueOnError: args.continueOnError === true }, { ...opts, depth: 0 })
+  room(env, deviceId).fetch(`https://do/macro-ran?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).catch(() => {})
+  return { ...r, macro: name }
 }
 
 // ---------------------------------------------------------------- composite tools

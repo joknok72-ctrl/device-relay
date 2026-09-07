@@ -468,7 +468,7 @@ export const TOOLS: ToolDef[] = [
     description: 'Replay a saved macro by name (runs like batch: stops at first failure unless continueOnError). Returns per-step results.',
     parameters: {
       type: 'object',
-      properties: { name: { type: 'string', description: 'Macro name' }, continueOnError: { type: 'boolean', default: false } },
+      properties: { name: { type: 'string', description: 'Macro name' }, continueOnError: { type: 'boolean', description: 'Keep going after a failed step (default false)', default: false } },
       required: ['name'],
     },
   },
