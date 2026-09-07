@@ -15,7 +15,8 @@
 
 | ماذا | الرابط |
 |---|---|
-| **السيرفر + لوحة التحكم (Production)** | https://device-relay.cracknew37.workers.dev |
+| **السيرفر (Production)** | https://device-relay.cracknew37.workers.dev |
+| **مراقبة حية للإنسان** | `https://device-relay.cracknew37.workers.dev/monitor/<TOKEN>` |
 | **GitHub** | https://github.com/joknok72-ctrl/device-relay |
 | **تنزيل APK (آخر نسخة)** | https://github.com/joknok72-ctrl/device-relay/releases/tag/latest |
 | Health check | `GET /api/health` |
@@ -33,7 +34,15 @@
 
 ## المميزات المنجزة ✅
 
-**السيرفر (Worker)**
+**السيرفر (Worker) — v1.4**
+- 🔐 **توكن لكل جهاز** (`/api/admin/tokens`): توكن محدود بجهاز واحد، خيار `readOnly` (مراقبة فقط)، إلغاء فوري. التوكنات تُخزَّن كـ SHA-256 فقط
+- 🚦 **Rate limiting** لكل توكن (120 طلب / 10 ثوانٍ) مع `X-RateLimit-Remaining` و `Retry-After`
+- 📥 **طابور أوامر**: أوامر الإدخال (tap/swipe/type…) تُنفَّذ بالتسلسل لكل هاتف؛ أوامر القراءة (screenshot/ui/notifications) تعمل بالتوازي. النتيجة تحمل `queuedMs`
+- 📦 أداة **`batch`**: تنفيذ حتى 25 أداة في طلب واحد (`continueOnError` اختياري)
+- 📸 `capture_screen` بخيارات `maxWidth` (حتى 2160) / `format=jpeg` / `quality` + `GET /screenshot.jpg`
+- 👁️ **صفحة مراقبة حية** `/monitor/<token>` (حالة + سجل حي + آخر لقطة) — للمتابعة فقط، لا تحكم
+- 🔔 **Webhook** اختياري (`WEBHOOK_URL` secret) عند online/offline
+- 🏷️ تسمية الأجهزة (`label`) + مسح السجل + فصل جهاز من الـ Admin API
 - مصادقة `Bearer Token` بمقارنة ثابتة الزمن (constant-time)
 - تحقق صارم من صيغة JSON لكل أمر
 - `WebSocket Relay` للهاتف + `WebSocket viewer` للوحة التحكم (بث حي للسجل والحالة)
@@ -51,6 +60,7 @@
 - Foreground Service يحافظ على الاتصال + إشعار دائم مع زر "قطع الاتصال"
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
+- **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
 - سجل مباشر داخل التطبيق لكل أمر وزمن تنفيذه
 
 ## دليل الاستخدام (خطوة بخطوة)
@@ -70,6 +80,24 @@ openssl rand -hex 24 | npx wrangler secret put RELAY_TOKEN
 3. اضغط **تفعيل** بجانب "خدمة إمكانية الوصول" ← فعّل **Device Relay Automation**.
 4. ارجع للتطبيق واضغط **اتصال**. يجب أن تظهر الحالة "متصل ✔".
 5. (اختياري) في إعدادات البطارية اجعل التطبيق "غير مقيّد" حتى لا يقتله النظام.
+
+### 3) توكنات لكل جهاز (موصى به بدل مشاركة التوكن الرئيسي)
+```bash
+ADMIN="..." ; URL="https://device-relay.cracknew37.workers.dev"
+
+# توكن كامل لجهاز واحد
+curl -X POST $URL/api/admin/tokens -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"deviceId":"my-phone","label":"Claude on laptop"}'
+# → {"token":"dr_...","agentUrl":".../agent/dr_...","mcpUrl":".../mcp/dr_...","monitorUrl":".../monitor/dr_..."}
+
+# توكن مراقبة فقط (لا يستطيع اللمس/الكتابة)
+curl -X POST $URL/api/admin/tokens -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"deviceId":"my-phone","readOnly":true}'
+
+curl $URL/api/admin/tokens -H "Authorization: Bearer $ADMIN"          # قائمة
+curl -X DELETE $URL/api/admin/tokens/<id> -H "Authorization: Bearer $ADMIN"   # إلغاء
+```
+أعطِ الـ AI رابط `agentUrl` فقط — لا يرى غير هذا الجهاز.
 
 ### 4) التحكم من الـ API
 
@@ -118,12 +146,13 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **24 أداة** مباشرة:
-- مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen`, `get_current_app`, `get_device_status`
-- عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `wait_for_element`, `find_and_tap` (تمرير تلقائي حتى يظهر العنصر)
+بعدها النموذج يرى **31 أداة** مباشرة:
+- مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
+- عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
-- إيماءات: `tap`, `double_tap`, `long_press`, `swipe`, `scroll`
+- إيماءات: `tap`, `double_tap`, `long_press`, `swipe`, `drag`, `pinch`, `scroll`
 - نظام: `press_back`, `press_home`, `open_recents`, `open_notifications`, `open_quick_settings`, `lock_screen`, `wake_screen`, `wait`
+- تركيبية: **`batch(steps[], continueOnError)`** — عدة أدوات في طلب واحد
 `capture_screen` يرجّع الصورة كـ MCP image content فيراها النموذج مباشرة.
 
 ### ب) مواصفات الأدوات بأي صيغة (عامة — بدون أسرار)
@@ -168,18 +197,24 @@ python agent_runner.py shell                                     # REPL: tap 540
 | GET | `/api/devices` | كل الأجهزة المسجلة وحالتها |
 | GET | `/api/devices/:id` | معلومات جهاز |
 | DELETE | `/api/devices/:id` | حذف جهاز من القائمة |
+| GET | `/api/me` | هوية التوكن الحالي (admin / device / readOnly) |
 | GET | `/api/devices/:id/logs` | آخر 100 أمر |
+| GET | `/api/devices/:id/last-screenshot` | آخر لقطة محفوظة (بدون التقاط جديد) |
+| POST | `/api/admin/tokens` | إنشاء توكن لجهاز `{deviceId, label?, readOnly?}` (admin) |
+| GET / DELETE | `/api/admin/tokens[/:id]` | قائمة / إلغاء توكنات (admin) |
+| POST | `/api/admin/devices/:id/label` · `/clear-logs` · `/disconnect` | إدارة جهاز (admin) |
 | POST | `/api/devices/:id/command` | أمر واحد `{ "action": {...}, "wait": true }` |
-| POST | `/api/devices/:id/macro` | سلسلة `{ "steps": [ ... ] }` (حتى 50 خطوة) |
+| POST | `/api/devices/:id/macro` | سلسلة `{ "steps": [ ... ], "continueOnError": false }` (حتى 50 خطوة) |
 | GET | `/api/tools/schema?format=` | مواصفات الأدوات (عام) |
 | POST | `/api/devices/:id/tools/call` | تنفيذ أداة AI بالاسم |
 | POST | `/api/devices/:id/tools/:tool` | endpoint لكل أداة |
-| GET | `/api/devices/:id/screenshot.png` | لقطة PNG خام |
+| GET | `/api/devices/:id/screenshot.png` · `.jpg` | لقطة خام (`?maxWidth=&format=&quality=`) |
 | POST | `/mcp` · `/mcp/:token` | MCP Server (JSON-RPC, Streamable HTTP) |
 | GET | `/agent/:token` | **Bootstrap ذاتي الوصف للـ AI** (بيانات + أدوات + قواعد + حالة) |
 | GET | `/phone.sh` | سكريبت التحكم (يُخدَم من السيرفر) |
 | WS | `/api/ws/phone/:id` | يتصل به الهاتف (Header Bearer) |
-| WS | `/api/ws/viewer/:id?token=` | بث حي للوحة التحكم |
+| GET | `/monitor/:token` | صفحة مراقبة حية للإنسان |
+| WS | `/api/ws/viewer/:id?token=` | بث حي لصفحة المراقبة |
 
 ### صيغ الأوامر (`action`)
 ```jsonc
@@ -191,23 +226,43 @@ python agent_runner.py shell                                     # REPL: tap 540
 {"type":"screenshot"}    // Android 11+  → يرجع base64 PNG
 {"type":"ping"}
 ```
-الرد: `{"id":"...","ok":true,"durationMs":42}` أو `{"ok":false,"error":"device offline"}` (HTTP 502).
+```jsonc
+// v1.4
+{"type":"screenshot","maxWidth":1080,"format":"jpeg","quality":70}
+{"type":"drag","x1":100,"y1":900,"x2":800,"y2":900,"holdMs":500,"duration":600}
+{"type":"pinch","x":540,"y":1200,"scale":2}
+{"type":"scroll_element","elementId":"recycler","direction":"forward"}
+{"type":"set_clipboard","text":"...","paste":true}
+{"type":"get_notifications","limit":20}   {"type":"device_info"}
+```
+الرد: `{"id":"...","ok":true,"durationMs":42,"queuedMs":310}` أو `{"ok":false,"error":"device offline"}` (HTTP 502). `429` عند تجاوز الحد.
+
+### الأمان (v1.4)
+| التوكن | الصلاحية |
+|---|---|
+| `RELAY_TOKEN` (secret) | Admin: كل الأجهزة + `/api/admin/*` |
+| `dr_...` (per-device) | جهاز واحد فقط. مع `readOnly` ⇒ أدوات المراقبة فقط |
+- التوكنات تُخزَّن كـ SHA-256 في `DeviceRegistry`؛ لا يمكن استرجاعها بعد الإنشاء.
+- Rate limit: 120 طلب/10 ثوانٍ لكل توكن (`X-RateLimit-Remaining`, `Retry-After`).
+- Webhook: `wrangler secret put WEBHOOK_URL` ⇒ POST `{event:"online"|"offline", deviceId, info}`.
 
 ## بنية المشروع
 ```
 ├── src/
 │   ├── index.ts         # Hono: auth, REST, WS upgrade, tools, static
 │   ├── tools.ts         # كتالوج الأدوات + مولدات OpenAI/Anthropic/Gemini/OpenAPI
-│   ├── tool-exec.ts     # تنفيذ الأداة → Action على الهاتف
+│   ├── tool-exec.ts     # تنفيذ الأداة → Action على الهاتف (+ batch, wait_for, find_and_tap)
+│   ├── auth.ts          # مصادقة (admin / per-device / readOnly) + rate limit
 │   ├── mcp.ts           # MCP Server
 │   ├── device-room.ts   # Durable Object: غرفة WebSocket لكل جهاز
-│   ├── registry.ts      # Durable Object: قائمة الأجهزة
+│   ├── registry.ts      # Durable Object: قائمة الأجهزة + توكنات (hashed) + labels
 │   ├── validate.ts      # تحقق JSON
 │   └── types.ts         # البروتوكول المشترك
-├── public/              # لوحة التحكم (index.html + static/)
+├── public/              # index.html (حالة) + monitor.html (مراقبة حية)
 ├── android/             # مشروع Android (Kotlin/Compose)
 │   └── app/src/main/java/com/devicerelay/client/
-│       ├── service/AutomationAccessibilityService.kt   # تنفيذ الحركات
+│       ├── service/AutomationAccessibilityService.kt   # تنفيذ الحركات + drag/pinch/clipboard/device_info
+│       ├── service/RelayNotificationListener.kt        # قراءة الإشعارات (اختياري)
 │       ├── service/RelayConnectionService.kt           # WebSocket + Foreground
 │       ├── ui/MainActivity.kt                          # واجهة Compose
 │       └── net/Protocol.kt                             # نماذج JSON
@@ -215,6 +270,7 @@ python agent_runner.py shell                                     # REPL: tap 540
 │   ├── agent_runner.py  # AI Agent loop / scenario runner / REPL
 │   └── scenarios/       # سيناريوهات JSON
 ├── tests/fake-phone.mjs # محاكي هاتف للاختبار (+ mock_llm.py)
+├── tests/e2e.sh         # 49 اختبار end-to-end (tokens/queue/batch/rate-limit/monitor/mcp)
 ├── .github/workflows/   # بناء APK + نشر Worker
 └── wrangler.jsonc
 ```
@@ -226,24 +282,31 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
+tests/e2e.sh             # 49 checks → PASSED 49 FAILED 0
 ```
 
 ## Data Architecture
 - **Durable Object `DeviceRoom`** (واحد لكل deviceId): حالة الجهاز + آخر 100 أمر + اتصالات WebSocket (Hibernation).
-- **Durable Object `DeviceRegistry`** (singleton): قائمة أسماء الأجهزة.
+- **Durable Object `DeviceRegistry`** (singleton): قائمة الأجهزة + توكنات per-device (SHA-256) + labels.
+- `DeviceRoom` يحتفظ أيضًا بآخر لقطة في الذاكرة وطابور أوامر الإدخال.
 - لا توجد قاعدة بيانات خارجية؛ التخزين داخل Durable Objects (SQLite-backed).
 
 ## غير منجز بعد / خطوات مقترحة
 - [x] ~~كتابة نص، فتح تطبيق، قراءة عناصر الشاشة~~ (v1.2)
+- [x] ~~توكن مختلف لكل جهاز / صلاحيات~~ (v1.4)
+- [x] ~~صفحة مراقبة حية للإنسان~~ (v1.4)
 - [ ] بث الشاشة المستمر (Screen streaming) بدلاً من لقطات
 - [ ] توقيع APK بمفتاح Release حقيقي (حاليًا debug-signed) للنشر في المتاجر
-- [ ] توكن مختلف لكل جهاز / صلاحيات متعددة المستخدمين
 - [ ] جدولة سيناريوهات (Test Scenarios) وحفظها
+- [ ] Rate limit موزّع (Durable Object) بدل per-isolate
+- [ ] انتهاء صلاحية التوكنات (expiresAt) + تدوير تلقائي
 
 ## Deployment
 - **Platform**: Cloudflare Workers (Durable Objects + Static Assets)
 - **Status**: ✅ Active — https://device-relay.cracknew37.workers.dev
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
-- **Last Updated**: 2026-09-06 (v1.3 — AI-only, /agent/:token bootstrap, 24 tools)
+- **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
+- **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
+- **Last Updated**: 2026-09-07 (v1.4 — per-device tokens, queue, batch, 31 tools, live monitor, Android 1.4.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
