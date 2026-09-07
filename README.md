@@ -55,6 +55,12 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
+**⚡ ردود فعل v2 + كشف أجسام + ذاكرة شاشات (v1.9)**
+- 🧱 **`find_objects`**: كل جسم منفصل بنفس اللون (connected blobs) مع مركزه ومساحته وحدوده مرتبًا بالحجم — بدل مركز واحد متوسط من `find_color` بيقع غالبًا في فراغ بين الأعداء
+- ⚡ **`auto_react`** (على الموبايل): الهاتف يراقب لونًا ويضغط لحظة ظهوره مرارًا بدون أي round-trip شبكة (~80ms بدل ~800ms) — whack-a-mole، ألعاب الإيقاع (منطقة رفيعة عند خط الضرب)، "اضغط لما يخضر"، التقاط الأشياء المتساقطة
+- 🧠 **`label_screen` / `identify_screen`**: الـ AI يسمّي كل شاشة مرة واحدة (main-menu, playing, game-over, shop, ad) — بصمة إدراكية + كلمات OCR موسومة بالتطبيق؛ بعدها `observe` يرجّع `screenName` ويعرف "أنا فين" بثقة 0-1؛ تستخدم كشرط في `do_until`/`game_loop`
+- قسم 5d في الـ bootstrap يعرض الشاشات المسمّاة للجلسات القادمة
+
 **🧠 ذكاء مركّب (v1.8) — أقل استدعاءات، قرارات أذكى (Worker فقط، بدون تحديث التطبيق)**
 - 👁️ **`observe`**: لقطة + OCR + التطبيق الحالي + بحث ألوان + ما الذي تغيّر — كلها **بالتوازي في طلب واحد** (تكلفة لقطة واحدة تقريبًا). هي الـ "look" الافتراضية للـ AI في الألعاب
 - 🎯 **`smart_tap`**: اضغط "أي شيء" بالاسم: عنصر Accessibility → نص OCR → إحداثية بديلة، ويتحقق أن الشاشة تغيّرت بعد الضغط (`via`, `changed`)
@@ -87,6 +93,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v1.9**: `find_objects` (connected-component labelling على شبكة مخفّضة)، `auto_react` (حلقة مراقبة→ضغط محلية حتى 40 ثانية / 200 ضغطة بـ cooldown)
 - **v1.5–v1.7**: كل أدوات Game Mode تُنفَّذ على الجهاز (توقيت دقيق بدون شبكة)، ML Kit OCR محلي (بدون إنترنت)، بث إطارات JPEG (`stream`) يتوقف تلقائيًا عند غياب المشاهدين
 - سجل مباشر داخل التطبيق لكل أمر وزمن تنفيذه
 
@@ -169,7 +176,7 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **61 أداة** مباشرة:
+بعدها النموذج يرى **65 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
 - عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
@@ -276,8 +283,11 @@ python agent_runner.py shell                                     # REPL: tap 540
 {"type":"read_text","lang":"latin","region":{"x":0,"y":0,"w":1080,"h":300}}
 {"type":"find_colors","colors":["#ff2020","#00e676"],"tolerance":30}
 {"type":"stream","enabled":true,"fps":2,"maxWidth":480,"quality":50}
+// v1.9 (objects + phone-side reflex)
+{"type":"find_objects","color":"#ff2020","tolerance":24,"minSize":12,"maxResults":10}
+{"type":"auto_react","color":"#00e676","region":{"x":0,"y":1900,"w":1080,"h":60},"maxTriggers":30,"timeoutMs":15000,"cooldownMs":200}
 ```
-> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro` · `ocr/taptext/waittext` · `colors` · `stats` · `live` · **v1.8:** `look [grid] [colors]` · `press "Skip" [x y]` · `popups` · `until <action> <observation>` · `history`.
+> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro` · `ocr/taptext/waittext` · `colors` · `stats` · `live` · **v1.8:** `look [grid] [colors]` · `press "Skip" [x y]` · `popups` · `until <action> <observation>` · `history` · **v1.9:** `objects '#rrggbb'` · `react '#rrggbb' [region] [n] [ms]` · `label "name"` · `which` · `screens`.
 الرد: `{"id":"...","ok":true,"durationMs":42,"queuedMs":310}` أو `{"ok":false,"error":"device offline"}` (HTTP 502). `429` عند تجاوز الحد.
 
 ### الأمان (v1.4)
@@ -327,7 +337,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh   # 227 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh   # 282 checks green
 ```
 
 ## Data Architecture
@@ -352,6 +362,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-07 (v1.8 — composite intelligence: observe, smart_tap, do_until, dismiss_popups, recent_actions, app-tagged memory; 61 tools; 227 e2e checks; Android 1.7.0 unchanged)
+- **Last Updated**: 2026-09-07 (v1.9 — find_objects, auto_react phone-side reflex loop, label_screen/identify_screen screen memory, observe.screenName; 65 tools; 282 e2e checks; Android 1.9.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
