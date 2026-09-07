@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
-let hashCounter = 0, diffCounter = 0
+let hashCounter = 0, diffCounter = 0, streaming = false
 const FAKE_SCREEN = readFileSync(join(here, 'fake-screen.b64'), 'utf8').trim()
 const ws = new WebSocket(`${base}/api/ws/phone/${deviceId}`, { headers: { Authorization: `Bearer ${token}` } })
 ws.onopen = () => {
@@ -57,6 +57,12 @@ ws.onmessage = (ev) => {
     if (a.type === 'watch_color') { const present = a.color === '#ff0000'; res.ok = present === (a.appear !== false); if (res.ok) res.data = { matched: true, appear: a.appear !== false, found: present, count: present ? 1200 : 0, cx: 540, cy: 1500, waitedMs: 120, polls: 1 }; else res.error = 'color did not appear within ' + a.timeoutMs + 'ms' }
     if (a.type === 'wait_pixel') { const match = a.color === '#ff0000' && a.y > 1200; res.ok = match === (a.appear !== false); if (res.ok) res.data = { matched: true, hex: '#ff0000', waitedMs: 80, polls: 1, cx: a.x, cy: a.y }; else res.error = 'pixel did not match' }
     if (a.type === 'find_image') res.data = a.image.startsWith('iVBOR') ? { found: true, count: 1, scale: 2, matches: [{ score: 0.93, x: 500, y: 950, w: 80, h: 80, cx: 540, cy: 990 }] } : { found: false, count: 0, matches: [] }
+    if (a.type === 'read_text') res.data = { count: 3, lines: [
+      { text: 'SCORE 1250', x: 40, y: 60, w: 300, h: 60, cx: 190, cy: 90 },
+      { text: 'PLAY', x: 440, y: 950, w: 200, h: 80, cx: 540, cy: 990 },
+      { text: 'Continue', x: 400, y: 1600, w: 280, h: 70, cx: 540, cy: 1635 } ], text: 'SCORE 1250\nPLAY\nContinue' }
+    if (a.type === 'find_colors') res.data = { results: a.colors.map(c => c === '#ff0000' ? { color: c, found: true, count: 1200, cx: 540, cy: 1500, bounds: { x: 500, y: 1450, w: 80, h: 100 } } : { color: c, found: false, count: 0 }) }
+    if (a.type === 'stream') { streaming = !!a.enabled; res.data = { streaming }; if (streaming) { const push = () => { if (!streaming) return; ws.send(JSON.stringify({ kind: 'frame', data: FAKE_SCREEN, mime: 'image/png', ts: Date.now() })); setTimeout(push, 500) }; setTimeout(push, 100) } }
     if (a.type === 'screen_hash') { hashCounter++; res.data = { hash: hashCounter < 3 ? 'aaaa' : 'bbbb', w: 1080, h: 2400 } }
     ws.send(JSON.stringify(res))
   }, delay)
