@@ -21,6 +21,10 @@
 #   ./phone.sh label "main-menu" | which | screens | unlabel <name|*>   # v1.9 screen memory
 #   ./phone.sh rec start <name> ["desc"] | rec stop [name] | rec status | rec cancel   # v2.0 record_macro (learn by doing)
 #   ./phone.sh react2 '<json: {color, lanes:[...], stopColor, ...}>'                  # v2.0 multi-lane reflex loop
+#   ./phone.sh palette [x,y,w,h] [n]                    # v2.1 sample_colors: dominant non-grey colours (hex, share, centre)
+#   ./phone.sh track '#rrggbb' [x,y,w,h] [samples]      # v2.1 track_object: velocity + predicted position
+#   ./phone.sh num [x,y,w,h] [label] | watchnum <change|increase|decrease|above|below|equals> [value] [x,y,w,h] [ms]   # v2.1 numbers
+#   ./phone.sh calib X Y                                # v2.1 calibrate: does this control react? how fast?
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -172,6 +176,32 @@ print(json.dumps(a))' "${1:-}")" | pretty ;;
              *) echo "rec: start <name> | stop [name] | status | cancel" >&2; exit 1 ;;
            esac ;;
   react2)  call auto_react "$1" | pretty ;;
+  palette) call sample_colors "$(python3 -c 'import json,sys
+a={"maxColors":int(sys.argv[2])}
+if sys.argv[1]:
+  x,y,w,h=map(int,sys.argv[1].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
+print(json.dumps(a))' "${1:-}" "${2:-8}")" | python3 -c '
+import json,sys; r=json.load(sys.stdin)
+if not r.get("ok"): print(r); sys.exit(1)
+for c in r.get("data",{}).get("colors",[]): print("  %s  %5.1f%%  at (%4d,%4d)  n=%d" % (c["hex"], c["share"], c["cx"], c["cy"], c["count"]))' ;;
+  track)   call track_object "$(python3 -c 'import json,sys
+a={"color":sys.argv[1],"samples":int(sys.argv[3])}
+if sys.argv[2]:
+  x,y,w,h=map(int,sys.argv[2].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
+print(json.dumps(a))' "$1" "${2:-}" "${3:-5}")" | pretty ;;
+  num)     call read_number "$(python3 -c 'import json,sys
+a={}
+if sys.argv[1]:
+  x,y,w,h=map(int,sys.argv[1].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
+if sys.argv[2]: a["label"]=sys.argv[2]
+print(json.dumps(a))' "${1:-}" "${2:-}")" | pretty ;;
+  watchnum) call watch_value "$(python3 -c 'import json,sys
+a={"condition":sys.argv[1],"timeoutMs":int(sys.argv[4])}
+if sys.argv[2]: a["value"]=float(sys.argv[2])
+if sys.argv[3]:
+  x,y,w,h=map(int,sys.argv[3].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
+print(json.dumps(a))' "${1:-change}" "${2:-}" "${3:-}" "${4:-10000}")" | pretty ;;
+  calib)   call calibrate "{\"x\":$1,\"y\":$2}" | pretty ;;
   unlabel) call identify_screen "{\"delete\":\"${1:-*}\"}" | pretty ;;
   history) call recent_actions "{\"limit\":${1:-20}}" | python3 -c '
 import json,sys; d=json.load(sys.stdin)
@@ -212,5 +242,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,42p' "$0" ;;
+  *) sed -n '2,46p' "$0" ;;
 esac
