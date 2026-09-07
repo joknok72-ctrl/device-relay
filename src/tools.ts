@@ -393,6 +393,7 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'repeat_tap': return { action: { type: 'repeat_tap', x: args.x, y: args.y, count: args.count ?? 5, intervalMs: args.intervalMs ?? 100 } }
     case 'get_pixels': return { action: { type: 'pixel', points: args.points } }
     case 'find_color': return { action: { type: 'find_color', color: args.color, tolerance: args.tolerance, region: args.region } }
+    case 'screen_hash': return { action: { type: 'screen_hash' } } // internal (used by wait_for_screen)
     case 'act_and_see': return { special: 'act_and_see' }
     case 'wait_for_screen': return { special: 'wait_for_screen' }
     case 'remember': return { special: 'remember' }

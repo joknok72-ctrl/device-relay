@@ -81,6 +81,10 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
 
   if (mapped.special === 'wait_for') return waitForElement(env, deviceId, args)
   if (mapped.special === 'find_tap') return findAndTap(env, deviceId, args)
+  if (mapped.special === 'act_and_see') return actAndSee(env, deviceId, args, opts)
+  if (mapped.special === 'wait_for_screen') return waitForScreen(env, deviceId, args)
+  if (mapped.special === 'remember') return remember(env, deviceId, args)
+  if (mapped.special === 'recall') return recall(env, deviceId, args)
 
   let actionInput: Record<string, unknown> | undefined = mapped.action
   if (mapped.special === 'scroll') {
@@ -166,6 +170,69 @@ export async function defaultDevice(env: Bindings & { REGISTRY: DurableObjectNam
     if (info.online) return id
   }
   return ids[0]
+}
+
+// ---------------------------------------------------------------- v1.5 game primitives
+
+/** One action + wait + screenshot in a single round-trip. */
+async function actAndSee(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const act = args.action as { name?: string; arguments?: Record<string, unknown> } | undefined
+  if (!act || typeof act.name !== 'string') return { ok: false, error: 'act_and_see requires action {name, arguments}' }
+  if (['act_and_see', 'batch', 'capture_screen'].includes(act.name)) return { ok: false, error: `action '${act.name}' not allowed inside act_and_see` }
+  const t0 = Date.now()
+  const a = await executeTool(env, deviceId, act.name, act.arguments ?? {}, { ...opts, depth: (opts.depth ?? 0) + 1 })
+  const waitMs = Math.min(Math.max(Number(args.waitMs ?? 400) || 0, 0), 10_000)
+  if (a.ok && waitMs) await new Promise((r) => setTimeout(r, waitMs))
+  const shotArgs: Record<string, unknown> = {}
+  for (const k of ['maxWidth', 'format', 'quality', 'grid', 'region']) if (args[k] !== undefined) shotArgs[k] = args[k]
+  const shot = a.ok ? await executeTool(env, deviceId, 'capture_screen', shotArgs, opts) : { ok: false, error: 'skipped (action failed)' }
+  const { image, ...shotRest } = shot
+  return { ok: a.ok && shot.ok, action: { name: act.name, ...a }, screenshot: shotRest, image, screen: shot.screen, durationMs: Date.now() - t0 }
+}
+
+/** Poll cheap on-device frame hashes until the screen changes or stabilises. */
+async function waitForScreen(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const mode = args.mode === 'stable' ? 'stable' : 'change'
+  const timeout = Math.min(Math.max(Number(args.timeoutMs) || 5000, 200), 30_000)
+  const interval = Math.min(Math.max(Number(args.intervalMs) || 250, 100), 2000)
+  const stableFor = Math.min(Math.max(Number(args.stableFor) || 600, 200), 5000)
+  const start = Date.now()
+  const first = await hashOf(env, deviceId)
+  if (!first.ok) return { ok: false, error: first.error ?? 'screen_hash failed (update the Android app to v1.5)' }
+  let last = first.hash, lastChange = Date.now(), polls = 1
+  while (Date.now() - start < timeout) {
+    await new Promise((r) => setTimeout(r, interval))
+    const h = await hashOf(env, deviceId); polls++
+    if (!h.ok) return { ok: false, error: h.error }
+    const changed = h.hash !== last
+    if (mode === 'change' && changed) return { ok: true, changed: true, waitedMs: Date.now() - start, polls }
+    if (changed) { last = h.hash; lastChange = Date.now() }
+    if (mode === 'stable' && Date.now() - lastChange >= stableFor) return { ok: true, stable: true, waitedMs: Date.now() - start, polls }
+  }
+  return { ok: false, [mode === 'change' ? 'changed' : 'stable']: false, error: `screen did not ${mode === 'change' ? 'change' : 'stabilise'} within ${timeout}ms`, waitedMs: Date.now() - start, polls }
+}
+async function hashOf(env: Bindings, deviceId: string): Promise<{ ok: boolean; hash?: string; error?: string }> {
+  const r = await executeTool(env, deviceId, 'screen_hash' as string, {})
+  const d = r.data as { hash?: string } | undefined
+  return { ok: r.ok && !!d?.hash, hash: d?.hash, error: r.error }
+}
+
+/** Persistent per-device notes (memory across chats). */
+async function remember(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const text = String(args.text ?? '').trim()
+  if (!text) return { ok: false, error: 'remember requires text' }
+  const r = await room(env, deviceId).fetch(`https://do/notes?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+  return (await r.json()) as ToolResult
+}
+async function recall(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  if (args.forget !== undefined && args.forget !== null) {
+    const idx = Number(args.forget)
+    const r = await room(env, deviceId).fetch(`https://do/notes?deviceId=${deviceId}${idx >= 0 ? `&index=${idx}` : ''}`, { method: 'DELETE' })
+    return (await r.json()) as ToolResult
+  }
+  const r = await room(env, deviceId).fetch(`https://do/notes?deviceId=${deviceId}`)
+  const { notes } = (await r.json()) as { notes: { text: string; ts: number }[] }
+  return { ok: true, count: notes.length, notes: notes.map((n, i) => ({ index: i, text: n.text, ts: n.ts })) }
 }
 
 // ---------------------------------------------------------------- composite tools
