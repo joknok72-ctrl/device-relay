@@ -517,7 +517,7 @@ export function parseNumberToken(text: string): number | null {
   const t = text.replace(/[\u0660-\u0669]/g, (c) => String(c.charCodeAt(0) - 0x0660)) // Arabic-Indic digits
   const timer = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/)
   if (timer) { const a = Number(timer[1]), b = Number(timer[2]), c = timer[3] !== undefined ? Number(timer[3]) : null; return c === null ? a * 60 + b : a * 3600 + b * 60 + c }
-  const m = t.match(/-?\d[\d,.\s]*\d|\d/)
+  const m = t.match(/-?(?:\d[\d,.\s]*\d|\d)/)
   if (!m) return null
   let raw = m[0].replace(/\s+/g, '')
   const rest = t.slice((m.index ?? 0) + m[0].length).trim().toLowerCase()
