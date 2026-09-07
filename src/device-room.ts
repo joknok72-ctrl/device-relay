@@ -192,7 +192,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
         return Response.json({ ok: true, count: this.notes.length })
       }
       if (request.method === 'DELETE') {
-        const idx = Number(url.searchParams.get('index'))
+        const rawIdx = url.searchParams.get('index')
+        const idx = rawIdx === null ? -1 : Number(rawIdx)
         if (Number.isInteger(idx) && idx >= 0 && idx < this.notes.length) this.notes.splice(idx, 1)
         else this.notes = []
         await this.ctx.storage.put('notes', this.notes)
