@@ -251,6 +251,115 @@ export const TOOLS: ToolDef[] = [
       required: ['steps'],
     },
   },
+  // ------------------------------------------------------------ v1.5 games / precision
+  {
+    name: 'act_and_see',
+    description:
+      'GAME LOOP PRIMITIVE. Perform ONE action, wait, then return a screenshot \u2014 all in a single round-trip. ' +
+      'action is any input tool call {name, arguments} (tap, swipe, tap_sequence, swipe_path, ...). waitMs (default 400) lets the game render. ' +
+      'Screenshot options: maxWidth, format, quality, grid (draw a labelled coordinate grid every N px \u2014 makes reading exact positions from the image trivial), region {x,y,w,h} (crop at full resolution).',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'object', description: '{name: string, arguments: object} \u2014 the input tool to run' },
+        waitMs: { type: 'integer', description: 'Delay before the screenshot (default 400)', minimum: 0, maximum: 10000, default: 400 },
+        maxWidth: { type: 'integer', description: 'Screenshot width (default 540)', minimum: 120, maximum: 2160 },
+        format: { type: 'string', description: 'png | jpeg' },
+        quality: { type: 'integer', description: '10-100', minimum: 10, maximum: 100 },
+        grid: { type: 'integer', description: 'Overlay a coordinate grid every N original px (e.g. 100). 0 = none', minimum: 0, maximum: 500 },
+        region: { type: 'object', description: 'Crop {x,y,w,h} in original px' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'tap_sequence',
+    description:
+      'Precise on-device tap choreography: taps points in order with per-point delayMs (before the tap) and durationMs (hold). Executed entirely on the phone \u2014 zero network jitter between taps. ' +
+      'Use for rhythm games, combos, fast menus, typing on custom keyboards. Max 50 points / 50s total.',
+    parameters: {
+      type: 'object',
+      properties: { points: { type: 'array', description: '[{x, y, delayMs?, durationMs?}, ...]' } },
+      required: ['points'],
+    },
+  },
+  {
+    name: 'multi_tap',
+    description: 'Tap up to 10 points SIMULTANEOUSLY (true multi-touch) for duration ms. Use for two-button game controls, chords, hidden gestures.',
+    parameters: {
+      type: 'object',
+      properties: { points: { type: 'array', description: '[{x,y}, ...]' }, duration: { type: 'integer', description: 'Hold time (default 60)', minimum: 20, maximum: 5000, default: 60 } },
+      required: ['points'],
+    },
+  },
+  {
+    name: 'swipe_path',
+    description: 'One continuous finger stroke through many points (curves, joystick moves, drawing, pattern unlock, slingshot aiming). duration is the total time. 2-50 points.',
+    parameters: {
+      type: 'object',
+      properties: { points: { type: 'array', description: '[{x,y}, ...] in order' }, duration: { type: 'integer', description: 'Total ms (default 500)', minimum: 50, maximum: 30000, default: 500 } },
+      required: ['points'],
+    },
+  },
+  {
+    name: 'repeat_tap',
+    description: 'Tap the same point count times every intervalMs, on-device (auto-clicker for idle/clicker games, skipping dialogues, spamming attack). Max 100 taps / 50s.',
+    parameters: {
+      type: 'object',
+      properties: {
+        x: coord('X'), y: coord('Y'),
+        count: { type: 'integer', description: 'Number of taps (default 5)', minimum: 1, maximum: 100, default: 5 },
+        intervalMs: { type: 'integer', description: 'Gap between taps (default 100)', minimum: 30, maximum: 5000, default: 100 },
+      },
+      required: ['x', 'y'],
+    },
+  },
+  {
+    name: 'get_pixels',
+    description: 'Read exact RGB hex colours at up to 50 original-pixel points from a fresh frame. Cheap way to detect HP bars, cooldowns, button states, tile colours without a full screenshot.',
+    parameters: { type: 'object', properties: { points: { type: 'array', description: '[{x,y}, ...]' } }, required: ['points'] },
+  },
+  {
+    name: 'find_color',
+    description: 'Locate where a colour appears on screen: returns bounding box, centre and match count for pixels within tolerance of color (#RRGGBB), optionally inside region {x,y,w,h}. Great for finding enemies, gems, buttons, markers in games.',
+    parameters: {
+      type: 'object',
+      properties: {
+        color: { type: 'string', description: '#RRGGBB' },
+        tolerance: { type: 'integer', description: 'Per-channel tolerance 0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
+        region: { type: 'object', description: 'Optional crop {x,y,w,h}' },
+      },
+      required: ['color'],
+    },
+  },
+  {
+    name: 'wait_for_screen',
+    description:
+      'Wait until the screen CHANGES (mode=change, e.g. after a tap that starts a level) or becomes STABLE (mode=stable, e.g. animation/loading finished), by comparing cheap frame hashes on the device. ' +
+      'Much better than a fixed wait. Returns when the condition is met or timeoutMs elapses.',
+    parameters: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', description: 'change (default) | stable' },
+        timeoutMs: { type: 'integer', description: 'Max wait (default 5000)', minimum: 200, maximum: 30000, default: 5000 },
+        intervalMs: { type: 'integer', description: 'Poll interval (default 250)', minimum: 100, maximum: 2000, default: 250 },
+        stableFor: { type: 'integer', description: 'stable mode: ms the frame must stay identical (default 600)', minimum: 200, maximum: 5000, default: 600 },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'remember',
+    description:
+      'Save a persistent note about THIS device that future AI sessions will see in the bootstrap (e.g. "Clash: attack button at (980,2150); shop tab at (140,2250)", "Keyboard sends Enter via type_text submit"). ' +
+      'Use it whenever you learn a layout, coordinate, or trick worth reusing. Max 40 notes, 2000 chars each.',
+    parameters: { type: 'object', properties: { text: { type: 'string', description: 'The note' } }, required: ['text'] },
+  },
+  {
+    name: 'recall',
+    description: 'List saved notes for this device (index, text, timestamp). Call at the start of a task to reuse earlier learnings. Pass forget=index (or forget=-1 for all) to delete.',
+    parameters: { type: 'object', properties: { forget: { type: 'integer', description: 'Delete note at index; -1 deletes all' } }, required: [] },
+  },
   { name: 'wake_screen', description: 'Wake the display if it is off (you may still need to swipe up / unlock).', parameters: { type: 'object', properties: {}, required: [] } },
   { name: 'open_quick_settings', description: 'Open the quick-settings panel (Wi-Fi, Bluetooth, flashlight toggles...).', parameters: { type: 'object', properties: {}, required: [] } },
   { name: 'press_back', description: 'Press the Android BACK button.', parameters: { type: 'object', properties: {}, required: [] } },
@@ -275,9 +384,19 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall'; error?: string } {
   switch (name) {
-    case 'capture_screen': return { action: { type: 'screenshot', maxWidth: args.maxWidth, quality: args.quality, format: args.format } }
+    case 'capture_screen': return { action: { type: 'screenshot', maxWidth: args.maxWidth, quality: args.quality, format: args.format, grid: args.grid, region: args.region } }
+    case 'tap_sequence': return { action: { type: 'tap_sequence', points: args.points } }
+    case 'multi_tap': return { action: { type: 'multi_tap', points: args.points, duration: args.duration ?? 60 } }
+    case 'swipe_path': return { action: { type: 'swipe_path', points: args.points, duration: args.duration ?? 500 } }
+    case 'repeat_tap': return { action: { type: 'repeat_tap', x: args.x, y: args.y, count: args.count ?? 5, intervalMs: args.intervalMs ?? 100 } }
+    case 'get_pixels': return { action: { type: 'pixel', points: args.points } }
+    case 'find_color': return { action: { type: 'find_color', color: args.color, tolerance: args.tolerance, region: args.region } }
+    case 'act_and_see': return { special: 'act_and_see' }
+    case 'wait_for_screen': return { special: 'wait_for_screen' }
+    case 'remember': return { special: 'remember' }
+    case 'recall': return { special: 'recall' }
     case 'tap': return { action: { type: 'tap', x: args.x, y: args.y } }
     case 'long_press': return { action: { type: 'long_press', x: args.x, y: args.y, duration: args.duration ?? 800 } }
     case 'swipe': return { action: { type: 'swipe', x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, duration: args.duration ?? 300 } }
@@ -398,7 +517,7 @@ export function openapiSpec(serverUrl: string) {
       title: 'Device Relay — Android Automation Tools',
       version: '1.4.0',
       description:
-        'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. ' +
+        'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
     },
     servers: [{ url: serverUrl }],
@@ -411,4 +530,5 @@ export function openapiSpec(serverUrl: string) {
 /** Tools that only observe (allowed for read-only tokens). */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
+  'get_pixels', 'find_color', 'wait_for_screen', 'recall',
 ])
