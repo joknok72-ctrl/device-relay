@@ -10,9 +10,18 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
   const macrosBlock = macros.length === 0
     ? '  (none yet — use save_macro for sequences you will repeat: open game + skip intro, collect daily reward, ...)'
     : macros.map((m) => `  run_macro "${m.name}"  (${m.steps.length} steps, ran ${m.runs ?? 0}x)${m.description ? `  — ${m.description}` : ''}`).join('\n')
-  const notesBlock = notes.length === 0
-    ? '  (none yet — use "remember" when you learn a layout/coordinate/trick worth keeping)'
-    : notes.map((n, i) => `  [${i}] ${new Date(n.ts).toISOString().slice(0, 10)}  ${n.text}`).join('\n')
+  let notesBlock: string
+  if (notes.length === 0) notesBlock = '  (none yet — use "remember" when you learn a layout/coordinate/trick worth keeping)'
+  else {
+    // group by app tag so a game's notes read as one block
+    const groups = new Map<string, string[]>()
+    notes.forEach((n, i) => {
+      const key = n.app ?? ''
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(`  [${i}] ${new Date(n.ts).toISOString().slice(0, 10)}  ${n.text}`)
+    })
+    notesBlock = [...groups.entries()].map(([app, lines]) => `${app ? `  — ${app} —` : '  — general —'}\n${lines.join('\n')}`).join('\n')
+  }
   const online = devices.filter((d) => d.online)
   const target = online[0] ?? devices[0]
   const deviceLine = devices.length === 0
@@ -58,6 +67,11 @@ curl -sS "$RELAY_URL/phone.sh" -o phone.sh && chmod +x phone.sh
 ./phone.sh back | home | recents | notif | qs | lock | wake | wait 1000 | app | apps | url https://... | info | notifs | clip "text" [paste]
 ./phone.sh batch '[{"name":"open_app","arguments":{"text":"Chrome"}},{"name":"wait_for_element","arguments":{"text":"Search"}},{"name":"capture_screen"}]'
 ./phone.sh shot screen.png 1080 jpeg   # high-res JPEG when you need fine detail
+./phone.sh look [grid] ["#color"...]   # v1.8 observe: screenshot(look.png) + OCR lines + app + colours + diff in ONE call
+./phone.sh press "Skip" [fallbackX fallbackY]  # v1.8 smart_tap: ui → OCR → fallback, verifies the screen changed
+./phone.sh popups                      # v1.8 dismiss_popups: close ads/permission/rating dialogs
+./phone.sh until '<action json>' '<observation json>' [maxTries]   # v1.8 do_until
+./phone.sh history [n]                 # v1.8 recent_actions: what was done on this phone (also by previous sessions)
 ./phone.sh call <tool> '<json args>'   # any tool below
 
 ## 4. Raw HTTP (if you prefer curl / another language)
@@ -78,10 +92,12 @@ ${notesBlock}
 ${macrosBlock}
 
 ## 6. Operating rules
-1. Observe before acting: "ui" first (exact, cheap). Use "shot" when visuals matter (games, images, WebView) or when ui is empty.
+0. START of every session: recall (notes for this app are in 5b) + history 10 (what the last session did) + look. Then act.
+1. Observe before acting: "ui" first (exact, cheap). Use "look" (observe) when visuals matter (games, images, WebView) or when ui is empty — it gives image + text + app + diff at once.
 2. After every action that changes the screen, observe again and verify before the next step.
 3. Coordinates are ORIGINAL screen pixels (screen.w x screen.h). Elements from "ui" are already original. Screenshot px / scale = original.
-4. Prefer open_app, tapel/tapid, type over raw coordinates. Use waitfor after actions that load content.
+4. Prefer open_app, press (smart_tap), tapel/tapid, type over raw coordinates. Use waitfor / wait_for_text after actions that load content.
+4b. Unexpected dialog/ad/permission prompt? Call popups (dismiss_popups) once, then look again. Do not hand-craft taps for common dismiss buttons.
 5. Handle popups / permission dialogs / keyboards sensibly, then continue toward the goal.
 6. If the phone is offline or a11y=false, tell the human exactly what to enable on the phone; do not loop.
 7. Never invent screen content; never claim success without an observed confirmation. Report steps + final result briefly.
@@ -117,6 +133,13 @@ Reflexes (v1.6 — the phone waits/reacts, you don't poll):
   find_image <base64 template> [region] threshold         → locate an icon/sprite you cropped earlier (capture_screen region=...)
   game_loop when={find_color…} then={tap x:"$cx" y:"$cy"} stopWhen={…} iterations → server runs the whole loop; ONE call replaces 20-60
   save_macro name steps[] / run_macro name              → reusable sequences (open game, skip intro, daily reward)
+Composite intelligence (v1.8 — fewer, smarter round-trips):
+  observe [grid] [colors] [region]   → image + OCR lines + app + colour hits + what changed, in parallel. Your default look in games.
+  smart_tap "label" [fallback{x,y}]  → ui element → OCR text → fallback; returns via + changed. Use for any named button.
+  do_until action={...} until={observation}  → e.g. action=smart_tap "Skip" until=wait_for_text "PLAY": repeats until the screen says so.
+  dismiss_popups [extra labels]     → clears ads/permissions/rating prompts; call it when something unexpected covers the game.
+  recent_actions                     → what you (or the previous session) already did; avoid repeating a failed approach.
+  remember auto-tags notes with the current game package; recall app="current" shows only this game's notes.
 OCR (v1.7 — read text where there is no ui tree):
   read_text [region]           → all visible text lines with cx,cy (scores, timers, dialogue, menus in games)
   tap_text "PLAY" [region]     → OCR + tap; the game-world tap_element
@@ -124,7 +147,7 @@ OCR (v1.7 — read text where there is no ui tree):
   find_colors ["#a","#b",...]  → several colours in one frame (enemies + gems + HP at once)
   session_stats                → your own success rate / latency; adapt if flaky
   live_preview true            → stream frames to the human's /monitor page when they want to watch
-Decision guide: text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
+Decision guide: named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
 Rules for games: never spam raw "tap" in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }
