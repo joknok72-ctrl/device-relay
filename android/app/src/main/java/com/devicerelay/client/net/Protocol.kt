@@ -64,6 +64,14 @@ data class Action(
     val colors: List<String>? = null,    // find_colors
     val enabled: Boolean? = null,        // stream
     val fps: Float? = null,              // stream
+    // v1.9
+    val minSize: Int? = null,            // find_objects: ignore blobs smaller than this (px)
+    val tapOffsetX: Int? = null,         // auto_react
+    val tapOffsetY: Int? = null,         // auto_react
+    val tapX: Int? = null,               // auto_react: fixed tap point
+    val tapY: Int? = null,               // auto_react
+    val maxTriggers: Int? = null,        // auto_react
+    val cooldownMs: Long? = null,        // auto_react
 )
 
 @Serializable

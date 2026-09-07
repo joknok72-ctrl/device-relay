@@ -126,6 +126,9 @@ class AutomationAccessibilityService : AccessibilityService() {
         "read_text" -> readText(action)
         "find_colors" -> findColors(action)
         "stream" -> Outcome.Fail("stream is handled by the connection service") // never reached
+        // v1.9
+        "find_objects" -> findObjects(action)
+        "auto_react" -> autoReact(action)
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -453,6 +456,107 @@ class AutomationAccessibilityService : AccessibilityService() {
             put("found", count > 0); put("count", count * stepPx * stepPx)
             if (count > 0) { put("cx", (sumX / count).toInt()); put("cy", (sumY / count).toInt()); put("bounds", buildJsonObject { put("x", minX); put("y", minY); put("w", maxX - minX + 1); put("h", maxY - minY + 1) }) }
         }
+    }
+
+    // ---------------------------------------------------------------- v1.9 object detection + phone-side reflex loop
+
+    /**
+     * Connected-component labelling of colour matches on a downsampled grid (cell = stepPx).
+     * Returns blobs sorted by area desc: {i, cx, cy, area, bounds}. Area is in original px (approx).
+     */
+    private fun scanObjects(bmp: Bitmap, hex: String, tol: Int, region: Region?, minSize: Int, maxResults: Int): JsonObject {
+        val target = hex.removePrefix("#").toIntOrNull(16) ?: 0
+        val tr = (target shr 16) and 0xFF; val tg = (target shr 8) and 0xFF; val tb = target and 0xFF
+        val rx = region?.x?.coerceIn(0, bmp.width - 1) ?: 0; val ry = region?.y?.coerceIn(0, bmp.height - 1) ?: 0
+        val rw = region?.w?.coerceIn(1, bmp.width - rx) ?: (bmp.width - rx); val rh = region?.h?.coerceIn(1, bmp.height - ry) ?: (bmp.height - ry)
+        val step = if (rw * rh > 1_500_000) 4 else if (rw * rh > 400_000) 3 else 2
+        val gw = (rw + step - 1) / step; val gh = (rh + step - 1) / step
+        val mask = BooleanArray(gw * gh)
+        val row = IntArray(rw)
+        var gy = 0
+        while (gy < gh) {
+            val y = ry + gy * step
+            bmp.getPixels(row, 0, rw, rx, y, rw, 1)
+            var gx = 0
+            while (gx < gw) {
+                val c = row[gx * step]
+                if (Math.abs(((c shr 16) and 0xFF) - tr) <= tol && Math.abs(((c shr 8) and 0xFF) - tg) <= tol && Math.abs((c and 0xFF) - tb) <= tol) mask[gy * gw + gx] = true
+                gx++
+            }
+            gy++
+        }
+        // BFS labelling (4-connectivity)
+        val labels = IntArray(gw * gh)
+        data class Blob(var n: Int = 0, var sx: Long = 0, var sy: Long = 0, var minX: Int = Int.MAX_VALUE, var minY: Int = Int.MAX_VALUE, var maxX: Int = -1, var maxY: Int = -1)
+        val blobs = ArrayList<Blob>()
+        val queue = IntArray(gw * gh)
+        var total = 0
+        for (start in mask.indices) {
+            if (!mask[start] || labels[start] != 0) continue
+            val id = blobs.size + 1; val b = Blob(); blobs.add(b); total++
+            var head = 0; var tail = 0; queue[tail++] = start; labels[start] = id
+            while (head < tail) {
+                val idx = queue[head++]; val cx = idx % gw; val cy = idx / gw
+                b.n++; b.sx += cx; b.sy += cy
+                if (cx < b.minX) b.minX = cx; if (cx > b.maxX) b.maxX = cx; if (cy < b.minY) b.minY = cy; if (cy > b.maxY) b.maxY = cy
+                if (cx > 0) { val j = idx - 1; if (mask[j] && labels[j] == 0) { labels[j] = id; queue[tail++] = j } }
+                if (cx < gw - 1) { val j = idx + 1; if (mask[j] && labels[j] == 0) { labels[j] = id; queue[tail++] = j } }
+                if (cy > 0) { val j = idx - gw; if (mask[j] && labels[j] == 0) { labels[j] = id; queue[tail++] = j } }
+                if (cy < gh - 1) { val j = idx + gw; if (mask[j] && labels[j] == 0) { labels[j] = id; queue[tail++] = j } }
+            }
+        }
+        val minCells = Math.max(1, minSize / step)
+        val kept = blobs.filter { (it.maxX - it.minX + 1) >= minCells && (it.maxY - it.minY + 1) >= minCells }.sortedByDescending { it.n }.take(maxResults)
+        return buildJsonObject {
+            put("found", kept.isNotEmpty()); put("count", kept.size); put("total", total); put("sampleStep", step)
+            put("objects", buildJsonArray {
+                kept.forEachIndexed { i, b ->
+                    add(buildJsonObject {
+                        put("i", i); put("cx", rx + (b.sx / b.n).toInt() * step + step / 2); put("cy", ry + (b.sy / b.n).toInt() * step + step / 2)
+                        put("area", b.n * step * step)
+                        put("bounds", buildJsonObject { put("x", rx + b.minX * step); put("y", ry + b.minY * step); put("w", (b.maxX - b.minX + 1) * step); put("h", (b.maxY - b.minY + 1) * step) })
+                    })
+                }
+            })
+        }
+    }
+
+    private suspend fun findObjects(a: Action): Outcome {
+        val color = a.color ?: return Outcome.Fail("find_objects requires color")
+        val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        return Outcome.Ok(data = scanObjects(bmp, color, (a.tolerance ?: 24).coerceIn(0, 128), a.region, (a.minSize ?: 12).coerceIn(1, 2000), (a.maxResults ?: 10).coerceIn(1, 40)))
+    }
+
+    /** Phone-side reflex loop: watch a colour, tap the instant it appears, repeat. No network round-trips between taps. */
+    private suspend fun autoReact(a: Action): Outcome {
+        val color = a.color ?: return Outcome.Fail("auto_react requires color")
+        val tol = (a.tolerance ?: 24).coerceIn(0, 128)
+        val minCount = (a.minCount ?: 20).coerceAtLeast(1)
+        val maxTriggers = (a.maxTriggers ?: 20).coerceIn(1, 200)
+        val timeout = (a.timeoutMs ?: 10_000L).coerceIn(500, 40_000)
+        val interval = (a.intervalMs ?: 80L).coerceIn(30, 2000)
+        val cooldown = (a.cooldownMs ?: 250L).coerceIn(0, 5000)
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        var polls = 0; var triggers = 0; var stoppedBy = "timeout"
+        val taps = ArrayList<JsonObject>()
+        while (android.os.SystemClock.elapsedRealtime() - t0 < timeout) {
+            val bmp = captureBitmap()
+            if (bmp == null) { stoppedBy = "screenshot failed"; break }
+            val r = scanColor(bmp, color, tol, a.region); polls++
+            val count = r["count"]?.toString()?.toLongOrNull() ?: 0L
+            if (count >= minCount) {
+                val cx = r["cx"]?.toString()?.toIntOrNull() ?: 0; val cy = r["cy"]?.toString()?.toIntOrNull() ?: 0
+                val tx = (a.tapX ?: (cx + (a.tapOffsetX ?: 0))).toFloat(); val ty = (a.tapY ?: (cy + (a.tapOffsetY ?: 0))).toFloat()
+                val g = gesture(tapPath(tx, ty), 40)
+                triggers++
+                val at = android.os.SystemClock.elapsedRealtime() - t0
+                taps.add(buildJsonObject { put("t", at); put("x", tx.toInt()); put("y", ty.toInt()); put("count", count); put("ok", g is Outcome.Ok) })
+                if (triggers >= maxTriggers) { stoppedBy = "maxTriggers"; break }
+                if (cooldown > 0) delay(cooldown)
+            } else delay(interval)
+        }
+        val tapsJson = buildJsonArray { for (t in taps) add(t) }
+        return Outcome.Ok(data = buildJsonObject { put("triggers", triggers); put("taps", tapsJson); put("polls", polls); put("stoppedBy", stoppedBy); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0) })
     }
 
     private suspend fun watchColor(a: Action): Outcome {
