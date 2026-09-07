@@ -9,8 +9,8 @@ call() { curl -s "${A[@]}" -d "$1" $U/api/devices/$D/tools/call; }
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "== version / catalogue"
-check version '"version":"1.7.0"' "$(curl -s $U/api/health)"
-check tools-56 '56' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"1.8.0"' "$(curl -s $U/api/health)"
+check tools-61 '61' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== OCR"
 check read_text 'SCORE 1250' "$(call '{"name":"read_text"}')"
