@@ -55,6 +55,14 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
+**🔬 اكتشاف + حركة + أرقام + معايرة (v2.1)**
+- 🎨 **`sample_colors`**: الألوان المسيطرة غير الرمادية على الشاشة (hex + نسبة + مركز) — الـ AI ما بيخمّنش قيم hex تاني؛ أول خطوة في أي لعبة جديدة
+- 🎯 **`track_object`**: يعيّن مركز جسم N مرات ويحسب السرعة (px/s) والاتجاه و**الموقع المتوقع** بعد `predictMs` (least squares) — اضغط حيث سيكون العدو، لا حيث هو؛ يعمل كشرط في `game_loop` مع `$cx/$cy` = النقطة المتوقعة
+- 🔢 **`read_number`**: قيمة رقمية من OCR (نقاط/عملات/مؤقّت/HP) — يفهم `1,250` · `12.5K` · `03:45` · `87%` · أرقام عربية؛ `label="score"` يختار السطر الصحيح
+- ⏳ **`watch_value`**: انتظر حتى يتغير/يزيد/ينقص/يتجاوز الرقم حدًا — "هل حركتي سجّلت نقاط؟"، "المؤقّت وصل صفر؟"، "HP تحت 30؟" — بدل لقطات في حلقة
+- 📏 **`calibrate`**: اضغط وقس `reactedMs` عبر screen_hash — يتحقق أن الزرار يستجيب فعلًا وكم يستغرق قبل الاعتماد عليه
+- الـ `/monitor` يرسم مسار `track_object` ومواقع ألوان `sample_colors`
+
 **🎓 تعلّم بالممارسة + ردود فعل متعددة المسارات + مراقبة مرئية (v2.0)**
 - ⏺️ **`record_macro`**: `start=true name="open-level"` ثم الـ AI ينفّذ الخطوات عادي (tap, smart_tap, type_text, open_app...) ثم `start=false` → ماكرو جاهز للتكرار بـ `run_macro`. الفواصل الزمنية الحقيقية تُحفظ كـ `wait`؛ أدوات الملاحظة والاستدعاءات الداخلية لا تُسجّل
 - 🎹 **`auto_react` متعدد المسارات**: حتى 6 `lanes` مستقلة في حلقة واحدة على الموبايل (لعبة إيقاع: مسار لكل عمود، كل مسار بلونه ومنطقته وزرّه وcooldown خاص)؛ المسار ممكن يعمل **swipe** بدل tap ("اقفز لما تشوف عائقًا أحمر")؛ `stopColor` يوقف الحلقة فور ظهور لون GAME OVER
@@ -98,6 +106,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v2.1**: `sample_colors` (تكميم ألوان + تجاهل الرمادي)، `track_object` (عيّنات + انحدار خطي للسرعة)
 - **v2.0**: `auto_react` بمسارات متعددة (cooldown لكل مسار)، ردود فعل swipe، `stopColor`
 - **v1.9**: `find_objects` (connected-component labelling على شبكة مخفّضة)، `auto_react` (حلقة مراقبة→ضغط محلية حتى 40 ثانية / 200 ضغطة بـ cooldown)
 - **v1.5–v1.7**: كل أدوات Game Mode تُنفَّذ على الجهاز (توقيت دقيق بدون شبكة)، ML Kit OCR محلي (بدون إنترنت)، بث إطارات JPEG (`stream`) يتوقف تلقائيًا عند غياب المشاهدين
@@ -182,7 +191,7 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **66 أداة** مباشرة:
+بعدها النموذج يرى **71 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
 - عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
@@ -297,8 +306,11 @@ python agent_runner.py shell                                     # REPL: tap 540
   "lanes":[{"color":"#00e676","region":{"x":270,"y":1900,"w":270,"h":60},"tapX":405,"tapY":2200},
            {"color":"#ff1744","region":{"x":400,"y":1200,"w":280,"h":400},"swipe":{"dx":0,"dy":-600}}],
   "stopColor":"#212121","stopRegion":{"x":0,"y":0,"w":1080,"h":300},"maxTriggers":120,"timeoutMs":40000}
+// v2.1
+{"type":"sample_colors","maxColors":8,"quant":32}
+{"type":"track_object","color":"#ff2020","samples":5,"intervalMs":120,"predictMs":300}
 ```
-> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro` · `ocr/taptext/waittext` · `colors` · `stats` · `live` · **v1.8:** `look [grid] [colors]` · `press "Skip" [x y]` · `popups` · `until <action> <observation>` · `history` · **v1.9:** `objects '#rrggbb'` · `react '#rrggbb' [region] [n] [ms]` · `label "name"` · `which` · `screens` · **v2.0:** `rec start <name>` / `rec stop` / `rec status` / `rec cancel` · `react2 '<json>'`.
+> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro` · `ocr/taptext/waittext` · `colors` · `stats` · `live` · **v1.8:** `look [grid] [colors]` · `press "Skip" [x y]` · `popups` · `until <action> <observation>` · `history` · **v1.9:** `objects '#rrggbb'` · `react '#rrggbb' [region] [n] [ms]` · `label "name"` · `which` · `screens` · **v2.0:** `rec start <name>` / `rec stop` / `rec status` / `rec cancel` · `react2 '<json>'` · **v2.1:** `palette` · `track '#rrggbb'` · `num [region] [label]` · `watchnum <cond> [value]` · `calib X Y`.
 الرد: `{"id":"...","ok":true,"durationMs":42,"queuedMs":310}` أو `{"ok":false,"error":"device offline"}` (HTTP 502). `429` عند تجاوز الحد.
 
 ### الأمان (v1.4)
@@ -348,7 +360,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh   # 332 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh   # 381 checks green
 ```
 
 ## Data Architecture
@@ -373,6 +385,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-07 (v2.0 — record_macro learn-by-doing, auto_react lanes/swipe/stopColor, live overlays + screenName/REC badges in /monitor; 66 tools; 332 e2e checks; Android 2.0.0)
+- **Last Updated**: 2026-09-07 (v2.1 — sample_colors, track_object velocity/prediction, read_number, watch_value, calibrate; 71 tools; 381 e2e checks; Android 2.1.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
