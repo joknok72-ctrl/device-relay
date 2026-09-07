@@ -348,6 +348,135 @@ export const TOOLS: ToolDef[] = [
       required: [],
     },
   },
+  // ------------------------------------------------------------ v1.6 smarter perception + reflexes
+  {
+    name: 'screen_diff',
+    description:
+      'What CHANGED since the last screen_diff/act call? Compares the current frame with the previous one on-device and returns the changed regions (bounding boxes in original px, % of screen changed). ' +
+      'Use after an action to see exactly where the game reacted (enemy spawned, popup appeared) without downloading a full image. First call just stores a baseline.',
+    parameters: {
+      type: 'object',
+      properties: {
+        threshold: { type: 'integer', description: 'Per-pixel grey difference to count as changed (4-128, default 32)', minimum: 4, maximum: 128, default: 32 },
+        cell: { type: 'integer', description: 'Grid cell size in px for change map (20-400, default 60)', minimum: 20, maximum: 400, default: 60 },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'watch_color',
+    description:
+      'REFLEX: block on the phone until a colour APPEARS (appear=true) or DISAPPEARS (appear=false) in region, polling every intervalMs (default 150) up to timeoutMs (default 5000). Returns where it was found (cx,cy,bounds,count) and how long it took. ' +
+      'Perfect for "wait for the green GO button", "wait until the red enemy shows up in the lane", "wait until the loading bar is gone". Far faster and cheaper than screenshot polling.',
+    parameters: {
+      type: 'object',
+      properties: {
+        color: { type: 'string', description: '#RRGGBB' },
+        tolerance: { type: 'integer', description: '0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
+        region: { type: 'object', description: '{x,y,w,h} to watch (default whole screen)' },
+        appear: { type: 'boolean', description: 'true = wait for it to appear (default), false = wait for it to vanish', default: true },
+        minCount: { type: 'integer', description: 'Min matching pixels to count as present (default 20)', minimum: 1, default: 20 },
+        timeoutMs: { type: 'integer', description: 'Max wait (default 5000, max 30000)', minimum: 200, maximum: 30000, default: 5000 },
+        intervalMs: { type: 'integer', description: 'Poll interval (default 150)', minimum: 50, maximum: 2000, default: 150 },
+      },
+      required: ['color'],
+    },
+  },
+  {
+    name: 'wait_pixel',
+    description: 'REFLEX for a single pixel: wait until the pixel at (x,y) matches color (appear=true) or stops matching (appear=false). Ideal for cooldown indicators, a specific button turning active, a lane becoming clear.',
+    parameters: {
+      type: 'object',
+      properties: {
+        x: coord('X'), y: coord('Y'), color: { type: 'string', description: '#RRGGBB' },
+        tolerance: { type: 'integer', description: '0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
+        appear: { type: 'boolean', description: 'default true', default: true },
+        timeoutMs: { type: 'integer', description: 'default 5000', minimum: 200, maximum: 30000, default: 5000 },
+        intervalMs: { type: 'integer', description: 'default 100', minimum: 50, maximum: 2000, default: 100 },
+      },
+      required: ['x', 'y', 'color'],
+    },
+  },
+  {
+    name: 'tap_color',
+    description: 'Find a colour (like find_color) and immediately tap its centre in ONE round-trip. Optional offsetX/offsetY shift the tap. Returns whether it was found and where it tapped. Great for "tap the green button", "collect the yellow coin".',
+    parameters: {
+      type: 'object',
+      properties: {
+        color: { type: 'string', description: '#RRGGBB' },
+        tolerance: { type: 'integer', description: '0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
+        region: { type: 'object', description: 'Optional {x,y,w,h}' },
+        minCount: { type: 'integer', description: 'Min matching pixels required (default 20)', minimum: 1, default: 20 },
+        offsetX: { type: 'integer', description: 'Shift tap horizontally (default 0)', default: 0 },
+        offsetY: { type: 'integer', description: 'Shift tap vertically (default 0)', default: 0 },
+      },
+      required: ['color'],
+    },
+  },
+  {
+    name: 'find_image',
+    description:
+      'Template matching on-device: locate a small reference image (base64 PNG/JPEG you captured earlier with capture_screen region=..., <=300KB) inside the current screen. Returns matches with score, centre and bounds. ' +
+      'Use for icons/buttons/sprites that colour alone cannot identify. Crop the template tightly and at original resolution for best results. threshold 0.5-1 (default 0.85).',
+    parameters: {
+      type: 'object',
+      properties: {
+        image: { type: 'string', description: 'base64 template image' },
+        threshold: { type: 'number', description: 'Min similarity 0.5-1 (default 0.85)', minimum: 0.5, maximum: 1, default: 0.85 },
+        region: { type: 'object', description: 'Search area {x,y,w,h} (default whole screen)' },
+        maxResults: { type: 'integer', description: 'default 5', minimum: 1, maximum: 20, default: 5 },
+      },
+      required: ['image'],
+    },
+  },
+  {
+    name: 'game_loop',
+    description:
+      'Run a tight perception\u2192action loop ON THE SERVER for up to iterations rounds (max 60) or maxMs (max 55000): each round evaluates `when` (a find_color/get_pixels/wait_pixel/watch_color/screen_diff observation), and if it matches runs `then` (any input tool), else optionally `else`. ' +
+      'Stops when stopWhen (another observation) matches, or on the first failure. Returns a compact per-round trace. Use for: "while the red enemy is visible, tap it", "collect coins until the timer pixel turns grey". ' +
+      'Rule of thumb: prefer game_loop over issuing 20 separate calls.',
+    parameters: {
+      type: 'object',
+      properties: {
+        when: { type: 'object', description: '{name, arguments} observation; matches when result.found===true / pixel colour matches / changedPct>=minChange' },
+        then: { type: 'object', description: '{name, arguments} input tool to run when `when` matches. Use "$cx"/"$cy" strings in arguments to inject the found centre.' },
+        else: { type: 'object', description: 'Optional {name, arguments} to run when `when` does not match' },
+        stopWhen: { type: 'object', description: 'Optional observation; loop ends when it matches' },
+        iterations: { type: 'integer', description: 'Max rounds (default 20, max 60)', minimum: 1, maximum: 60, default: 20 },
+        intervalMs: { type: 'integer', description: 'Pause between rounds (default 200)', minimum: 0, maximum: 5000, default: 200 },
+        maxMs: { type: 'integer', description: 'Hard time budget (default 30000, max 55000)', minimum: 1000, maximum: 55000, default: 30000 },
+        minChange: { type: 'number', description: 'For screen_diff observations: changedPct needed to count as a match (default 2)', default: 2 },
+      },
+      required: ['when', 'then'],
+    },
+  },
+  {
+    name: 'save_macro',
+    description: 'Save a named, replayable sequence of tool calls for THIS device (e.g. "open_game_and_skip_intro", "collect_daily_reward"). Steps are {name, arguments}. Overwrites an existing macro with the same name. Future sessions see macro names in the bootstrap.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'kebab-case name' },
+        steps: { type: 'array', description: '[{name, arguments}, ...] max 25' },
+        description: { type: 'string', description: 'What it does (shown in bootstrap)' },
+      },
+      required: ['name', 'steps'],
+    },
+  },
+  {
+    name: 'run_macro',
+    description: 'Replay a saved macro by name (runs like batch: stops at first failure unless continueOnError). Returns per-step results.',
+    parameters: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Macro name' }, continueOnError: { type: 'boolean', default: false } },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'list_macros',
+    description: 'List saved macros for this device (name, description, steps count, runs). Pass delete=name to remove one.',
+    parameters: { type: 'object', properties: { delete: { type: 'string', description: 'Macro name to delete' } }, required: [] },
+  },
   {
     name: 'remember',
     description:
@@ -384,7 +513,7 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros'; error?: string } {
   switch (name) {
     case 'capture_screen': return { action: { type: 'screenshot', maxWidth: args.maxWidth, quality: args.quality, format: args.format, grid: args.grid, region: args.region } }
     case 'tap_sequence': return { action: { type: 'tap_sequence', points: args.points } }
@@ -394,6 +523,15 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'get_pixels': return { action: { type: 'pixel', points: args.points } }
     case 'find_color': return { action: { type: 'find_color', color: args.color, tolerance: args.tolerance, region: args.region } }
     case 'screen_hash': return { action: { type: 'screen_hash' } } // internal (used by wait_for_screen)
+    case 'screen_diff': return { action: { type: 'screen_diff', threshold: args.threshold, cell: args.cell } }
+    case 'watch_color': return { action: { type: 'watch_color', color: args.color, tolerance: args.tolerance, region: args.region, appear: args.appear, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs, minCount: args.minCount } }
+    case 'wait_pixel': return { action: { type: 'wait_pixel', x: args.x, y: args.y, color: args.color, tolerance: args.tolerance, appear: args.appear, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs } }
+    case 'find_image': return { action: { type: 'find_image', image: args.image, threshold: args.threshold, region: args.region, maxResults: args.maxResults } }
+    case 'tap_color': return { special: 'tap_color' }
+    case 'game_loop': return { special: 'game_loop' }
+    case 'save_macro': return { special: 'save_macro' }
+    case 'run_macro': return { special: 'run_macro' }
+    case 'list_macros': return { special: 'list_macros' }
     case 'act_and_see': return { special: 'act_and_see' }
     case 'wait_for_screen': return { special: 'wait_for_screen' }
     case 'remember': return { special: 'remember' }
@@ -531,5 +669,8 @@ export function openapiSpec(serverUrl: string) {
 /** Tools that only observe (allowed for read-only tokens). */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
-  'get_pixels', 'find_color', 'wait_for_screen', 'recall',
+  'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
 ])
+
+/** Observation tools usable as `when`/`stopWhen` in game_loop. */
+export const OBSERVATION_TOOLS: ReadonlySet<string> = new Set(['find_color', 'get_pixels', 'wait_pixel', 'watch_color', 'screen_diff', 'find_image', 'wait_for_element'])
