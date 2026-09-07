@@ -548,11 +548,79 @@ export const TOOLS: ToolDef[] = [
       required: ['enabled'],
     },
   },
+  // ---------------------------------------------------------------- v1.9 object detection, reflex loop, screen memory
+  {
+    name: 'find_objects',
+    description:
+      'Locate SEPARATE objects of one colour (connected blobs) instead of a single averaged centre: returns each blob with cx, cy, bounds, area, sorted by area desc. ' +
+      'Use it when several enemies / gems / bubbles / cards of the same colour are on screen and you need to tap a specific one (e.g. the biggest, the lowest, the left-most). ' +
+      'find_color only gives ONE centre (the average of all of them, often in empty space); find_objects gives each. Runs on the phone, ~100ms.',
+    parameters: {
+      type: 'object',
+      properties: {
+        color: { type: 'string', description: '"#rrggbb" target colour' },
+        tolerance: { type: 'integer', description: 'Per-channel tolerance 0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
+        region: { type: 'object', description: '{x,y,w,h} search area in original pixels' },
+        minSize: { type: 'integer', description: 'Ignore blobs smaller than this many px in width/height (default 12)', minimum: 1, maximum: 2000, default: 12 },
+        maxResults: { type: 'integer', description: '1-40 (default 10)', minimum: 1, maximum: 40, default: 10 },
+      },
+      required: ['color'],
+    },
+  },
+  {
+    name: 'auto_react',
+    description:
+      'REFLEX MODE for fast games: the PHONE itself watches for a colour and taps the moment it appears, repeatedly, with no network round-trip (latency ~50-100ms instead of 500-1000ms). ' +
+      'Each time the colour is present (>= minCount px) it taps at the blob centre (+ tapOffsetX/Y), or at a fixed tapX/tapY if given, then waits cooldownMs. Stops after maxTriggers taps or timeoutMs. ' +
+      'Perfect for: whack-a-mole, tap-the-green-tile, rhythm notes reaching a line (use a thin region), catching falling items, "tap when bar turns green" mini-games. ' +
+      'Returns triggers (count), taps[] with timestamps and positions, and why it stopped.',
+    parameters: {
+      type: 'object',
+      properties: {
+        color: { type: 'string', description: '"#rrggbb" trigger colour' },
+        tolerance: { type: 'integer', description: '0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
+        region: { type: 'object', description: '{x,y,w,h} watch area — keep it small for speed (e.g. the hit line)' },
+        minCount: { type: 'integer', description: 'Min matching pixels to count as present (default 20)', minimum: 1, default: 20 },
+        tapOffsetX: { type: 'integer', description: 'Offset added to the blob centre x when tapping (default 0)' },
+        tapOffsetY: { type: 'integer', description: 'Offset added to the blob centre y (default 0)' },
+        tapX: { type: 'integer', description: 'Tap a fixed x instead of the blob centre (needs tapY)', minimum: 0 },
+        tapY: { type: 'integer', description: 'Tap a fixed y instead of the blob centre', minimum: 0 },
+        maxTriggers: { type: 'integer', description: 'Stop after this many taps 1-200 (default 20)', minimum: 1, maximum: 200, default: 20 },
+        timeoutMs: { type: 'integer', description: 'Total time budget 500-40000 (default 10000)', minimum: 500, maximum: 40000, default: 10000 },
+        intervalMs: { type: 'integer', description: 'Poll interval 30-2000 (default 80)', minimum: 30, maximum: 2000, default: 80 },
+        cooldownMs: { type: 'integer', description: 'Pause after each tap 0-5000 (default 250) so one target is not tapped twice', minimum: 0, maximum: 5000, default: 250 },
+      },
+      required: ['color'],
+    },
+  },
+  {
+    name: 'label_screen',
+    description:
+      'Teach the relay what the CURRENT screen is called (e.g. "main-menu", "level-complete", "game-over", "shop", "ad-overlay"). ' +
+      'Stores a perceptual fingerprint + a few OCR words, tagged with the current app. Later identify_screen (and observe.screenName) tells you which labelled screen you are on without spending a screenshot on reasoning. ' +
+      'Label each distinct screen once when you first understand it. Max 60 per device.',
+    parameters: { type: 'object', properties: { name: { type: 'string', description: 'Short label, a-z 0-9 - _' } }, required: ['name'] },
+  },
+  {
+    name: 'identify_screen',
+    description:
+      'Which labelled screen is showing now? Compares the current frame with every label saved by label_screen (image similarity + OCR word overlap) and returns the best match with a confidence 0-1, plus the runner-up. ' +
+      'Returns {screenName:null} when nothing is similar enough — that means a NEW screen: look at it and label it. Pass delete="name" (or delete="*") to remove labels; pass list=true to list labels only.',
+    parameters: {
+      type: 'object',
+      properties: {
+        minConfidence: { type: 'number', description: '0-1 (default 0.72)', minimum: 0, maximum: 1, default: 0.72 },
+        delete: { type: 'string', description: 'Label to delete, or "*" for all' },
+        list: { type: 'boolean', description: 'Only list labels (no capture)' },
+      },
+      required: [],
+    },
+  },
   // ---------------------------------------------------------------- v1.8 composite intelligence
   {
     name: 'observe',
     description:
-      'ONE call = full situational awareness: screenshot (optional grid/region) + OCR text lines with coordinates + current app + optional colour search + what changed since the last observe. ' +
+      'ONE call = full situational awareness: screenshot (optional grid/region) + OCR text lines with coordinates + current app + optional colour search + what changed since the last observe + screenName (which labelled screen this is, see label_screen). ' +
       'All parts run in parallel on the phone, so it costs about the same as a screenshot. Use it as your default "look" in games and unknown apps instead of 3-4 separate calls. ' +
       'Parts that the phone cannot do (e.g. OCR on an old app version) are reported as {ok:false} without failing the whole call.',
     parameters: {
@@ -566,6 +634,7 @@ export const TOOLS: ToolDef[] = [
         ocr: { type: 'boolean', description: 'Include OCR text (default true)', default: true },
         image: { type: 'boolean', description: 'Include the screenshot image (default true; false = text/colours only, much smaller)', default: true },
         diff: { type: 'boolean', description: 'Include screen_diff vs previous call (default true)', default: true },
+        identify: { type: 'boolean', description: 'Include screenName from label_screen fingerprints (default true)', default: true },
       },
       required: [],
     },
@@ -666,8 +735,12 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen'; error?: string } {
   switch (name) {
+    case 'find_objects': return { action: { type: 'find_objects', color: args.color, tolerance: args.tolerance, region: args.region, minSize: args.minSize, maxResults: args.maxResults } }
+    case 'auto_react': return { action: { type: 'auto_react', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, tapOffsetX: args.tapOffsetX, tapOffsetY: args.tapOffsetY, tapX: args.tapX, tapY: args.tapY, maxTriggers: args.maxTriggers, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs, cooldownMs: args.cooldownMs } }
+    case 'label_screen': return { special: 'label_screen' }
+    case 'identify_screen': return { special: 'identify_screen' }
     case 'observe': return { special: 'observe' }
     case 'smart_tap': return { special: 'smart_tap' }
     case 'do_until': return { special: 'do_until' }
@@ -818,7 +891,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '1.8.0',
+      version: '1.9.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
@@ -835,8 +908,8 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
-  'observe', 'recent_actions',
+  'observe', 'recent_actions', 'find_objects', 'identify_screen',
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */
-export const OBSERVATION_TOOLS: ReadonlySet<string> = new Set(['find_color', 'find_colors', 'get_pixels', 'wait_pixel', 'watch_color', 'screen_diff', 'find_image', 'wait_for_element', 'read_text', 'wait_for_text'])
+export const OBSERVATION_TOOLS: ReadonlySet<string> = new Set(['find_color', 'find_colors', 'get_pixels', 'wait_pixel', 'watch_color', 'screen_diff', 'find_image', 'wait_for_element', 'read_text', 'wait_for_text', 'find_objects', 'identify_screen'])

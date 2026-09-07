@@ -176,6 +176,29 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       const region = parseRegion(a.region); if (region) action.region = region
       return { action }
     }
+    case 'find_objects': {
+      if (typeof a.color !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(a.color.trim())) return { error: 'find_objects requires color "#RRGGBB"' }
+      const action: Action = { type: 'find_objects', color: '#' + a.color.trim().replace('#', '').toLowerCase(), tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24, minSize: isNum(a.minSize) ? clamp(Math.round(a.minSize), 1, 2000) : 12, maxResults: isNum(a.maxResults) ? clamp(Math.round(a.maxResults), 1, 40) : 10 }
+      const region = parseRegion(a.region); if (region) action.region = region
+      return { action }
+    }
+    case 'auto_react': {
+      if (typeof a.color !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(a.color.trim())) return { error: 'auto_react requires color "#RRGGBB"' }
+      const action: Action = {
+        type: 'auto_react', color: '#' + a.color.trim().replace('#', '').toLowerCase(),
+        tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24,
+        minCount: isNum(a.minCount) ? clamp(Math.round(a.minCount), 1, 1_000_000) : 20,
+        maxTriggers: isNum(a.maxTriggers) ? clamp(Math.round(a.maxTriggers), 1, 200) : 20,
+        timeoutMs: isNum(a.timeoutMs) ? clamp(Math.round(a.timeoutMs), 500, 40_000) : 10_000,
+        intervalMs: isNum(a.intervalMs) ? clamp(Math.round(a.intervalMs), 30, 2000) : 80,
+        cooldownMs: isNum(a.cooldownMs) ? clamp(Math.round(a.cooldownMs), 0, 5000) : 250,
+      }
+      if (isNum(a.tapOffsetX)) action.tapOffsetX = Math.round(a.tapOffsetX)
+      if (isNum(a.tapOffsetY)) action.tapOffsetY = Math.round(a.tapOffsetY)
+      if (isNum(a.tapX) && isNum(a.tapY)) { action.tapX = Math.round(a.tapX); action.tapY = Math.round(a.tapY) }
+      const region = parseRegion(a.region); if (region) action.region = region
+      return { action }
+    }
     case 'stream': {
       const action: Action = { type: 'stream', enabled: a.enabled === true }
       if (isNum(a.fps)) action.fps = clamp(a.fps, 0.2, 4)

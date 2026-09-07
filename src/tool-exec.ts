@@ -98,6 +98,8 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'do_until') return doUntil(env, deviceId, args, opts)
   if (mapped.special === 'dismiss_popups') return dismissPopups(env, deviceId, args, opts)
   if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
+  if (mapped.special === 'label_screen') return labelScreen(env, deviceId, args, opts)
+  if (mapped.special === 'identify_screen') return identifyScreen(env, deviceId, args, opts)
 
   let actionInput: Record<string, unknown> | undefined = mapped.action
   if (mapped.special === 'scroll') {
@@ -280,6 +282,7 @@ async function observe(env: Bindings, deviceId: string, args: Record<string, unk
   if (wantOcr) tasks.push(executeTool(env, deviceId, 'read_text', args.region ? { region: args.region } : {}, opts).then((r) => ['ocr', r]))
   if (colors.length) tasks.push(executeTool(env, deviceId, 'find_colors', { colors, tolerance: args.tolerance, region: args.region }, opts).then((r) => ['colors', r]))
   if (wantDiff) tasks.push(executeTool(env, deviceId, 'screen_diff', {}, opts).then((r) => ['diff', r]))
+  if (args.identify !== false) tasks.push(identifyScreen(env, deviceId, {}, opts).then((r) => ['screen', r]))
   const settled = await Promise.all(tasks.map((p) => p.catch((e) => ['error', { ok: false, error: String(e) }] as [string, ToolResult])))
   const parts: Record<string, ToolResult> = {}
   for (const [k, r] of settled) parts[k] = r
@@ -301,6 +304,10 @@ async function observe(env: Bindings, deviceId: string, args: Record<string, unk
   if (parts.diff) {
     const d = parts.diff.data as { changedPct?: number; regions?: unknown[]; baseline?: boolean } | undefined
     out.changed = parts.diff.ok ? { pct: d?.changedPct ?? 0, regions: (d?.regions ?? []).slice(0, 6), baseline: d?.baseline === true } : { ok: false, error: parts.diff.error }
+  }
+  if (parts.screen) {
+    out.screenName = parts.screen.ok ? (parts.screen.screenName as string | null) : null
+    if (parts.screen.ok && parts.screen.confidence !== undefined && Number(parts.screen.count) > 0) out.screenConfidence = parts.screen.confidence
   }
   // the call is ok if at least the screenshot (or, image=false, the OCR/app) worked
   out.ok = wantImage ? !!parts.shot?.ok : (parts.ocr?.ok ?? parts.app?.ok ?? false)
@@ -439,6 +446,76 @@ async function dismissPopups(env: Bindings, deviceId: string, args: Record<strin
   return { ok: true, dismissed: dismissed.length, actions: dismissed, durationMs: Date.now() - t0 }
 }
 
+// ---------------------------------------------------------------- v1.9 screen memory
+
+interface ScreenRec { name: string; hash: string; words: string[]; app?: string; ts: number }
+const STOP_WORDS = new Set(['the', 'and', 'for', 'you', 'your', 'with', 'this', 'that', 'are', 'not', 'all'])
+function keyWords(lines: OcrLine[]): string[] {
+  const seen = new Set<string>(); const out: string[] = []
+  for (const l of lines) for (const w of l.text.toLowerCase().split(/[^a-z\u0600-\u06ff]+/)) {
+    if (w.length < 3 || STOP_WORDS.has(w) || seen.has(w)) continue
+    seen.add(w); out.push(w); if (out.length >= 12) return out
+  }
+  return out
+}
+/** similarity of two equal-length hex hashes: 1 - hamming/bits */
+function hashSimilarity(a: string, b: string): number {
+  if (!a || !b || a.length !== b.length) return 0
+  let diff = 0
+  for (let i = 0; i < a.length; i++) { let x = (parseInt(a[i], 16) ^ parseInt(b[i], 16)) & 0xf; while (x) { diff += x & 1; x >>= 1 } }
+  return 1 - diff / (a.length * 4)
+}
+function wordOverlap(a: string[], b: string[]): number {
+  if (!a.length || !b.length) return 0
+  const s = new Set(a); let n = 0
+  for (const w of b) if (s.has(w)) n++
+  return n / Math.max(a.length, b.length)
+}
+/** Fingerprint the current screen: perceptual hash + OCR key words (OCR failure tolerated). */
+async function fingerprint(env: Bindings, deviceId: string, opts: ExecOptions): Promise<{ ok: boolean; error?: string; hash: string; words: string[]; app: string; ocrOk: boolean }> {
+  const [h, o, app] = await Promise.all([hashOf(env, deviceId), ocrLines(env, deviceId, undefined, opts), currentPackage(env, deviceId)])
+  if (!h.ok || !h.hash) return { ok: false, error: h.error ?? 'screen_hash failed (needs Android app v1.5+)', hash: '', words: [], app, ocrOk: false }
+  return { ok: true, hash: h.hash, words: o.ok ? keyWords(o.lines) : [], app, ocrOk: o.ok }
+}
+function scoreScreens(screens: ScreenRec[], fp: { hash: string; words: string[]; app: string }) {
+  return screens.map((s) => {
+    const img = hashSimilarity(s.hash, fp.hash)
+    const txt = wordOverlap(s.words, fp.words)
+    const useTxt = s.words.length > 0 && fp.words.length > 0
+    // image similarity of a random different screen is ~0.5-0.6; map 0.6..1 -> 0..1
+    const imgNorm = Math.max(0, (img - 0.6) / 0.4)
+    let confidence = useTxt ? imgNorm * 0.6 + txt * 0.4 : imgNorm
+    if (s.app && fp.app && s.app !== fp.app) confidence *= 0.5
+    return { name: s.name, confidence: Number(confidence.toFixed(3)), image: Number(img.toFixed(3)), text: Number(txt.toFixed(3)), app: s.app }
+  }).sort((a, b) => b.confidence - a.confidence)
+}
+async function labelScreen(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const name = String(args.name ?? '').trim()
+  if (!name) return { ok: false, error: 'label_screen requires name' }
+  const fp = await fingerprint(env, deviceId, opts)
+  if (!fp.ok) return { ok: false, error: fp.error }
+  const r = await room(env, deviceId).fetch(`https://do/screens?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, hash: fp.hash, words: fp.words, app: fp.app || undefined }) })
+  const out = (await r.json()) as ToolResult
+  return { ...out, words: fp.words, app: fp.app || undefined, ocr: fp.ocrOk }
+}
+async function identifyScreen(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  if (typeof args.delete === 'string' && args.delete) {
+    const q = args.delete === '*' ? '' : `&name=${encodeURIComponent(args.delete)}`
+    return (await (await room(env, deviceId).fetch(`https://do/screens?deviceId=${deviceId}${q}`, { method: 'DELETE' })).json()) as ToolResult
+  }
+  const { screens } = (await (await room(env, deviceId).fetch(`https://do/screens?deviceId=${deviceId}`)).json()) as { screens: ScreenRec[] }
+  const labels = screens.map((s) => ({ name: s.name, app: s.app, words: s.words.slice(0, 5), ts: s.ts }))
+  if (args.list === true) return { ok: true, count: labels.length, labels }
+  if (!screens.length) return { ok: true, screenName: null, confidence: 0, count: 0, hint: 'no labels yet — use label_screen on each distinct screen' }
+  const fp = await fingerprint(env, deviceId, opts)
+  if (!fp.ok) return { ok: false, error: fp.error }
+  const minConf = Math.min(Math.max(Number(args.minConfidence ?? 0.72) || 0.72, 0), 1)
+  const ranked = scoreScreens(screens, fp)
+  const best = ranked[0]
+  const hit = best && best.confidence >= minConf
+  return { ok: true, screenName: hit ? best.name : null, confidence: best?.confidence ?? 0, best, runnerUp: ranked[1], count: screens.length, app: fp.app || undefined, ...(hit ? {} : { hint: 'no confident match — this may be a new screen; label_screen it' }) }
+}
+
 /** recent_actions: compact view of the DO log for the agent. */
 async function recentActions(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
   const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100)
@@ -481,6 +558,8 @@ function observationMatched(name: string, r: ToolResult, minChange: number): [bo
     case 'read_text': { const lines = (d.lines as { cx: number; cy: number }[] | undefined) ?? []; return [lines.length > 0, lines[0]?.cx, lines[0]?.cy] }
     case 'wait_for_text': { const m = r.match as { cx: number; cy: number } | undefined; return [r.found === true, m?.cx, m?.cy] }
     case 'wait_for_element': { const e = r.element as { cx: number; cy: number } | undefined; return [r.found === true, e?.cx, e?.cy] }
+    case 'find_objects': { const o = (d.objects as { cx: number; cy: number }[] | undefined) ?? []; return [o.length > 0, o[0]?.cx, o[0]?.cy] }
+    case 'identify_screen': return [typeof r.screenName === 'string' && !!r.screenName, undefined, undefined]
     default: return [false, undefined, undefined]
   }
 }

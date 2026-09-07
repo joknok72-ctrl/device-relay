@@ -56,11 +56,16 @@ export type Action =
   | { type: 'read_text'; region?: Region; lang?: string }
   | { type: 'find_colors'; colors: string[]; tolerance?: number; region?: Region }
   | { type: 'stream'; enabled: boolean; fps?: number; maxWidth?: number; quality?: number }
+  // v1.9
+  | { type: 'find_objects'; color: string; tolerance?: number; region?: Region; minSize?: number; maxResults?: number }
+  | { type: 'auto_react'; color: string; tolerance?: number; region?: Region; minCount?: number; tapOffsetX?: number; tapOffsetY?: number; tapX?: number; tapY?: number; maxTriggers?: number; timeoutMs?: number; intervalMs?: number; cooldownMs?: number }
 
 export interface Point { x: number; y: number }
 export interface SeqPoint extends Point { delayMs?: number; durationMs?: number }
 export interface Region { x: number; y: number; w: number; h: number }
 export interface Note { text: string; ts: number; /** package name of the app open when the note was saved */ app?: string }
+/** Named screen fingerprint: 112-bit perceptual hash (hex) + a few OCR words, used by identify_screen. */
+export interface ScreenLabel { name: string; hash: string; words: string[]; app?: string; ts: number }
 /** Named, replayable tool sequence stored per device. */
 export interface Macro { name: string; steps: { name: string; arguments?: Record<string, unknown> }[]; description?: string; ts: number; runs?: number }
 
@@ -75,6 +80,7 @@ export function actionTimeoutMs(a: Action): number {
     case 'drag': return base + (a.duration ?? 600) + (a.holdMs ?? 500)
     case 'watch_color': case 'wait_pixel': return base + (a.timeoutMs ?? 5000)
     case 'read_text': return 25_000
+    case 'auto_react': return base + (a.timeoutMs ?? 10_000)
     default: return base
   }
 }
@@ -87,13 +93,14 @@ export const ACTION_TYPES = [
   'tap_sequence', 'multi_tap', 'swipe_path', 'repeat_tap', 'pixel', 'find_color', 'screen_hash',
   'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
   'read_text', 'find_colors', 'stream',
+  'find_objects', 'auto_react',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */
 export const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'screenshot', 'ping', 'ui_dump', 'list_apps', 'current_app', 'get_notifications', 'device_info',
   'pixel', 'find_color', 'screen_hash', 'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
-  'read_text', 'find_colors', 'stream',
+  'read_text', 'find_colors', 'stream', 'find_objects',
 ])
 
 /** Message sent server -> phone */

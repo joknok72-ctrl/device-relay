@@ -1,10 +1,11 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, Macro, Note, PhoneMessage } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, Macro, Note, PhoneMessage, ScreenLabel } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
 const MAX_NOTES = 40
 const MAX_MACROS = 30
+const MAX_SCREENS = 60
 const MAX_QUEUE = 32
 
 export interface CommandResult {
@@ -45,6 +46,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private notes: Note[] = []
   /** Named replayable tool sequences saved by agents. */
   private macros: Macro[] = []
+  /** Named screen fingerprints (perceptual hash + optional OCR words) for identify_screen. */
+  private screens: ScreenLabel[] = []
 
   private inputBusy = false
   private inputQueue: Array<() => void> = []
@@ -61,6 +64,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (notes) this.notes = notes
       const macros = await ctx.storage.get<Macro[]>('macros')
       if (macros) this.macros = macros
+      const screens = await ctx.storage.get<ScreenLabel[]>('screens')
+      if (screens) this.screens = screens
     })
   }
 
@@ -169,6 +174,26 @@ export class DeviceRoom extends DurableObject<Bindings> {
         this.macros = name ? this.macros.filter((x) => x.name !== name) : []
         await this.ctx.storage.put('macros', this.macros)
         return Response.json({ ok: true, removed: before - this.macros.length })
+      }
+    }
+    if (url.pathname.endsWith('/screens')) {
+      if (request.method === 'GET') return Response.json({ screens: this.screens })
+      if (request.method === 'POST') {
+        const s = (await request.json()) as Partial<ScreenLabel>
+        const name = String(s.name ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 40)
+        if (!name || typeof s.hash !== 'string' || s.hash.length < 8) return Response.json({ ok: false, error: 'name and hash required' }, { status: 400 })
+        const rec: ScreenLabel = { name, hash: s.hash, words: (s.words ?? []).slice(0, 12), app: s.app, ts: Date.now() }
+        const i = this.screens.findIndex((x) => x.name === name)
+        if (i >= 0) this.screens[i] = rec; else { this.screens.push(rec); if (this.screens.length > MAX_SCREENS) this.screens.shift() }
+        await this.ctx.storage.put('screens', this.screens)
+        return Response.json({ ok: true, saved: name, count: this.screens.length })
+      }
+      if (request.method === 'DELETE') {
+        const name = url.searchParams.get('name')
+        const before = this.screens.length
+        this.screens = name ? this.screens.filter((x) => x.name !== name) : []
+        await this.ctx.storage.put('screens', this.screens)
+        return Response.json({ ok: true, removed: before - this.screens.length })
       }
     }
     if (url.pathname.endsWith('/macro-ran') && request.method === 'POST') {
