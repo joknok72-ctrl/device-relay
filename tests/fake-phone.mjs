@@ -9,13 +9,14 @@ const FAKE_SCREEN = readFileSync(join(here, 'fake-screen.b64'), 'utf8').trim()
 const ws = new WebSocket(`${base}/api/ws/phone/${deviceId}`, { headers: { Authorization: `Bearer ${token}` } })
 ws.onopen = () => {
   console.log('[phone] connected')
-  ws.send(JSON.stringify({ kind: 'hello', model: 'Pixel 8 (fake)', android: '15', appVersion: '1.0.0', screen: { w: 1080, h: 2400 }, accessibilityEnabled: true }))
+  ws.send(JSON.stringify({ kind: 'hello', model: 'Pixel 8 (fake)', android: '15', appVersion: '1.4.0', screen: { w: 1080, h: 2400 }, accessibilityEnabled: true, battery: 77, charging: false }))
 }
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data)
   if (m.kind !== 'command') return
   console.log('[phone] got command', m.action)
   const t0 = Date.now()
+  const delay = ['tap','swipe','drag','pinch','long_press','type_text'].includes(m.action.type) ? 300 : 50
   setTimeout(() => {
     const res = { kind: 'result', id: m.id, ok: true, durationMs: Date.now() - t0 }
     const a = m.action
@@ -37,8 +38,15 @@ ws.onmessage = (ev) => {
     if (a.type === 'open_app') res.data = { package: 'com.android.chrome', label: 'Chrome' }
     if (a.type === 'list_apps') res.data = [{ package: 'com.android.chrome', label: 'Chrome' }, { package: 'com.android.settings', label: 'Settings' }]
     if (a.type === 'current_app') res.data = { package: 'com.example.spacerunner', label: 'Space Runner' }
+    if (a.type === 'get_notifications') res.data = { count: 2, notifications: [
+      { package: 'com.google.android.apps.messaging', app: 'Messages', title: 'Bank', text: 'Your OTP is 482913', time: Date.now() - 20000 },
+      { package: 'com.whatsapp', app: 'WhatsApp', title: 'Ali', text: 'hey, are you there?', time: Date.now() - 60000 } ] }
+    if (a.type === 'device_info') res.data = { battery: 77, charging: false, screenOn: true, locked: false, orientation: 'portrait', network: 'wifi', wifiSsid: 'HomeNet', freeStorageMb: 12000, package: 'com.example.spacerunner' }
+    if (a.type === 'set_clipboard') res.data = { copied: a.text.length, pasted: !!a.paste }
+    if (a.type === 'scroll_element') res.data = { scrolled: true, direction: a.direction }
+    if (a.type === 'screenshot' && a.format === 'jpeg') res.screenshotMime = 'image/jpeg'
     ws.send(JSON.stringify(res))
-  }, 50)
+  }, delay)
 }
 ws.onclose = (e) => { console.log('[phone] closed', e.code, e.reason); process.exit(0) }
 ws.onerror = (e) => console.error('[phone] error', e.message)

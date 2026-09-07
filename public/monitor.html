@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Device Relay — Live Monitor</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    body{font-family:system-ui,Segoe UI,Tahoma,sans-serif}
+    .ltr{direction:ltr;text-align:left}
+    .log-row{animation:fadeIn .25s ease}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+    .phone-frame{aspect-ratio:9/19.5;background:#000;border-radius:24px;border:6px solid #1e293b;overflow:hidden;display:flex;align-items:center;justify-content:center}
+    .phone-frame img{width:100%;height:100%;object-fit:contain}
+    ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+  <header class="border-b border-slate-800 bg-slate-900/70 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+      <h1 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-mobile-screen text-emerald-400"></i> Device Relay <span class="text-xs font-normal text-slate-400">Live Monitor · للمتابعة فقط</span></h1>
+      <div class="flex items-center gap-3 text-sm">
+        <span id="conn" class="px-2 py-1 rounded bg-slate-800 text-slate-400"><i class="fas fa-circle text-xs"></i> غير متصل</span>
+        <select id="device-select" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm ltr"></select>
+        <button id="refresh-btn" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700" title="تحديث"><i class="fas fa-rotate"></i></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <section id="screen-section" class="lg:col-span-4 bg-slate-900 rounded-2xl p-4 border border-slate-800">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold"><i class="fas fa-image ml-1 text-sky-400"></i> آخر لقطة</h2>
+        <span id="shot-ts" class="text-xs text-slate-500">—</span>
+      </div>
+      <div class="phone-frame mx-auto max-w-xs">
+        <img id="shot-img" alt="screenshot" class="hidden">
+        <p id="shot-empty" class="text-slate-600 text-sm px-6 text-center">لم تُلتقط أي صورة بعد. عندما ينفّذ الـ AI أمر capture_screen ستظهر هنا مباشرة.</p>
+      </div>
+    </section>
+
+    <section class="lg:col-span-8 space-y-4">
+      <article id="status-card" class="bg-slate-900 rounded-2xl p-4 border border-slate-800">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold"><i class="fas fa-circle-info ml-1 text-emerald-400"></i> حالة الجهاز</h2>
+          <span id="online-badge" class="text-xs px-2 py-1 rounded-full bg-slate-800 text-slate-400">—</span>
+        </div>
+        <dl id="status-grid" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm"></dl>
+      </article>
+
+      <article class="bg-slate-900 rounded-2xl p-4 border border-slate-800">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold"><i class="fas fa-list-ul ml-1 text-amber-400"></i> سجل الأوامر الحي</h2>
+          <div class="text-xs text-slate-500 flex gap-3">
+            <span><span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span> ok</span>
+            <span><span class="inline-block w-2 h-2 rounded-full bg-amber-400"></span> sent/queued</span>
+            <span><span class="inline-block w-2 h-2 rounded-full bg-rose-400"></span> failed</span>
+          </div>
+        </div>
+        <div class="overflow-auto max-h-[60vh]">
+          <table class="w-full text-sm ltr">
+            <thead class="text-slate-500 text-xs sticky top-0 bg-slate-900">
+              <tr><th class="text-left py-1 pr-2">time</th><th class="text-left py-1 pr-2">action</th><th class="text-left py-1 pr-2">status</th><th class="text-left py-1">latency</th></tr>
+            </thead>
+            <tbody id="log-body"></tbody>
+          </table>
+          <p id="log-empty" class="text-slate-600 text-sm text-center py-6">لا توجد أوامر بعد.</p>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="max-w-7xl mx-auto px-4 py-6 text-xs text-slate-600 text-center">
+    هذه الصفحة للمراقبة فقط — التحكم يتم حصريًا عبر AI (<code class="ltr">/agent/&lt;token&gt;</code> أو MCP).
+  </footer>
+
+<script>
+(() => {
+  const parts = location.pathname.split('/').filter(Boolean)
+  const token = parts[0] === 'monitor' && parts[1] ? decodeURIComponent(parts[1]) : new URLSearchParams(location.search).get('token')
+  if (!token) { document.body.innerHTML = '<p class="p-8 text-center">missing token — open /monitor/&lt;token&gt;</p>'; return }
+  const H = { Authorization: 'Bearer ' + token }
+  const $ = (id) => document.getElementById(id)
+  let ws = null, current = null, devices = []
+
+  const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB') : '—'
+  const ago = (ts) => { if (!ts) return '—'; const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? s + 's' : s < 3600 ? Math.round(s / 60) + 'm' : Math.round(s / 3600) + 'h' }
+  const describe = (a) => {
+    if (!a) return ''
+    const t = a.type
+    if ('x' in a && 'y' in a) return `${t} (${a.x},${a.y})` + (a.scale ? ` ×${a.scale}` : '')
+    if ('x1' in a) return `${t} (${a.x1},${a.y1})→(${a.x2},${a.y2})`
+    if (a.text || a.elementId || a.url) return `${t} "${String(a.text || a.elementId || a.url).slice(0, 40)}"`
+    return t
+  }
+  const color = (s) => s === 'ok' ? 'text-emerald-400' : ['failed','timeout','offline','rate_limited'].includes(s) ? 'text-rose-400' : 'text-amber-400'
+
+  async function loadDevices() {
+    const r = await fetch('/api/devices', { headers: H })
+    if (r.status === 401) { document.body.innerHTML = '<p class="p-8 text-center text-rose-400">unauthorized token</p>'; return }
+    devices = (await r.json()).devices || []
+    const sel = $('device-select')
+    sel.innerHTML = devices.map(d => `<option value="${d.deviceId}">${d.online ? '● ' : '○ '}${d.deviceId}${d.label ? ' — ' + d.label : ''}</option>`).join('') || '<option value="">(no devices)</option>'
+    if (!current && devices.length) current = (devices.find(d => d.online) || devices[0]).deviceId
+    if (current) { sel.value = current; connect(current) }
+  }
+
+  function renderStatus(info) {
+    const b = $('online-badge')
+    b.textContent = info.online ? 'ONLINE' : 'OFFLINE'
+    b.className = 'text-xs px-2 py-1 rounded-full ' + (info.online ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300')
+    const cells = [
+      ['Device', info.deviceId + (info.label ? ` (${info.label})` : '')],
+      ['Model', info.model || '—'], ['Android', info.android || '—'], ['App', info.appVersion || '—'],
+      ['Screen', info.screen ? `${info.screen.w}×${info.screen.h}` : '—'],
+      ['Accessibility', info.accessibilityEnabled === true ? '✔ enabled' : info.accessibilityEnabled === false ? '✖ disabled' : '—'],
+      ['Battery', typeof info.battery === 'number' ? `${info.battery}%${info.charging ? ' ⚡' : ''}` : '—'],
+      ['Last seen', ago(info.lastSeen) + ' ago'],
+      ['Commands', `${info.commandsSent} sent · ${info.commandsOk} ok · ${info.commandsFailed} failed`],
+      ['Queue', String(info.queued || 0)],
+    ]
+    $('status-grid').innerHTML = cells.map(([k, v]) => `<div class="bg-slate-800/60 rounded-lg p-2"><dt class="text-xs text-slate-500">${k}</dt><dd class="ltr font-medium truncate" title="${v}">${v}</dd></div>`).join('')
+  }
+
+  const rows = new Map()
+  function upsertLog(e, prepend = true) {
+    const tb = $('log-body'); $('log-empty').classList.add('hidden')
+    let tr = rows.get(e.id)
+    const html = `<td class="py-1 pr-2 text-slate-500 whitespace-nowrap">${fmtTime(e.ts)}</td><td class="py-1 pr-2 font-mono text-xs">${describe(e.action)}</td><td class="py-1 pr-2 ${color(e.status)}">${e.status}${e.error ? ` <span class="text-slate-500">· ${e.error}</span>` : ''}</td><td class="py-1 text-slate-400">${e.durationMs != null ? e.durationMs + 'ms' : ''}</td>`
+    if (tr) { tr.innerHTML = html; return }
+    tr = document.createElement('tr'); tr.className = 'log-row border-t border-slate-800/60'; tr.innerHTML = html
+    rows.set(e.id, tr)
+    prepend ? tb.prepend(tr) : tb.append(tr)
+    while (tb.children.length > 150) { const last = tb.lastElementChild; rows.forEach((v, k) => { if (v === last) rows.delete(k) }); last.remove() }
+  }
+  function showShot(s) {
+    if (!s || !s.data) return
+    $('shot-img').src = `data:${s.mime || 'image/png'};base64,${s.data}`
+    $('shot-img').classList.remove('hidden'); $('shot-empty').classList.add('hidden')
+    $('shot-ts').textContent = fmtTime(s.ts)
+  }
+
+  function connect(deviceId) {
+    if (ws) { ws.onclose = null; ws.close() }
+    $('log-body').innerHTML = ''; rows.clear(); $('log-empty').classList.remove('hidden')
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    ws = new WebSocket(`${proto}://${location.host}/api/ws/viewer/${deviceId}?token=${encodeURIComponent(token)}`)
+    const c = $('conn')
+    ws.onopen = () => { c.innerHTML = '<i class="fas fa-circle text-xs text-emerald-400"></i> بث حي'; c.className = 'px-2 py-1 rounded bg-emerald-500/10 text-emerald-300' }
+    ws.onclose = () => { c.innerHTML = '<i class="fas fa-circle text-xs"></i> انقطع — إعادة اتصال…'; c.className = 'px-2 py-1 rounded bg-slate-800 text-slate-400'; setTimeout(() => current === deviceId && connect(deviceId), 2000) }
+    ws.onmessage = (ev) => {
+      const m = JSON.parse(ev.data)
+      if (m.kind === 'snapshot') { renderStatus(m.info); (m.logs || []).forEach(e => upsertLog(e, false)); showShot(m.screenshot) }
+      else if (m.kind === 'status') renderStatus(m.info)
+      else if (m.kind === 'log') upsertLog(m.entry)
+      else if (m.kind === 'screenshot') showShot(m)
+    }
+  }
+
+  $('device-select').onchange = (e) => { current = e.target.value; connect(current) }
+  $('refresh-btn').onclick = loadDevices
+  loadDevices()
+})()
+</script>
+</body>
+</html>

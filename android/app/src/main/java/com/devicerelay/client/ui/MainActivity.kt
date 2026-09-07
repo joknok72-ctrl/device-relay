@@ -72,6 +72,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.devicerelay.client.RelayConfig
 import com.devicerelay.client.SettingsRepo
 import com.devicerelay.client.service.AutomationAccessibilityService
+import com.devicerelay.client.service.RelayNotificationListener
+import androidx.compose.material.icons.filled.Notifications
 import com.devicerelay.client.service.ConnState
 import com.devicerelay.client.service.RelayConnectionService
 import java.text.SimpleDateFormat
@@ -112,6 +114,7 @@ fun RelayScreen() {
     var loaded by remember { mutableStateOf(false) }
     var showToken by remember { mutableStateOf(false) }
     var a11yEnabled by remember { mutableStateOf(AutomationAccessibilityService.isEnabled) }
+    var notifAccess by remember { mutableStateOf(RelayNotificationListener.isEnabled) }
 
     LaunchedEffect(Unit) {
         cfg = SettingsRepo.get(ctx); loaded = true
@@ -121,6 +124,7 @@ fun RelayScreen() {
     LaunchedEffect(owner) {
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             a11yEnabled = AutomationAccessibilityService.isEnabled
+            notifAccess = RelayNotificationListener.isEnabled
         }
     }
 
@@ -189,6 +193,26 @@ fun RelayScreen() {
                         }
                         if (!a11yEnabled) OutlinedButton(onClick = {
                             ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }) { Text("تفعيل") }
+                    }
+                }
+            }
+
+            // ---- Notification access card (optional)
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = CardBg)) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Notifications, null, tint = if (notifAccess) Green else Muted)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("قراءة الإشعارات (اختياري)", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (notifAccess) "مفعّلة — الـ AI يستطيع قراءة أكواد OTP والرسائل" else "غير مفعّلة — مطلوبة لأداة get_notifications فقط",
+                                color = Muted, fontSize = 12.sp,
+                            )
+                        }
+                        if (!notifAccess) OutlinedButton(onClick = {
+                            ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         }) { Text("تفعيل") }
                     }
                 }

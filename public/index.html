@@ -19,7 +19,8 @@
     <h1><span class="dot"></span> Device Relay</h1>
     <p>هذا السيرفر يُشغَّل بواسطة الذكاء الاصطناعي فقط — لا توجد لوحة تحكم يدوية.</p>
     <p>لتشغيل وكيل AI في محادثة جديدة، أعطه رابط الـ Bootstrap الخاص بك:<br><code>/agent/&lt;RELAY_TOKEN&gt;</code></p>
-    <p>MCP: <code>/mcp/&lt;RELAY_TOKEN&gt;</code> &nbsp;·&nbsp; Health: <code id="health">/api/health</code></p>
+    <p>MCP: <code>/mcp/&lt;RELAY_TOKEN&gt;</code> &nbsp;·&nbsp; مراقبة حية (للإنسان): <code>/monitor/&lt;TOKEN&gt;</code></p>
+    <p>Health: <code id="health">/api/health</code></p>
   </main>
   <script>fetch('/api/health').then(r=>r.json()).then(j=>{document.getElementById('health').textContent='/api/health → ok '+new Date(j.ts).toLocaleTimeString()}).catch(()=>{})</script>
 </body>

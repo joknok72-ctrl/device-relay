@@ -2,8 +2,20 @@ package com.devicerelay.client.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.app.KeyguardManager
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
+import android.os.BatteryManager
+import android.os.Environment
+import android.os.StatFs
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
@@ -38,7 +50,7 @@ import kotlinx.serialization.json.put
 class AutomationAccessibilityService : AccessibilityService() {
 
     sealed class Outcome {
-        data class Ok(val screenshotBase64: String? = null, val data: JsonElement? = null) : Outcome()
+        data class Ok(val screenshotBase64: String? = null, val data: JsonElement? = null, val mime: String? = null) : Outcome()
         data class Fail(val error: String) : Outcome()
     }
 
@@ -72,7 +84,7 @@ class AutomationAccessibilityService : AccessibilityService() {
         "quick_settings" -> global(GLOBAL_ACTION_QUICK_SETTINGS)
         "lock" -> if (Build.VERSION.SDK_INT >= 28) global(GLOBAL_ACTION_LOCK_SCREEN) else Outcome.Fail("lock requires Android 9+")
         "wake" -> wakeScreen()
-        "screenshot" -> screenshot()
+        "screenshot" -> screenshot(action.maxWidth, action.quality, action.format)
         "ui_dump" -> Outcome.Ok(data = uiDump())
         "tap_element" -> tapElement(action)
         "type_text" -> typeText(action)
@@ -84,6 +96,14 @@ class AutomationAccessibilityService : AccessibilityService() {
             put("label", appLabel(rootInActiveWindow?.packageName?.toString() ?: lastPackage))
         })
         "ping" -> Outcome.Ok()
+        // v1.4
+        "drag" -> drag(action)
+        "pinch" -> pinch(action)
+        "scroll_element" -> scrollElement(action)
+        "set_clipboard" -> setClipboard(action)
+        "get_notifications" -> RelayNotificationListener.instance?.let { Outcome.Ok(data = it.dump(action.limit ?: 20)) }
+            ?: Outcome.Fail("notification access not enabled: open Device Relay app and enable 'Notification access'")
+        "device_info" -> Outcome.Ok(data = deviceInfo())
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -134,8 +154,129 @@ class AutomationAccessibilityService : AccessibilityService() {
         return Outcome.Ok()
     }
 
+    /** Long-press then move: drag-and-drop. */
+    private suspend fun drag(a: Action): Outcome {
+        if (a.x1 == null || a.y1 == null || a.x2 == null || a.y2 == null) return Outcome.Fail("missing coordinates")
+        val hold = (a.holdMs ?: 500L).coerceIn(0, 5000)
+        val move = (a.duration ?: 600L).coerceIn(50, 10_000)
+        val holdPath = Path().apply { moveTo(a.x1, a.y1) }
+        val movePath = Path().apply { moveTo(a.x1, a.y1); lineTo(a.x2, a.y2) }
+        val b = GestureDescription.Builder()
+        if (hold > 0) {
+            val s1 = GestureDescription.StrokeDescription(holdPath, 0, hold, true)
+            b.addStroke(s1)
+            b.addStroke(s1.continueStroke(movePath, 0, move, false))
+        } else {
+            b.addStroke(GestureDescription.StrokeDescription(movePath, 0, move))
+        }
+        return dispatch(b.build())
+    }
+
+    /** Two-finger pinch around (x,y). scale > 1 = zoom in. */
+    private suspend fun pinch(a: Action): Outcome {
+        val cx = a.x ?: return Outcome.Fail("missing x")
+        val cy = a.y ?: return Outcome.Fail("missing y")
+        val scale = (a.scale ?: 2f).coerceIn(0.1f, 10f)
+        val dur = (a.duration ?: 400L).coerceIn(50, 5000)
+        val dm = resources.displayMetrics
+        val maxR = (minOf(dm.widthPixels, dm.heightPixels) / 2f) * 0.8f
+        val (r0, r1) = if (scale >= 1f) 60f to (60f * scale).coerceAtMost(maxR)
+                       else maxR.coerceAtMost(400f) to (maxR.coerceAtMost(400f) * scale).coerceAtLeast(30f)
+        fun stroke(sign: Int) = GestureDescription.StrokeDescription(
+            Path().apply { moveTo(cx + sign * r0, cy); lineTo(cx + sign * r1, cy) }, 0, dur,
+        )
+        return dispatch(GestureDescription.Builder().addStroke(stroke(1)).addStroke(stroke(-1)).build())
+    }
+
+    private suspend fun dispatch(g: GestureDescription): Outcome = suspendCancellableCoroutine { cont ->
+        val ok = dispatchGesture(g, object : GestureResultCallback() {
+            override fun onCompleted(gd: GestureDescription?) { if (cont.isActive) cont.resume(Outcome.Ok()) }
+            override fun onCancelled(gd: GestureDescription?) { if (cont.isActive) cont.resume(Outcome.Fail("gesture cancelled")) }
+        }, null)
+        if (!ok && cont.isActive) cont.resume(Outcome.Fail("dispatchGesture returned false"))
+    }
+
+    /** Accessibility scroll on a scrollable node (found by text/id, else the biggest scrollable). */
+    private fun scrollElement(a: Action): Outcome {
+        val forward = a.direction != "backward"
+        var node: AccessibilityNodeInfo? = null
+        if (!a.text.isNullOrBlank() || !a.elementId.isNullOrBlank()) {
+            node = findElements(a).firstOrNull()?.node
+            var hops = 0
+            while (node != null && !node.isScrollable && hops < 6) { node = node.parent; hops++ }
+        }
+        if (node == null || !node.isScrollable) {
+            node = collectNodes().filter { it.node.isScrollable }.maxByOrNull { it.bounds.width() * it.bounds.height() }?.node
+        }
+        val n = node ?: return Outcome.Fail("no scrollable element found")
+        val ok = n.performAction(if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+        return if (ok) Outcome.Ok(data = buildJsonObject { put("scrolled", true); put("direction", if (forward) "forward" else "backward"); n.viewIdResourceName?.let { put("id", it.substringAfter('/')) } })
+        else Outcome.Fail("scroll action rejected (end of list?)")
+    }
+
+    private fun setClipboard(a: Action): Outcome {
+        val text = a.text ?: return Outcome.Fail("set_clipboard requires text")
+        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("device-relay", text))
+        var pasted = false
+        if (a.paste == true) {
+            val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?: collectNodes().firstOrNull { it.node.isEditable && it.node.isFocused }?.node
+            pasted = field?.performAction(AccessibilityNodeInfo.ACTION_PASTE) == true
+            if (!pasted && field != null) {
+                val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, (field.text?.toString() ?: "") + text) }
+                pasted = field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            }
+        }
+        return Outcome.Ok(data = buildJsonObject { put("copied", text.length); put("pasted", pasted) })
+    }
+
+    fun deviceInfo(): JsonElement {
+        val bm = getSystemService(BatteryManager::class.java)
+        val pm = getSystemService(PowerManager::class.java)
+        val km = getSystemService(KeyguardManager::class.java)
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val caps = cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+        val net = when {
+            caps == null -> "none"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+            else -> "other"
+        }
+        val ssid = runCatching {
+            @Suppress("DEPRECATION")
+            (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).connectionInfo?.ssid?.trim('"')
+        }.getOrNull()?.takeIf { it != "<unknown ssid>" }
+        val stat = runCatching { StatFs(Environment.getDataDirectory().path) }.getOrNull()
+        val pkg = rootInActiveWindow?.packageName?.toString() ?: lastPackage
+        return buildJsonObject {
+            put("battery", batteryPercent())
+            put("charging", bm?.isCharging == true)
+            put("screenOn", pm.isInteractive)
+            put("locked", km?.isKeyguardLocked == true)
+            put("orientation", if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) "landscape" else "portrait")
+            put("network", net)
+            ssid?.let { put("wifiSsid", it) }
+            stat?.let { put("freeStorageMb", it.availableBytes / 1_048_576) }
+            put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
+            put("android", Build.VERSION.RELEASE)
+            put("sdk", Build.VERSION.SDK_INT)
+            put("notificationAccess", RelayNotificationListener.isEnabled)
+            pkg?.let { put("package", it); appLabel(it)?.let { l -> put("label", l) } }
+        }
+    }
+
+    fun batteryPercent(): Int {
+        val bm = getSystemService(BatteryManager::class.java)
+        val p = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+        if (p in 0..100) return p
+        val i = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return -1
+        val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1); val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+        return if (level >= 0) level * 100 / scale else -1
+    }
+
     // ---------------------------------------------------------------- screenshot
-    private suspend fun screenshot(): Outcome {
+    private suspend fun screenshot(maxWidth: Int? = null, quality: Int? = null, format: String? = null): Outcome {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return Outcome.Fail("screenshot requires Android 11+")
         return suspendCoroutine { cont ->
             takeScreenshot(Display.DEFAULT_DISPLAY, screenshotExecutor, object : TakeScreenshotCallback {
@@ -145,11 +286,13 @@ class AutomationAccessibilityService : AccessibilityService() {
                         val bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
                         result.hardwareBuffer.close()
                         if (bmp == null) { cont.resume(Outcome.Fail("bitmap null")); return }
-                        val scale = (540f / bmp.width).coerceAtMost(1f)
+                        val maxW = (maxWidth ?: 540).coerceIn(120, 2160)
+                        val scale = (maxW.toFloat() / bmp.width).coerceAtMost(1f)
                         val scaled = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
                         val out = ByteArrayOutputStream()
-                        scaled.compress(Bitmap.CompressFormat.PNG, 80, out)
-                        cont.resume(Outcome.Ok(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)))
+                        val jpeg = format.equals("jpeg", true) || format.equals("jpg", true)
+                        scaled.compress(if (jpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG, (quality ?: 80).coerceIn(10, 100), out)
+                        cont.resume(Outcome.Ok(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), mime = if (jpeg) "image/jpeg" else "image/png"))
                     } catch (e: Exception) {
                         cont.resume(Outcome.Fail("screenshot encode failed: ${e.message}"))
                     }

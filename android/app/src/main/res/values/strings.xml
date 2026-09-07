@@ -5,4 +5,5 @@
     <string name="accessibility_service_description">Allows Device Relay to perform taps, swipes and system actions received from your own Cloudflare relay server. It can also read on-screen text/buttons so the AI agent can tap elements by name and type text. Nothing is sent anywhere except your own relay server.</string>
     <string name="notification_channel_name">Relay connection</string>
     <string name="notification_title">Device Relay</string>
+    <string name="notification_listener_label">Device Relay Notifications</string>
 </resources>

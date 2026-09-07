@@ -63,6 +63,7 @@ class RelayConnectionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var connectJob: Job? = null
+    private var helloJob: Job? = null
     private var socket: WebSocket? = null
     private var stopping = false
     private var backoffMs = 1_000L
@@ -128,6 +129,10 @@ class RelayConnectionService : Service() {
                 setState(ConnState.CONNECTED, "متصل ✔")
                 updateNotification("متصل بالسيرفر")
                 ws.send(RelayJson.encodeToString(HelloMessage.serializer(), buildHello()))
+                helloJob?.cancel()
+                helloJob = scope.launch {
+                    while (true) { delay(60_000); runCatching { ws.send(RelayJson.encodeToString(HelloMessage.serializer(), buildHello())) } }
+                }
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
@@ -138,10 +143,11 @@ class RelayConnectionService : Service() {
             }
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) { ws.close(code, reason) }
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) { done.complete("$code $reason") }
+            override fun onClosed(ws: WebSocket, code: Int, reason: String) { helloJob?.cancel(); done.complete("$code $reason") }
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 val msg = response?.let { "HTTP ${it.code}" } ?: (t.message ?: t.javaClass.simpleName)
                 Log.w(TAG, "ws failure: $msg", t)
+                helloJob?.cancel()
                 done.complete(msg)
             }
         })
@@ -164,7 +170,7 @@ class RelayConnectionService : Service() {
             val dur = SystemClock.elapsedRealtime() - t0
             when (outcome) {
                 is AutomationAccessibilityService.Outcome.Ok ->
-                    ResultMessage(id = cmd.id, ok = true, screenshot = outcome.screenshotBase64, durationMs = dur, data = outcome.data)
+                    ResultMessage(id = cmd.id, ok = true, screenshot = outcome.screenshotBase64, screenshotMime = outcome.mime, durationMs = dur, data = outcome.data)
                 is AutomationAccessibilityService.Outcome.Fail ->
                     ResultMessage(id = cmd.id, ok = false, error = outcome.error, durationMs = dur)
                 null -> ResultMessage(id = cmd.id, ok = false, error = "execution timeout", durationMs = dur)
@@ -195,7 +201,15 @@ class RelayConnectionService : Service() {
             appVersion = runCatching { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" }.getOrDefault("?"),
             screen = ScreenSize(dm.widthPixels, dm.heightPixels),
             accessibilityEnabled = AutomationAccessibilityService.isEnabled,
+            battery = batteryPercent(),
+            charging = getSystemService(android.os.BatteryManager::class.java)?.isCharging == true,
         )
+    }
+
+    private fun batteryPercent(): Int? {
+        val bm = getSystemService(android.os.BatteryManager::class.java) ?: return null
+        val p = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        return if (p in 0..100) p else null
     }
 
     // ------------------------------------------------------------ misc

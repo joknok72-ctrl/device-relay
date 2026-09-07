@@ -34,6 +34,15 @@ data class Action(
     val clear: Boolean? = null,      // type_text: clear field first
     val submit: Boolean? = null,     // type_text: press IME action after typing
     val index: Int? = null,          // tap_element: nth match
+    // v1.4
+    val maxWidth: Int? = null,       // screenshot: max output width (default 540)
+    val quality: Int? = null,        // screenshot: compression quality (default 80)
+    val format: String? = null,      // screenshot: png | jpeg
+    val scale: Float? = null,        // pinch: zoom factor
+    val holdMs: Long? = null,        // drag: hold before moving
+    val paste: Boolean? = null,      // set_clipboard: paste after copy
+    val limit: Int? = null,          // get_notifications
+    val direction: String? = null,   // scroll_element: forward | backward
 )
 
 @Serializable
@@ -51,6 +60,7 @@ data class ResultMessage(
     val ok: Boolean,
     val error: String? = null,
     val screenshot: String? = null,
+    val screenshotMime: String? = null,
     val durationMs: Long? = null,
     /** Arbitrary structured payload (ui elements, app list, ...) */
     val data: JsonElement? = null,
@@ -67,6 +77,8 @@ data class HelloMessage(
     val appVersion: String,
     val screen: ScreenSize,
     val accessibilityEnabled: Boolean,
+    val battery: Int? = null,
+    val charging: Boolean? = null,
 )
 
 @Serializable
