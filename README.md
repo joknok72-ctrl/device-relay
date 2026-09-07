@@ -55,15 +55,18 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
-**🎮 Game Mode (v1.5 + v1.6) — للألعاب والتطبيقات بدون UI tree**
+**🎮 Game Mode (v1.5 → v1.7) — للألعاب والتطبيقات بدون UI tree**
 - 📐 **لقطات بشبكة إحداثيات** (`grid`) + **قص منطقة** بدقة كاملة (`region`) — الـ AI يقرأ الإحداثية الدقيقة من الصورة
 - ⚡ **إدخال دقيق على الموبايل** (بدون jitter شبكة): `tap_sequence`, `repeat_tap` (auto-clicker بإيقاع ثابت), `swipe_path` (جويستيك/مسار), `multi_tap` (multi-touch)
 - 👁️ **إدراك رخيص**: `get_pixels`, `find_color` (مركز + bbox), `screen_diff` (المناطق التي تغيّرت), `find_image` (template matching على الموبايل)
 - 🪝 **ردود فعل (Reflexes)** — الموبايل ينتظر ويرد بدل الـ polling: `watch_color` (انتظر ظهور/اختفاء لون), `wait_pixel`, `wait_for_screen` (change|stable), `tap_color` (ابحث + اضغط في طلب واحد)
 - 🔁 **`act_and_see`**: فعل + انتظار + لقطة في round-trip واحد · **`game_loop`**: السيرفر يشغّل حلقة إدراك→فعل كاملة (حتى 60 جولة) في طلب واحد مع حقن `$cx/$cy`
 - 🧠 **ذاكرة عبر المحادثات**: `remember`/`recall` (ملاحظات لكل جهاز) + `save_macro`/`run_macro` (سلاسل قابلة للتكرار) — تظهر تلقائيًا في bootstrap المحادثة الجديدة
-- 📖 **GAME PLAYBOOK** داخل bootstrap: متى يستخدم كل أداة + دليل قرار
-- Timeouts ديناميكية لكل أمر (سلاسل طويلة لا تنقطع)
+- 🔤 **OCR على الموبايل (v1.7)** بـ ML Kit (لاتيني/عربي/صيني/ياباني/كوري/ديفاناغاري): `read_text` (نص + إحداثيات كل سطر), `tap_text` (ابحث عن كلمة واضغطها), `wait_for_text` (انتظر ظهور نص مثل "PLAY" أو "Continue") — يقرأ النقاط/العدادات/الأزرار في الألعاب بدون UI tree
+- 🎨 **`find_colors` (v1.7)**: عدة ألوان في مسح واحد · 📊 **`session_stats`**: عدد الأوامر/متوسط الزمن/الأخطاء للجلسة
+- 📺 **بث حي (v1.7)**: `live_preview` يرسل إطارات JPEG مستمرة إلى صفحة `/monitor` — تشاهد الـ AI وهو يلعب لحظيًا
+- 📖 **GAME PLAYBOOK** داخل bootstrap: متى يستخدم كل أداة + دليل قرار + دليل OCR
+- Timeouts ديناميكية لكل أمر (سلاسل طويلة لا تنقطع، OCR حتى 25 ثانية)
 
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
@@ -75,6 +78,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v1.5–v1.7**: كل أدوات Game Mode تُنفَّذ على الجهاز (توقيت دقيق بدون شبكة)، ML Kit OCR محلي (بدون إنترنت)، بث إطارات JPEG (`stream`) يتوقف تلقائيًا عند غياب المشاهدين
 - سجل مباشر داخل التطبيق لكل أمر وزمن تنفيذه
 
 ## دليل الاستخدام (خطوة بخطوة)
@@ -156,7 +160,7 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **50 أداة** مباشرة:
+بعدها النموذج يرى **56 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
 - عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
@@ -259,8 +263,12 @@ python agent_runner.py shell                                     # REPL: tap 540
 {"type":"pixel","points":[{"x":120,"y":180}]}   {"type":"find_color","color":"#ff2020","tolerance":30}
 {"type":"watch_color","color":"#00e676","appear":true,"timeoutMs":8000}   {"type":"wait_pixel","x":980,"y":2150,"color":"#ffffff"}
 {"type":"screen_diff"}   {"type":"find_image","image":"<base64>","threshold":0.85}
+// v1.7 (OCR + multi-color + stream)
+{"type":"read_text","lang":"latin","region":{"x":0,"y":0,"w":1080,"h":300}}
+{"type":"find_colors","colors":["#ff2020","#00e676"],"tolerance":30}
+{"type":"stream","enabled":true,"fps":2,"maxWidth":480,"quality":50}
 ```
-> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro`.
+> `phone.sh` يغلّف كل ذلك: `see tap X Y` · `seq` · `rep` · `path` · `mtap` · `px` · `color` · `tapcolor` · `watch` · `waitpx` · `diff` · `findimg` · `loop` · `remember/recall` · `macros/macro/savemacro` · `ocr/taptext/waittext` · `colors` · `stats` · `live`.
 الرد: `{"id":"...","ok":true,"durationMs":42,"queuedMs":310}` أو `{"ok":false,"error":"device offline"}` (HTTP 502). `429` عند تجاوز الحد.
 
 ### الأمان (v1.4)
@@ -310,7 +318,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh   # 133 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh   # 169 checks green
 ```
 
 ## Data Architecture
@@ -335,6 +343,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh   # 133 checks green
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-07 (v1.6 — Game Mode: grid/region shots, on-device precision input, reflexes (watch_color/wait_pixel/screen_diff/find_image), act_and_see, game_loop, memory + macros; 50 tools; Android 1.6.0)
+- **Last Updated**: 2026-09-07 (v1.7 — on-device OCR: read_text/tap_text/wait_for_text, find_colors, session_stats, live_preview stream to /monitor; 56 tools; 169 e2e checks; Android 1.7.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
