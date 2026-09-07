@@ -20,6 +20,7 @@ check waitpx '"hex":"#ff0000"' "$(call '{"name":"wait_pixel","arguments":{"x":10
 check waitpx-invalid 'requires numeric' "$(call '{"name":"wait_pixel","arguments":{"color":"#ff0000"}}')"
 check tap_color '"tapped":{"x":550,"y":1500}' "$(call '{"name":"tap_color","arguments":{"color":"#ff0000","offsetX":10}}')"
 check tap_color-miss 'not found' "$(call '{"name":"tap_color","arguments":{"color":"#00ff00"}}')"
+pm2 restart fake-phone >/dev/null 2>&1; sleep 2
 check diff-baseline '"baseline":true' "$(call '{"name":"screen_diff"}')"
 check diff-regions '"changedPct":7.5' "$(call '{"name":"screen_diff"}')"
 check findimg '"score":0.93' "$(call '{"name":"find_image","arguments":{"image":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="}}')"
