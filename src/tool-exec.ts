@@ -112,6 +112,9 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'do_until') return doUntil(env, deviceId, args, opts)
   if (mapped.special === 'dismiss_popups') return dismissPopups(env, deviceId, args, opts)
   if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
+  if (mapped.special === 'read_number') return readNumber(env, deviceId, args, opts)
+  if (mapped.special === 'watch_value') return watchValue(env, deviceId, args, opts)
+  if (mapped.special === 'calibrate') return calibrate(env, deviceId, args, opts)
   if (mapped.special === 'label_screen') return labelScreen(env, deviceId, args, opts)
   if (mapped.special === 'identify_screen') return identifyScreen(env, deviceId, args, opts)
 
@@ -175,6 +178,8 @@ function emitOverlay(env: Bindings, deviceId: string, action: Record<string, unk
     case 'find_image': { const m = (d.matches as { x: number; y: number; w: number; h: number; cx: number; cy: number }[] | undefined) ?? []; if (m.length) overlay(env, deviceId, { type: 'detect', boxes: m }); return }
     case 'read_text': { const lines = (d.lines as { x?: number; y?: number; w?: number; h?: number; cx: number; cy: number; text: string }[] | undefined) ?? []; if (lines.length) overlay(env, deviceId, { type: 'ocr', boxes: lines.slice(0, 40).map((l) => ({ x: l.x, y: l.y, w: l.w, h: l.h, cx: l.cx, cy: l.cy, label: l.text })) }); return }
     case 'auto_react': { const taps = (d.taps as { x: number; y: number }[] | undefined) ?? []; if (taps.length) overlay(env, deviceId, { type: 'tap', points: taps.map((t) => ({ x: t.x, y: t.y })), reflex: true }); return }
+    case 'track_object': { const pts = (d.samples as { x: number; y: number }[] | undefined) ?? []; const p = d.predicted as { x: number; y: number } | undefined; if (pts.length) overlay(env, deviceId, { type: 'path', points: pts.concat(p ? [p] : []), color: action.color }); return }
+    case 'sample_colors': { const cs = (d.colors as { hex: string; cx: number; cy: number }[] | undefined) ?? []; if (cs.length) overlay(env, deviceId, { type: 'detect', boxes: cs.map((c) => ({ cx: c.cx, cy: c.cy, color: c.hex, label: c.hex })) }); return }
     case 'watch_color': case 'wait_pixel': if (d.matched && d.cx !== undefined) overlay(env, deviceId, { type: 'detect', color: action.color, boxes: [{ cx: d.cx, cy: d.cy, ...(d.bounds as object ?? {}) }] }); return
   }
 }
@@ -505,6 +510,93 @@ async function dismissPopups(env: Bindings, deviceId: string, args: Record<strin
   return { ok: true, dismissed: dismissed.length, actions: dismissed, durationMs: Date.now() - t0 }
 }
 
+// ---------------------------------------------------------------- v2.1 numbers + calibration
+
+/** Parse the first number-like token of a string: "1,250" "12.5K" "03:45" "87%" -> number */
+export function parseNumberToken(text: string): number | null {
+  const t = text.replace(/[\u0660-\u0669]/g, (c) => String(c.charCodeAt(0) - 0x0660)) // Arabic-Indic digits
+  const timer = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (timer) { const a = Number(timer[1]), b = Number(timer[2]), c = timer[3] !== undefined ? Number(timer[3]) : null; return c === null ? a * 60 + b : a * 3600 + b * 60 + c }
+  const m = t.match(/-?\d[\d,.\s]*\d|\d/)
+  if (!m) return null
+  let raw = m[0].replace(/\s+/g, '')
+  const rest = t.slice((m.index ?? 0) + m[0].length).trim().toLowerCase()
+  // decide separators: if both , and . appear, the last one is decimal; a lone separator followed by exactly 3 digits is thousands
+  const lastSep = Math.max(raw.lastIndexOf(','), raw.lastIndexOf('.'))
+  if (lastSep >= 0) {
+    const dec = raw.slice(lastSep + 1)
+    const isThousands = dec.length === 3 && (raw.match(/[,.]/g) ?? []).length >= 1 && !/^[km]/.test(rest)
+    raw = isThousands || dec.length === 3 ? raw.replace(/[,.]/g, '') : raw.slice(0, lastSep).replace(/[,.]/g, '') + '.' + dec
+  }
+  let v = Number(raw)
+  if (!Number.isFinite(v)) return null
+  if (/^k\b/.test(rest) || rest.startsWith('k ') || rest === 'k') v *= 1000
+  else if (rest.startsWith('m') && !rest.startsWith('min') && !rest.startsWith('ms')) v *= 1_000_000
+  return v
+}
+async function readNumber(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const o = await ocrLines(env, deviceId, args.region, opts)
+  if (!o.ok) return { ok: false, error: o.error ?? 'OCR failed (needs Android app v1.7+)' }
+  const label = typeof args.label === 'string' ? args.label.trim().toLowerCase() : ''
+  let lines = o.lines
+  if (label) {
+    const withLabel = lines.filter((l) => l.text.toLowerCase().includes(label))
+    // the number may be on the labelled line or the nearest line to it
+    if (withLabel.length) {
+      const near = (a: OcrLine, b: OcrLine) => Math.hypot(a.cx - b.cx, a.cy - b.cy)
+      const l0 = withLabel[0]
+      const stripped = { ...l0, text: l0.text.replace(new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '') }
+      lines = [stripped, ...lines.filter((l) => l !== l0).sort((a, b) => near(a, l0) - near(b, l0))]
+    } else return { ok: false, found: false, error: `label "${label}" not found on screen`, seen: o.lines.slice(0, 10).map((l) => l.text) }
+  }
+  const nums = lines.map((l) => ({ line: l, value: parseNumberToken(l.text) })).filter((x) => x.value !== null) as { line: OcrLine; value: number }[]
+  if (!nums.length) return { ok: false, found: false, error: 'no number found', seen: o.lines.slice(0, 10).map((l) => l.text) }
+  const idx = Math.min(Math.max(Number(args.index) || 0, 0), nums.length - 1)
+  const hit = nums[idx]
+  return { ok: true, found: true, value: hit.value, raw: hit.line.text, line: { cx: hit.line.cx, cy: hit.line.cy }, candidates: nums.length }
+}
+async function watchValue(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const cond = String(args.condition ?? 'change').toLowerCase()
+  if (!['change', 'increase', 'decrease', 'above', 'below', 'equals'].includes(cond)) return { ok: false, error: 'condition must be change|increase|decrease|above|below|equals' }
+  const thr = Number(args.value)
+  if (['above', 'below', 'equals'].includes(cond) && !Number.isFinite(thr)) return { ok: false, error: `condition ${cond} requires value` }
+  const timeout = Math.min(Math.max(Number(args.timeoutMs) || 10_000, 500), 40_000)
+  const interval = Math.min(Math.max(Number(args.intervalMs) || 700, 300), 3000)
+  const rn = () => readNumber(env, deviceId, { region: args.region, label: args.label }, opts)
+  const start = Date.now()
+  const first = await rn(); let polls = 1
+  if (!first.ok) return { ok: false, error: first.error, polls }
+  const from = first.value as number
+  const test = (v: number) => cond === 'change' ? v !== from : cond === 'increase' ? v > from : cond === 'decrease' ? v < from : cond === 'above' ? v > thr : cond === 'below' ? v < thr : v === thr
+  if (['above', 'below', 'equals'].includes(cond) && test(from)) return { ok: true, matched: true, from, to: from, delta: 0, waitedMs: 0, polls, alreadyTrue: true }
+  while (Date.now() - start < timeout) {
+    await new Promise((r) => setTimeout(r, interval))
+    const cur = await rn(); polls++
+    if (!cur.ok) continue // number may flicker away mid-animation
+    const v = cur.value as number
+    if (test(v)) return { ok: true, matched: true, from, to: v, delta: v - from, raw: cur.raw, waitedMs: Date.now() - start, polls }
+  }
+  return { ok: false, matched: false, from, error: `value did not satisfy '${cond}' within ${timeout}ms`, waitedMs: Date.now() - start, polls }
+}
+/** calibrate: tap, then measure how long the screen takes to react. */
+async function calibrate(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const x = Number(args.x), y = Number(args.y)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, error: 'calibrate requires x, y' }
+  const timeout = Math.min(Math.max(Number(args.timeoutMs) || 1500, 200), 5000)
+  const interval = Math.min(Math.max(Number(args.intervalMs) || 100, 50), 500)
+  const before = await hashOf(env, deviceId)
+  if (!before.ok) return { ok: false, error: before.error ?? 'screen_hash failed' }
+  const t = await executeTool(env, deviceId, 'tap', { x, y }, { ...opts, internal: true })
+  if (!t.ok) return { ok: false, error: `tap failed: ${t.error}` }
+  const t0 = Date.now(); let polls = 0
+  while (Date.now() - t0 < timeout) {
+    const h = await hashOf(env, deviceId); polls++
+    if (h.ok && h.hash !== before.hash) return { ok: true, changed: true, reactedMs: Date.now() - t0, polls, tapped: { x, y }, hint: 'control works; wait about reactedMs after tapping before observing' }
+    await new Promise((r) => setTimeout(r, interval))
+  }
+  return { ok: true, changed: false, reactedMs: null, polls, tapped: { x, y }, hint: 'no visible reaction — wrong spot, disabled control, or a change too small for screen_hash (try act_and_see)' }
+}
+
 // ---------------------------------------------------------------- v1.9 screen memory
 
 interface ScreenRec { name: string; hash: string; words: string[]; app?: string; ts: number }
@@ -619,6 +711,9 @@ function observationMatched(name: string, r: ToolResult, minChange: number): [bo
     case 'wait_for_text': { const m = r.match as { cx: number; cy: number } | undefined; return [r.found === true, m?.cx, m?.cy] }
     case 'wait_for_element': { const e = r.element as { cx: number; cy: number } | undefined; return [r.found === true, e?.cx, e?.cy] }
     case 'find_objects': { const o = (d.objects as { cx: number; cy: number }[] | undefined) ?? []; return [o.length > 0, o[0]?.cx, o[0]?.cy] }
+    case 'track_object': { const p = d.predicted as { x: number; y: number } | undefined; return [d.found === true, p?.x ?? (d.cx as number | undefined), p?.y ?? (d.cy as number | undefined)] }
+    case 'read_number': return [typeof r.value === 'number', (r.line as { cx?: number } | undefined)?.cx, (r.line as { cy?: number } | undefined)?.cy]
+    case 'watch_value': return [r.ok === true && r.matched === true, undefined, undefined]
     case 'identify_screen': return [typeof r.screenName === 'string' && !!r.screenName, undefined, undefined]
     default: return [false, undefined, undefined]
   }

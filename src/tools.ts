@@ -548,6 +548,90 @@ export const TOOLS: ToolDef[] = [
       required: ['enabled'],
     },
   },
+  // ---------------------------------------------------------------- v2.1 colour discovery, motion, numbers, calibration
+  {
+    name: 'sample_colors',
+    description:
+      'Discover the dominant colours on screen (or in a region) WITHOUT guessing hex values: returns up to maxColors clusters with hex, share (%), pixel count and centre. ' +
+      'Greys/blacks/whites are skipped by default so you get the game\'s actual enemy/gem/button colours. Use it once per game, then feed the hex values into find_color / find_objects / auto_react / tap_color. Runs on the phone in ~100ms.',
+    parameters: {
+      type: 'object',
+      properties: {
+        region: { type: 'object', description: '{x,y,w,h} area to analyse (default full screen)' },
+        maxColors: { type: 'integer', description: '1-24 (default 8)', minimum: 1, maximum: 24, default: 8 },
+        quant: { type: 'integer', description: 'Colour bucket size per channel 8-64 (default 32; smaller = more distinct colours)', minimum: 8, maximum: 64, default: 32 },
+        ignoreGrey: { type: 'boolean', description: 'Skip low-saturation colours (default true)', default: true },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'track_object',
+    description:
+      'Measure where a coloured object is MOVING: samples its centre N times on the phone and returns velocity (px/s in x and y), direction, speed and a PREDICTED position predictMs in the future. ' +
+      'Use it to intercept moving targets (tap where the enemy WILL be), to time jumps (obstacle arriving in ~ms), or to detect when something has stopped (speed ~0). Combine with tap_sequence / auto_react.',
+    parameters: {
+      type: 'object',
+      properties: {
+        color: { type: 'string', description: '"#rrggbb" of the object' },
+        tolerance: { type: 'integer', description: '0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
+        region: { type: 'object', description: '{x,y,w,h} search area' },
+        minCount: { type: 'integer', description: 'Min matching px to count as visible (default 20)', minimum: 1, default: 20 },
+        samples: { type: 'integer', description: 'Positions to sample 2-12 (default 5)', minimum: 2, maximum: 12, default: 5 },
+        intervalMs: { type: 'integer', description: 'Gap between samples 40-1000 (default 120)', minimum: 40, maximum: 1000, default: 120 },
+        predictMs: { type: 'integer', description: 'How far ahead to predict 0-3000 (default 300)', minimum: 0, maximum: 3000, default: 300 },
+      },
+      required: ['color'],
+    },
+  },
+  {
+    name: 'read_number',
+    description:
+      'Read a NUMBER from the screen via OCR (score, coins, timer, HP %, level). Pass a region around the number for reliability; optional label (e.g. "score") picks the line containing that word. ' +
+      'Handles separators ("1,250" / "1.250"), suffixes ("12.5K" → 12500), and mm:ss timers (returns seconds). Returns value, raw text and the line position. Much cheaper for the model than reading a screenshot.',
+    parameters: {
+      type: 'object',
+      properties: {
+        region: { type: 'object', description: '{x,y,w,h} around the number (strongly recommended)' },
+        label: { type: 'string', description: 'Word that appears next to the number, e.g. "score", "coins"' },
+        index: { type: 'integer', description: 'Which number if several (default 0)', minimum: 0, default: 0 },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'watch_value',
+    description:
+      'Wait until a NUMBER on screen changes / rises / falls / reaches a threshold (score increased, timer hit 0, HP below 30, coins >= 100). Polls read_number on the phone. ' +
+      'Returns from, to, delta, waitedMs. Use it to know when your action paid off or when danger starts, instead of taking screenshots in a loop.',
+    parameters: {
+      type: 'object',
+      properties: {
+        region: { type: 'object', description: '{x,y,w,h} around the number' },
+        label: { type: 'string', description: 'Word next to the number' },
+        condition: { type: 'string', description: 'change (default) | increase | decrease | above | below | equals' },
+        value: { type: 'number', description: 'Threshold for above/below/equals' },
+        timeoutMs: { type: 'integer', description: '500-40000 (default 10000)', minimum: 500, maximum: 40000, default: 10000 },
+        intervalMs: { type: 'integer', description: '300-3000 (default 700)', minimum: 300, maximum: 3000, default: 700 },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'calibrate',
+    description:
+      'Verify that a tap at (x,y) actually does something and measure the game\'s reaction time: taps, then polls screen_hash until the screen changes (or times out), reports reactedMs and changed. ' +
+      'Call it once on each newly-discovered control before relying on it (e.g. is this really the JUMP button? how long after the tap does the game respond?), and remember the results.',
+    parameters: {
+      type: 'object',
+      properties: {
+        x: coord('Tap x'), y: coord('Tap y'),
+        timeoutMs: { type: 'integer', description: 'Max wait for a reaction 200-5000 (default 1500)', minimum: 200, maximum: 5000, default: 1500 },
+        intervalMs: { type: 'integer', description: 'Hash poll interval 50-500 (default 100)', minimum: 50, maximum: 500, default: 100 },
+      },
+      required: ['x', 'y'],
+    },
+  },
   // ---------------------------------------------------------------- v1.9 object detection, reflex loop, screen memory
   {
     name: 'find_objects',
@@ -759,8 +843,13 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate'; error?: string } {
   switch (name) {
+    case 'sample_colors': return { action: { type: 'sample_colors', region: args.region, maxColors: args.maxColors, quant: args.quant, ignoreGrey: args.ignoreGrey } }
+    case 'track_object': return { action: { type: 'track_object', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, samples: args.samples, intervalMs: args.intervalMs, predictMs: args.predictMs } }
+    case 'read_number': return { special: 'read_number' }
+    case 'watch_value': return { special: 'watch_value' }
+    case 'calibrate': return { special: 'calibrate' }
     case 'find_objects': return { action: { type: 'find_objects', color: args.color, tolerance: args.tolerance, region: args.region, minSize: args.minSize, maxResults: args.maxResults } }
     case 'auto_react': return { action: { type: 'auto_react', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, tapOffsetX: args.tapOffsetX, tapOffsetY: args.tapOffsetY, tapX: args.tapX, tapY: args.tapY, maxTriggers: args.maxTriggers, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs, cooldownMs: args.cooldownMs, lanes: args.lanes, stopColor: args.stopColor, stopRegion: args.stopRegion, stopMinCount: args.stopMinCount } }
     case 'record_macro': return { special: 'record_macro' }
@@ -916,7 +1005,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '2.0.0',
+      version: '2.1.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
@@ -933,8 +1022,8 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
-  'observe', 'recent_actions', 'find_objects', 'identify_screen',
+  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value',
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */
-export const OBSERVATION_TOOLS: ReadonlySet<string> = new Set(['find_color', 'find_colors', 'get_pixels', 'wait_pixel', 'watch_color', 'screen_diff', 'find_image', 'wait_for_element', 'read_text', 'wait_for_text', 'find_objects', 'identify_screen'])
+export const OBSERVATION_TOOLS: ReadonlySet<string> = new Set(['find_color', 'find_colors', 'get_pixels', 'wait_pixel', 'watch_color', 'screen_diff', 'find_image', 'wait_for_element', 'read_text', 'wait_for_text', 'find_objects', 'identify_screen', 'track_object', 'read_number', 'watch_value'])

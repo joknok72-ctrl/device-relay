@@ -199,6 +199,17 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       const region = parseRegion(a.region); if (region) action.region = region
       return { action }
     }
+    case 'sample_colors': {
+      const action: Action = { type: 'sample_colors', maxColors: isNum(a.maxColors) ? clamp(Math.round(a.maxColors), 1, 24) : 8, quant: isNum(a.quant) ? clamp(Math.round(a.quant), 8, 64) : 32, ignoreGrey: a.ignoreGrey !== false }
+      const region = parseRegion(a.region); if (region) action.region = region
+      return { action }
+    }
+    case 'track_object': {
+      if (typeof a.color !== 'string' || !HEX.test(a.color.trim())) return { error: 'track_object requires color "#RRGGBB"' }
+      const action: Action = { type: 'track_object', color: normHex(a.color), tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24, minCount: isNum(a.minCount) ? clamp(Math.round(a.minCount), 1, 1_000_000) : 20, samples: isNum(a.samples) ? clamp(Math.round(a.samples), 2, 12) : 5, intervalMs: isNum(a.intervalMs) ? clamp(Math.round(a.intervalMs), 40, 1000) : 120, predictMs: isNum(a.predictMs) ? clamp(Math.round(a.predictMs), 0, 3000) : 300 }
+      const region = parseRegion(a.region); if (region) action.region = region
+      return { action }
+    }
     case 'find_objects': {
       if (typeof a.color !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(a.color.trim())) return { error: 'find_objects requires color "#RRGGBB"' }
       const action: Action = { type: 'find_objects', color: '#' + a.color.trim().replace('#', '').toLowerCase(), tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24, minSize: isNum(a.minSize) ? clamp(Math.round(a.minSize), 1, 2000) : 12, maxResults: isNum(a.maxResults) ? clamp(Math.round(a.maxResults), 1, 40) : 10 }

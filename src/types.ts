@@ -57,6 +57,9 @@ export type Action =
   | { type: 'find_colors'; colors: string[]; tolerance?: number; region?: Region }
   | { type: 'stream'; enabled: boolean; fps?: number; maxWidth?: number; quality?: number }
   // v1.9
+  // v2.1
+  | { type: 'sample_colors'; region?: Region; maxColors?: number; quant?: number; ignoreGrey?: boolean }
+  | { type: 'track_object'; color: string; tolerance?: number; region?: Region; minCount?: number; samples?: number; intervalMs?: number; predictMs?: number }
   | { type: 'find_objects'; color: string; tolerance?: number; region?: Region; minSize?: number; maxResults?: number }
   | { type: 'auto_react'; color: string; tolerance?: number; region?: Region; minCount?: number; tapOffsetX?: number; tapOffsetY?: number; tapX?: number; tapY?: number; maxTriggers?: number; timeoutMs?: number; intervalMs?: number; cooldownMs?: number;
       /** v2.0: extra lanes (each its own colour/region/reaction); the top-level fields act as lane 0 */
@@ -87,6 +90,7 @@ export function actionTimeoutMs(a: Action): number {
     case 'watch_color': case 'wait_pixel': return base + (a.timeoutMs ?? 5000)
     case 'read_text': return 25_000
     case 'auto_react': return base + (a.timeoutMs ?? 10_000)
+    case 'track_object': return base + (a.samples ?? 5) * (a.intervalMs ?? 120)
     default: return base
   }
 }
@@ -99,14 +103,14 @@ export const ACTION_TYPES = [
   'tap_sequence', 'multi_tap', 'swipe_path', 'repeat_tap', 'pixel', 'find_color', 'screen_hash',
   'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
   'read_text', 'find_colors', 'stream',
-  'find_objects', 'auto_react',
+  'find_objects', 'auto_react', 'sample_colors', 'track_object',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */
 export const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'screenshot', 'ping', 'ui_dump', 'list_apps', 'current_app', 'get_notifications', 'device_info',
   'pixel', 'find_color', 'screen_hash', 'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
-  'read_text', 'find_colors', 'stream', 'find_objects',
+  'read_text', 'find_colors', 'stream', 'find_objects', 'sample_colors', 'track_object',
 ])
 
 /** Message sent server -> phone */
