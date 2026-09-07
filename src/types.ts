@@ -47,11 +47,18 @@ export type Action =
   | { type: 'pixel'; points: Point[] }
   | { type: 'find_color'; color: string; tolerance?: number; region?: Region }
   | { type: 'screen_hash' }
+  // v1.6 — smarter perception (all on-device)
+  | { type: 'screen_diff'; threshold?: number; cell?: number }
+  | { type: 'watch_color'; color: string; tolerance?: number; region?: Region; appear?: boolean; timeoutMs?: number; intervalMs?: number; minCount?: number }
+  | { type: 'find_image'; image: string; threshold?: number; region?: Region; maxResults?: number }
+  | { type: 'wait_pixel'; x: number; y: number; color: string; tolerance?: number; appear?: boolean; timeoutMs?: number; intervalMs?: number }
 
 export interface Point { x: number; y: number }
 export interface SeqPoint extends Point { delayMs?: number; durationMs?: number }
 export interface Region { x: number; y: number; w: number; h: number }
 export interface Note { text: string; ts: number }
+/** Named, replayable tool sequence stored per device. */
+export interface Macro { name: string; steps: { name: string; arguments?: Record<string, unknown> }[]; description?: string; ts: number; runs?: number }
 
 /** Per-command timeout: long on-phone sequences need more than the default 15s. */
 export function actionTimeoutMs(a: Action): number {
@@ -62,6 +69,7 @@ export function actionTimeoutMs(a: Action): number {
     case 'swipe_path': return base + (a.duration ?? 500)
     case 'long_press': return base + (a.duration ?? 800)
     case 'drag': return base + (a.duration ?? 600) + (a.holdMs ?? 500)
+    case 'watch_color': case 'wait_pixel': return base + (a.timeoutMs ?? 5000)
     default: return base
   }
 }
@@ -72,12 +80,13 @@ export const ACTION_TYPES = [
   'ui_dump', 'tap_element', 'type_text', 'open_app', 'open_url', 'list_apps', 'current_app',
   'pinch', 'drag', 'set_clipboard', 'get_notifications', 'device_info', 'scroll_element',
   'tap_sequence', 'multi_tap', 'swipe_path', 'repeat_tap', 'pixel', 'find_color', 'screen_hash',
+  'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */
 export const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'screenshot', 'ping', 'ui_dump', 'list_apps', 'current_app', 'get_notifications', 'device_info',
-  'pixel', 'find_color', 'screen_hash',
+  'pixel', 'find_color', 'screen_hash', 'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
 ])
 
 /** Message sent server -> phone */

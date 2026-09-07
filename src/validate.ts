@@ -139,6 +139,35 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
     }
     case 'screen_hash':
       return { action: { type: 'screen_hash' } }
+    case 'screen_diff':
+      return { action: { type: 'screen_diff', threshold: isNum(a.threshold) ? clamp(Math.round(a.threshold), 4, 128) : 32, cell: isNum(a.cell) ? clamp(Math.round(a.cell), 20, 400) : 60 } }
+    case 'watch_color': {
+      if (typeof a.color !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(a.color.trim())) return { error: 'watch_color requires color "#RRGGBB"' }
+      const action: Action = {
+        type: 'watch_color', color: '#' + a.color.trim().replace('#', '').toLowerCase(),
+        tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24,
+        appear: a.appear !== false,
+        timeoutMs: isNum(a.timeoutMs) ? clamp(Math.round(a.timeoutMs), 200, 30_000) : 5000,
+        intervalMs: isNum(a.intervalMs) ? clamp(Math.round(a.intervalMs), 50, 2000) : 150,
+        minCount: isNum(a.minCount) ? clamp(Math.round(a.minCount), 1, 1_000_000) : 20,
+      }
+      const region = parseRegion(a.region); if (region) action.region = region
+      return { action }
+    }
+    case 'wait_pixel': {
+      if (!isNum(a.x) || !isNum(a.y)) return { error: 'wait_pixel requires numeric x,y' }
+      if (typeof a.color !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(a.color.trim())) return { error: 'wait_pixel requires color "#RRGGBB"' }
+      return { action: { type: 'wait_pixel', x: a.x, y: a.y, color: '#' + a.color.trim().replace('#', '').toLowerCase(),
+        tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24, appear: a.appear !== false,
+        timeoutMs: isNum(a.timeoutMs) ? clamp(Math.round(a.timeoutMs), 200, 30_000) : 5000,
+        intervalMs: isNum(a.intervalMs) ? clamp(Math.round(a.intervalMs), 50, 2000) : 100 } }
+    }
+    case 'find_image': {
+      if (typeof a.image !== 'string' || a.image.length < 16 || a.image.length > 400_000) return { error: 'find_image requires image (base64 PNG/JPEG, <= 300KB)' }
+      const action: Action = { type: 'find_image', image: a.image.replace(/^data:image\/\w+;base64,/, ''), threshold: isNum(a.threshold) ? clamp(a.threshold, 0.5, 1) : 0.85, maxResults: isNum(a.maxResults) ? clamp(Math.round(a.maxResults), 1, 20) : 5 }
+      const region = parseRegion(a.region); if (region) action.region = region
+      return { action }
+    }
     case 'back': case 'home': case 'recents': case 'notifications': case 'quick_settings': case 'wake':
     case 'lock': case 'ping': case 'ui_dump': case 'list_apps': case 'current_app': case 'device_info':
       return { action: { type: a.type } as Action }
