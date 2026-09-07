@@ -77,7 +77,12 @@ app.get('/agent/:token', async (c) => {
   const auth = await authenticate(c.env, token)
   if (!auth) return c.text('unauthorized', 401)
   const infos = await allDevices(c.env, auth)
-  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos, auth), 200, { 'Cache-Control': 'no-store' })
+  const target = infos.find((d) => d.online) ?? infos[0]
+  let notes: import('./types').Note[] = []
+  if (target) {
+    try { notes = ((await (await room(c, target.deviceId).fetch(`https://do/notes?deviceId=${target.deviceId}`)).json()) as { notes: import('./types').Note[] }).notes } catch { /* ignore */ }
+  }
+  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos, auth, notes), 200, { 'Cache-Control': 'no-store' })
 })
 
 /** MCP with token in the URL (for clients that cannot set headers) */
@@ -254,6 +259,28 @@ app.get('/api/devices/:deviceId/last-screenshot', async (c) => {
   return c.json(await (await room(c, deviceId).fetch(`https://do/last-screenshot?deviceId=${deviceId}`)).json())
 })
 
+/** Persistent per-device notes (memory across AI sessions). */
+app.get('/api/devices/:deviceId/notes', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  const g = guardDevice(c, deviceId); if (g) return g
+  return c.json(await (await room(c, deviceId).fetch(`https://do/notes?deviceId=${deviceId}`)).json())
+})
+app.post('/api/devices/:deviceId/notes', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  const g = guardDevice(c, deviceId); if (g) return g
+  const body = await c.req.text()
+  return c.json(await (await room(c, deviceId).fetch(`https://do/notes?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })).json())
+})
+app.delete('/api/devices/:deviceId/notes', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  const g = guardDevice(c, deviceId); if (g) return g
+  const idx = c.req.query('index')
+  return c.json(await (await room(c, deviceId).fetch(`https://do/notes?deviceId=${deviceId}${idx !== undefined ? `&index=${idx}` : ''}`, { method: 'DELETE' })).json())
+})
+
 /** Send ONE automation command. Body: { "action": {...}, "wait": true } */
 app.post('/api/devices/:deviceId/command', async (c) => {
   const deviceId = c.req.param('deviceId')
@@ -345,6 +372,9 @@ async function screenshotHandler(c: any, forceFormat?: 'jpeg') {
   const mw = Number(c.req.query('maxWidth')); if (mw) args.maxWidth = mw
   const q = Number(c.req.query('quality')); if (q) args.quality = q
   const fmt = forceFormat ?? c.req.query('format'); if (fmt) args.format = fmt
+  const grid = Number(c.req.query('grid')); if (grid) args.grid = grid
+  const region = c.req.query('region') // "x,y,w,h"
+  if (region) { const [x, y, w, h] = region.split(',').map(Number); if ([x, y, w, h].every(Number.isFinite)) args.region = { x, y, w, h } }
   const res = await executeTool(c.env, deviceId, 'capture_screen', args)
   if (!res.ok || !res.image) return c.json({ error: res.error ?? 'no screenshot' }, 502)
   const bin = Uint8Array.from(atob(res.image.base64), (ch) => ch.charCodeAt(0))

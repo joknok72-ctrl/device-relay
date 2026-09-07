@@ -4,7 +4,11 @@
 #   export RELAY_URL=https://device-relay.xxx.workers.dev RELAY_TOKEN=... [RELAY_DEVICE=my-phone]
 #   ./phone.sh devices                 # list phones
 #   ./phone.sh ui                      # visible elements with coordinates
-#   ./phone.sh shot [out.png] [maxWidth] [png|jpeg]   # screenshot -> file (default 540px PNG)
+#   ./phone.sh shot [out.png] [maxWidth] [png|jpeg] [grid] [x,y,w,h]   # screenshot -> file; grid=100 draws labelled coordinate grid; region crops
+#   ./phone.sh see <tap X Y | swipe X1 Y1 X2 Y2 [ms] | back | home | ...> # GAMES: action + wait + screenshot (see.png) in ONE call
+#   ./phone.sh seq '[{"x":..,"y":..,"delayMs":..},..]' | path '[{"x":..,"y":..},..]' [ms] | rep X Y COUNT [ms] | mtap '[{..},{..}]'
+#   ./phone.sh px '[{"x":..,"y":..}]' | color '#rrggbb' [tol] | waitscreen [change|stable] [ms]
+#   ./phone.sh remember "note" | recall | forget [index|-1]
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -51,7 +55,34 @@ for e in d.get("elements",[]):
     f="".join(c for c,k in (("C","clickable"),("E","editable"),("S","scrollable")) if e.get(k))
     label=(e.get("text") or e.get("desc") or e.get("hint") or "")[:60]
     print("  [%3d] (%4d,%4d) %-3s %-14s %-24s %r" % (e["i"], e["cx"], e["cy"], f, e.get("cls",""), e.get("id",""), label))' "$@" ;;
-  shot)    out="${1:-screen.png}"; d=$(dev); q="maxWidth=${2:-540}&format=${3:-png}"; curl -sf "${AUTH[@]}" -D /dev/stderr -o "$out" "$RELAY_URL/api/devices/$d/screenshot.png?$q" 2>&1 | grep -i "^x-screen\|^x-image" || true; echo "saved $out" ;;
+  shot)    out="${1:-screen.png}"; d=$(dev); q="maxWidth=${2:-540}&format=${3:-png}&grid=${4:-0}${5:+&region=$5}"; curl -sf "${AUTH[@]}" -D /dev/stderr -o "$out" "$RELAY_URL/api/devices/$d/screenshot.png?$q" 2>&1 | grep -i "^x-screen\|^x-image" || true; echo "saved $out" ;;
+  see)     # act_and_see: see <cmd> <args...>  -> runs the input tool, waits, saves see.png, prints result
+           sub="$1"; shift; case "$sub" in
+             tap) act="{\"name\":\"tap\",\"arguments\":{\"x\":$1,\"y\":$2}}" ;;
+             dtap) act="{\"name\":\"double_tap\",\"arguments\":{\"x\":$1,\"y\":$2}}" ;;
+             long) act="{\"name\":\"long_press\",\"arguments\":{\"x\":$1,\"y\":$2,\"duration\":${3:-800}}}" ;;
+             swipe) act="{\"name\":\"swipe\",\"arguments\":{\"x1\":$1,\"y1\":$2,\"x2\":$3,\"y2\":$4,\"duration\":${5:-300}}}" ;;
+             back) act='{"name":"press_back"}' ;; home) act='{"name":"press_home"}' ;;
+             tapel) act="$(python3 -c 'import json,sys; print(json.dumps({"name":"tap_element","arguments":{"text":sys.argv[1]}}))' "$*")" ;;
+             *) echo "see: unknown sub-command $sub" >&2; exit 1 ;;
+           esac
+           d=$(dev); curl -s "${AUTH[@]}" -d "{\"name\":\"act_and_see\",\"arguments\":{\"action\":$act,\"waitMs\":${SEE_WAIT:-400},\"maxWidth\":${SEE_WIDTH:-720},\"format\":\"jpeg\",\"grid\":${SEE_GRID:-0}}}" "$RELAY_URL/api/devices/$d/tools/call" | python3 -c '
+import json,sys,base64; d=json.load(sys.stdin); img=d.pop("image",None)
+if img: open("see.png","wb").write(base64.b64decode(img["base64"])); d["saved"]="see.png (%dx%d scale=%s)"%(img["w"],img["h"],img["scale"])
+print(json.dumps(d,ensure_ascii=False,indent=1))' ;;
+  seq)     call tap_sequence "{\"points\":$1}" | pretty ;;
+  path)    call swipe_path "{\"points\":$1,\"duration\":${2:-500}}" | pretty ;;
+  rep)     call repeat_tap "{\"x\":$1,\"y\":$2,\"count\":${3:-5},\"intervalMs\":${4:-100}}" | pretty ;;
+  mtap)    call multi_tap "{\"points\":$1,\"duration\":${2:-60}}" | pretty ;;
+  px)      call get_pixels "{\"points\":$1}" | pretty ;;
+  color)   call find_color "{\"color\":\"$1\",\"tolerance\":${2:-24}}" | pretty ;;
+  waitscreen) call wait_for_screen "{\"mode\":\"${1:-change}\",\"timeoutMs\":${2:-5000}}" | pretty ;;
+  remember) call remember "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1]}))' "$*")" | pretty ;;
+  recall)  call recall | python3 -c '
+import json,sys; d=json.load(sys.stdin)
+for n in d.get("notes",[]): print("  [%d] %s" % (n["index"], n["text"]))
+print("(%d notes)" % d.get("count",0))' ;;
+  forget)  call recall "{\"forget\":${1:--1}}" | pretty ;;
   drag)    call drag "{\"x1\":$1,\"y1\":$2,\"x2\":$3,\"y2\":$4,\"holdMs\":${5:-500}}" | pretty ;;
   pinch)   call pinch "{\"x\":$1,\"y\":$2,\"scale\":$3}" | pretty ;;
   info)    call get_device_info | pretty ;;
@@ -84,5 +115,5 @@ for e in d.get("elements",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,26p' "$0" ;;
+  *) sed -n '2,30p' "$0" ;;
 esac
