@@ -1,7 +1,25 @@
-import type { Action } from './types'
+import type { Action, Point, Region, SeqPoint } from './types'
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi)
+
+function parsePoints(v: unknown, max = 50): Point[] | null {
+  if (!Array.isArray(v) || v.length === 0 || v.length > max) return null
+  const out: Point[] = []
+  for (const p of v) {
+    const o = p as Record<string, unknown>
+    if (!o || !isNum(o.x) || !isNum(o.y)) return null
+    out.push({ x: o.x, y: o.y })
+  }
+  return out
+}
+function parseRegion(v: unknown): Region | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const r = v as Record<string, unknown>
+  if (![r.x, r.y, r.w, r.h].every(isNum)) return undefined
+  if ((r.w as number) < 8 || (r.h as number) < 8) return undefined
+  return { x: Math.round(r.x as number), y: Math.round(r.y as number), w: Math.round(r.w as number), h: Math.round(r.h as number) }
+}
 
 /** Validate untrusted JSON into a typed Action. Returns error string if invalid. */
 export function parseAction(input: unknown): { action?: Action; error?: string } {
@@ -69,8 +87,58 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       if (isNum(a.quality)) action.quality = clamp(Math.round(a.quality), 10, 100)
       if (a.format === 'jpeg' || a.format === 'jpg') action.format = 'jpeg'
       else if (a.format === 'png') action.format = 'png'
+      if (isNum(a.grid) && a.grid > 0) action.grid = clamp(Math.round(a.grid), 20, 500)
+      const region = parseRegion(a.region)
+      if (region) action.region = region
       return { action }
     }
+    case 'tap_sequence': {
+      if (!Array.isArray(a.points) || a.points.length === 0 || a.points.length > 50) return { error: 'tap_sequence requires points[1..50]' }
+      const points: SeqPoint[] = []
+      let total = 0
+      for (const p of a.points as Record<string, unknown>[]) {
+        if (!p || !isNum(p.x) || !isNum(p.y)) return { error: 'each point needs numeric x,y' }
+        const sp: SeqPoint = { x: p.x, y: p.y }
+        if (isNum(p.delayMs)) sp.delayMs = clamp(Math.round(p.delayMs), 0, 10_000)
+        if (isNum(p.durationMs)) sp.durationMs = clamp(Math.round(p.durationMs), 20, 5_000)
+        total += (sp.delayMs ?? 0) + (sp.durationMs ?? 60)
+        points.push(sp)
+      }
+      if (total > 50_000) return { error: 'tap_sequence total time must be <= 50s' }
+      return { action: { type: 'tap_sequence', points } }
+    }
+    case 'multi_tap': {
+      const points = parsePoints(a.points, 10)
+      if (!points) return { error: 'multi_tap requires points[1..10] with numeric x,y' }
+      return { action: { type: 'multi_tap', points, duration: isNum(a.duration) ? clamp(a.duration, 20, 5000) : 60 } }
+    }
+    case 'swipe_path': {
+      const points = parsePoints(a.points, 50)
+      if (!points || points.length < 2) return { error: 'swipe_path requires points[2..50]' }
+      return { action: { type: 'swipe_path', points, duration: isNum(a.duration) ? clamp(a.duration, 50, 30_000) : 500 } }
+    }
+    case 'repeat_tap': {
+      if (!isNum(a.x) || !isNum(a.y)) return { error: 'repeat_tap requires numeric x,y' }
+      const count = isNum(a.count) ? clamp(Math.round(a.count), 1, 100) : 5
+      const intervalMs = isNum(a.intervalMs) ? clamp(Math.round(a.intervalMs), 30, 5000) : 100
+      if (count * (intervalMs + 60) > 50_000) return { error: 'repeat_tap total time must be <= 50s' }
+      return { action: { type: 'repeat_tap', x: a.x, y: a.y, count, intervalMs } }
+    }
+    case 'pixel': {
+      const points = parsePoints(a.points, 50)
+      if (!points) return { error: 'pixel requires points[1..50]' }
+      return { action: { type: 'pixel', points } }
+    }
+    case 'find_color': {
+      if (typeof a.color !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(a.color.trim())) return { error: 'find_color requires color "#RRGGBB"' }
+      const color = '#' + a.color.trim().replace('#', '').toLowerCase()
+      const action: Action = { type: 'find_color', color, tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24 }
+      const region = parseRegion(a.region)
+      if (region) action.region = region
+      return { action }
+    }
+    case 'screen_hash':
+      return { action: { type: 'screen_hash' } }
     case 'back': case 'home': case 'recents': case 'notifications': case 'quick_settings': case 'wake':
     case 'lock': case 'ping': case 'ui_dump': case 'list_apps': case 'current_app': case 'device_info':
       return { action: { type: a.type } as Action }

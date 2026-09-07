@@ -19,7 +19,7 @@ export type Action =
   | { type: 'recents' }
   | { type: 'notifications' }
   | { type: 'lock' }
-  | { type: 'screenshot'; maxWidth?: number; quality?: number; format?: 'png' | 'jpeg' }
+  | { type: 'screenshot'; maxWidth?: number; quality?: number; format?: 'png' | 'jpeg'; grid?: number; region?: Region }
   | { type: 'ping' }
   | { type: 'double_tap'; x: number; y: number }
   | { type: 'quick_settings' }
@@ -38,17 +38,46 @@ export type Action =
   | { type: 'get_notifications'; limit?: number }
   | { type: 'device_info' }
   | { type: 'scroll_element'; text?: string; elementId?: string; direction: 'forward' | 'backward' }
+  // v1.5 — games / precision input (executed ON the phone for exact timing)
+  | { type: 'tap_sequence'; points: SeqPoint[] }
+  | { type: 'multi_tap'; points: Point[]; duration?: number }
+  | { type: 'swipe_path'; points: Point[]; duration?: number }
+  | { type: 'repeat_tap'; x: number; y: number; count: number; intervalMs: number }
+  // v1.5 — vision helpers
+  | { type: 'pixel'; points: Point[] }
+  | { type: 'find_color'; color: string; tolerance?: number; region?: Region }
+  | { type: 'screen_hash' }
+
+export interface Point { x: number; y: number }
+export interface SeqPoint extends Point { delayMs?: number; durationMs?: number }
+export interface Region { x: number; y: number; w: number; h: number }
+export interface Note { text: string; ts: number }
+
+/** Per-command timeout: long on-phone sequences need more than the default 15s. */
+export function actionTimeoutMs(a: Action): number {
+  const base = 15_000
+  switch (a.type) {
+    case 'tap_sequence': return base + a.points.reduce((t, p) => t + (p.delayMs ?? 0) + (p.durationMs ?? 60), 0)
+    case 'repeat_tap': return base + a.count * (a.intervalMs + 60)
+    case 'swipe_path': return base + (a.duration ?? 500)
+    case 'long_press': return base + (a.duration ?? 800)
+    case 'drag': return base + (a.duration ?? 600) + (a.holdMs ?? 500)
+    default: return base
+  }
+}
 
 export const ACTION_TYPES = [
   'tap', 'long_press', 'swipe', 'back', 'home', 'recents',
   'notifications', 'lock', 'screenshot', 'ping', 'double_tap', 'quick_settings', 'wake',
   'ui_dump', 'tap_element', 'type_text', 'open_app', 'open_url', 'list_apps', 'current_app',
   'pinch', 'drag', 'set_clipboard', 'get_notifications', 'device_info', 'scroll_element',
+  'tap_sequence', 'multi_tap', 'swipe_path', 'repeat_tap', 'pixel', 'find_color', 'screen_hash',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */
 export const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'screenshot', 'ping', 'ui_dump', 'list_apps', 'current_app', 'get_notifications', 'device_info',
+  'pixel', 'find_color', 'screen_hash',
 ])
 
 /** Message sent server -> phone */
