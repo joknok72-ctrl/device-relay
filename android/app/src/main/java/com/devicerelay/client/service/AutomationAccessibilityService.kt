@@ -37,6 +37,9 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.tasks.await
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -604,15 +607,15 @@ class AutomationAccessibilityService : AccessibilityService() {
         }
         val recognizer = recognizerFor(a.lang)
         return try {
-            val result = kotlinx.coroutines.tasks.await(recognizer.process(com.google.mlkit.vision.common.InputImage.fromBitmap(bmp, 0)))
+            val result: Text = recognizer.process(InputImage.fromBitmap(bmp, 0)).await()
             val lines = buildJsonArray {
-                for (block in result.textBlocks) for (line in block.lines) {
-                    val b = line.boundingBox ?: continue
+                for (block: Text.TextBlock in result.textBlocks) for (line: Text.Line in block.lines) {
+                    val b: Rect = line.boundingBox ?: continue
                     add(buildJsonObject {
                         put("text", line.text)
                         put("x", b.left + ox); put("y", b.top + oy); put("w", b.width()); put("h", b.height())
                         put("cx", b.centerX() + ox); put("cy", b.centerY() + oy)
-                        line.confidence?.let { put("confidence", Math.round(it * 100) / 100.0) }
+                        put("confidence", Math.round(line.confidence * 100) / 100.0)
                     })
                 }
             }
