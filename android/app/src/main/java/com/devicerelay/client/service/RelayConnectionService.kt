@@ -134,7 +134,7 @@ class RelayConnectionService : Service() {
     }
     private fun installBotStatusHook() {
         BotEngine.onStatus = { s ->
-            val msg = com.devicerelay.client.net.BotStatusMessage(botId = s.botId, name = s.name, running = s.running, ticks = s.ticks, fired = s.fired, lastRule = s.lastRule, startedAt = s.startedAt, stoppedBy = s.stoppedBy, error = s.error, ts = System.currentTimeMillis())
+            val msg = com.devicerelay.client.net.BotStatusMessage(botId = s.botId, name = s.name, running = s.running, ticks = s.ticks, fired = s.fired, lastRule = s.lastRule, startedAt = s.startedAt, stoppedBy = s.stoppedBy, error = s.error, ruleHits = s.ruleHits.takeIf { it.isNotEmpty() }, avgTickMs = s.avgTickMs, ts = System.currentTimeMillis())
             socket?.send(RelayJson.encodeToString(com.devicerelay.client.net.BotStatusMessage.serializer(), msg))
             refreshNotification()
         }

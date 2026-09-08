@@ -853,6 +853,7 @@ class AutomationAccessibilityService : AccessibilityService() {
     // ---------------------------------------------------------------- v2.6 BotEngine hooks (public, run on Main)
     suspend fun captureForBot(): Bitmap? = captureBitmap()
     fun scanColorPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?): JsonObject = scanColor(bmp, hex, tol, region)
+    fun scanObjectsPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?, minSize: Int, maxResults: Int): JsonObject = scanObjects(bmp, hex, tol, region, minSize, maxResults)
     fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString() ?: lastPackage
     /** OCR lines as (text, centre) for bot conditions; latin recognizer, reused across ticks. */
     private val botRecognizer by lazy { recognizerFor(null) }

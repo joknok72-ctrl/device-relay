@@ -17,7 +17,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -31,12 +30,16 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
- * v2.6 — runs rule-based game bots entirely on the phone.
+ * v2.6/v2.7 — runs rule-based game bots entirely on the phone.
  * Bot definitions arrive from the relay (bot_sync) as raw JSON and are persisted in SharedPreferences,
  * so the notification can start them even when the relay is unreachable.
  *
- * Rule = { name, when:[conditions], then:[actions], cooldownMs, priority, exclusive, enabled }
+ * Rule = { name, when:[conditions], then:[actions], cooldownMs, priority, exclusive, enabled, maxFires }
  * Each tick: one screenshot → evaluate rules by priority → run actions of the first (or all non-exclusive) matching rules.
+ *
+ * v2.7 additions: object_present/absent (blob detection, pick largest/nearest/topmost/lowest, size filter),
+ * multi-colour `colors:[..]` (any-of), `forMs` (condition must hold continuously), tap_all_found, aim_to_found (aimbot),
+ * aim.alternate (camera sweep), maxFires per rule, per-rule hit counters + avg tick time in status.
  */
 object BotEngine {
     private const val TAG = "BotEngine"
@@ -46,7 +49,11 @@ object BotEngine {
         val running: Boolean, val botId: String? = null, val name: String? = null,
         val ticks: Int = 0, val fired: Int = 0, val lastRule: String? = null,
         val startedAt: Long? = null, val stoppedBy: String? = null, val error: String? = null,
+        val ruleHits: Map<String, Int> = emptyMap(), val avgTickMs: Int = 0,
     )
+
+    /** What a condition "found": a single point plus (for object_present) every detected object. */
+    private class Found(val x: Int, val y: Int, val all: List<Pair<Int, Int>> = listOf(x to y))
 
     private val scope = CoroutineScope(Dispatchers.Default)
     private var job: Job? = null
@@ -83,9 +90,13 @@ object BotEngine {
         job = scope.launch {
             var ticks = 0; var fired = 0; var lastRule: String? = null; var stoppedBy = "stopped"
             val lastFired = HashMap<String, Long>()
+            val fires = HashMap<String, Int>()
             val everyLast = HashMap<String, Long>()
+            val holdSince = HashMap<String, Long>()      // v2.7 forMs: when a condition first became true
+            val altState = HashMap<String, Boolean>()    // v2.7 aim.alternate flip state
             var lastHash: String? = null
-            val textCache = HashMap<String, Pair<Long, List<Pair<String, Region?>>>>()
+            var tickTimeSum = 0L
+            val st = { Status(true, id, name, ticks, fired, lastRule, startedAt, ruleHits = fires.toMap(), avgTickMs = if (ticks > 0) (tickTimeSum / ticks).toInt() else 0) }
             try {
                 while (true) {
                     val now = SystemClock.elapsedRealtime()
@@ -102,46 +113,58 @@ object BotEngine {
                         val rname = rule.str("name") ?: "rule"
                         val cd = rule.long("cooldownMs") ?: 300L
                         if (now - (lastFired[rname] ?: Long.MIN_VALUE / 2) < cd) continue
+                        val maxFires = rule.int("maxFires") ?: 0
+                        if (maxFires > 0 && (fires[rname] ?: 0) >= maxFires) continue
                         val conds = rule["when"]?.jsonArray?.map { it.jsonObject } ?: continue
-                        var found: Pair<Int, Int>? = null
+                        var found: Found? = null
                         var all = true
-                        for (c in conds) {
-                            val (ok, pt) = eval(svc, bmp, c, lastHash, everyLast, rname, now)
+                        for ((ci, c) in conds.withIndex()) {
+                            val (ok0, f) = eval(svc, bmp, c, lastHash, everyLast, rname, now)
+                            // v2.7 forMs: condition must hold continuously
+                            val forMs = c.long("forMs") ?: 0L
+                            val key = "$rname/$ci"
+                            val ok = if (forMs <= 0) ok0 else {
+                                if (!ok0) { holdSince.remove(key); false }
+                                else { val since = holdSince.getOrPut(key) { now }; now - since >= forMs }
+                            }
                             if (!ok) { all = false; break }
-                            if (pt != null && found == null) found = pt
+                            if (f != null && found == null) found = f
                         }
                         if (!all) continue
                         // fire
                         lastFired[rname] = now; fired++; lastRule = rname; firedThisTick = true
+                        fires[rname] = (fires[rname] ?: 0) + 1
+                        if (maxFires > 0 && fires[rname] == maxFires) conds.indices.forEach { holdSince.remove("$rname/$it") }
                         val actions = rule["then"]?.jsonArray?.map { it.jsonObject } ?: emptyList()
                         var stop = false
-                        for (a in actions) {
-                            val r = runAction(svc, a, found)
+                        for ((ai, a) in actions.withIndex()) {
+                            val r = runAction(svc, a, found, bmp, "$rname/$ai", altState)
                             if (r == "stop") { stop = true; stoppedBy = "rule:$rname"; break }
                         }
-                        if (ticks % 5 == 0 || fired % 5 == 0) emit(Status(true, id, name, ticks, fired, lastRule, startedAt))
+                        if (ticks % 5 == 0 || fired % 5 == 0) emit(st())
                         if (stop) break
                         if (rule["exclusive"]?.jsonPrimitive?.booleanOrNull != false) break
                     }
                     if (stoppedBy.startsWith("rule:")) break
                     // update screen hash for screen_changed
                     lastHash = quickHash(bmp)
-                    if (!firedThisTick && ticks % 25 == 0) emit(Status(true, id, name, ticks, fired, lastRule, startedAt))
                     val spent = SystemClock.elapsedRealtime() - now
+                    tickTimeSum += spent
+                    if (!firedThisTick && ticks % 25 == 0) emit(st())
                     delay((tickMs - spent).coerceAtLeast(15))
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 stoppedBy = status.stoppedBy ?: "stopped"
-                emit(Status(false, id, name, ticks, fired, lastRule, startedAt, stoppedBy))
+                emit(st().copy(running = false, stoppedBy = stoppedBy))
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "bot crashed", e); stoppedBy = "error"
-                emit(Status(false, id, name, ticks, fired, lastRule, startedAt, stoppedBy, e.message)); return@launch
+                emit(st().copy(running = false, stoppedBy = stoppedBy, error = e.message)); return@launch
             } finally {
                 // lift any held fingers even when cancelled
                 runCatching { withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { svc.execute(Action(type = "finger_up", finger = -1)) } }
             }
-            emit(Status(false, id, name, ticks, fired, lastRule, startedAt, stoppedBy))
+            emit(st().copy(running = false, stoppedBy = stoppedBy))
         }
         return true
     }
@@ -159,34 +182,69 @@ object BotEngine {
         put("running", status.running); status.botId?.let { put("botId", it) }; status.name?.let { put("name", it) }
         put("ticks", status.ticks); put("fired", status.fired); status.lastRule?.let { put("lastRule", it) }
         status.startedAt?.let { put("startedAt", it) }; status.stoppedBy?.let { put("stoppedBy", it) }; status.error?.let { put("error", it) }
+        if (status.ruleHits.isNotEmpty()) put("ruleHits", buildJsonObject { status.ruleHits.forEach { (k, v) -> put(k, v) } })
+        put("avgTickMs", status.avgTickMs)
         put("ts", System.currentTimeMillis())
     }
 
     // ------------------------------------------------------------ conditions
-    /** returns (matched, centre-of-colour-match or null) */
-    private suspend fun eval(svc: AutomationAccessibilityService, bmp: Bitmap, c: JsonObject, lastHash: String?, everyLast: HashMap<String, Long>, rule: String, now: Long): Pair<Boolean, Pair<Int, Int>?> {
+    /** colours to test: `colors:[..]` (any-of) or single `color` */
+    private fun colorsOf(c: JsonObject): List<String> = c["colors"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }?.takeIf { it.isNotEmpty() } ?: listOfNotNull(c.str("color"))
+
+    /** returns (matched, found point(s) or null) */
+    private suspend fun eval(svc: AutomationAccessibilityService, bmp: Bitmap, c: JsonObject, lastHash: String?, everyLast: HashMap<String, Long>, rule: String, now: Long): Pair<Boolean, Found?> {
         return when (c.str("type")) {
             "always" -> true to null
             "every_ms" -> { val ms = c.long("ms") ?: 1000L; val key = "$rule/${c.hashCode()}"; val last = everyLast[key]; if (last == null || now - last >= ms) { everyLast[key] = now; true to null } else false to null }
             "color_present", "color_absent" -> {
-                val r = svc.scanColorPublic(bmp, c.str("color") ?: "#000000", (c.int("tolerance") ?: 24).coerceIn(0, 128), c.region())
-                val count = r["count"]?.jsonPrimitive?.longOrNull ?: 0L
-                val present = count >= (c.int("minCount") ?: 20)
-                val pt = if (present) (r["cx"]?.jsonPrimitive?.intOrNull ?: 0) to (r["cy"]?.jsonPrimitive?.intOrNull ?: 0) else null
-                (if (c.str("type") == "color_present") present else !present) to pt
+                val tol = (c.int("tolerance") ?: 24).coerceIn(0, 128); val region = c.region(); val minCount = c.int("minCount") ?: 20
+                var best: Found? = null; var bestCount = 0L
+                for (hex in colorsOf(c)) {
+                    val r = svc.scanColorPublic(bmp, hex, tol, region)
+                    val count = r["count"]?.jsonPrimitive?.longOrNull ?: 0L
+                    if (count >= minCount && count > bestCount) { bestCount = count; best = Found(r["cx"]?.jsonPrimitive?.intOrNull ?: 0, r["cy"]?.jsonPrimitive?.intOrNull ?: 0) }
+                }
+                val present = best != null
+                (if (c.str("type") == "color_present") present else !present) to best
+            }
+            "object_present", "object_absent" -> {
+                val tol = (c.int("tolerance") ?: 24).coerceIn(0, 128); val region = c.region()
+                val minSize = (c.int("minSize") ?: 12).coerceIn(1, 2000); val maxSize = c.int("maxSize") ?: 0
+                val objs = ArrayList<Triple<Int, Int, Int>>() // cx, cy, area
+                for (hex in colorsOf(c)) {
+                    val r = svc.scanObjectsPublic(bmp, hex, tol, region, minSize, 12)
+                    r["objects"]?.jsonArray?.forEach { o ->
+                        val ob = o.jsonObject; val b = ob["bounds"]?.jsonObject
+                        val w = b?.get("w")?.jsonPrimitive?.intOrNull ?: 0; val h = b?.get("h")?.jsonPrimitive?.intOrNull ?: 0
+                        if (maxSize > 0 && (w > maxSize || h > maxSize)) return@forEach
+                        objs.add(Triple(ob["cx"]?.jsonPrimitive?.intOrNull ?: 0, ob["cy"]?.jsonPrimitive?.intOrNull ?: 0, ob["area"]?.jsonPrimitive?.intOrNull ?: 0))
+                    }
+                }
+                val minCount = c.int("minCount") ?: 1
+                val present = objs.size >= minCount
+                if (c.str("type") == "object_absent") return (!present) to null
+                if (!present) return false to null
+                val nearX = c.int("nearX") ?: bmp.width / 2; val nearY = c.int("nearY") ?: bmp.height / 2
+                val sorted = when (c.str("pick") ?: "largest") {
+                    "nearest" -> objs.sortedBy { (it.first - nearX).toLong() * (it.first - nearX) + (it.second - nearY).toLong() * (it.second - nearY) }
+                    "topmost" -> objs.sortedBy { it.second }
+                    "lowest" -> objs.sortedByDescending { it.second }
+                    else -> objs.sortedByDescending { it.third }
+                }
+                true to Found(sorted[0].first, sorted[0].second, sorted.map { it.first to it.second })
             }
             "pixel_is", "pixel_not" -> {
                 val x = (c.int("x") ?: 0).coerceIn(0, bmp.width - 1); val y = (c.int("y") ?: 0).coerceIn(0, bmp.height - 1)
                 val px = bmp.getPixel(x, y); val tol = (c.int("tolerance") ?: 24).coerceIn(0, 128)
                 val target = (c.str("color") ?: "#000000").removePrefix("#").toIntOrNull(16) ?: 0
                 val match = Math.abs(((px shr 16) and 0xFF) - ((target shr 16) and 0xFF)) <= tol && Math.abs(((px shr 8) and 0xFF) - ((target shr 8) and 0xFF)) <= tol && Math.abs((px and 0xFF) - (target and 0xFF)) <= tol
-                (if (c.str("type") == "pixel_is") match else !match) to (if (match) x to y else null)
+                (if (c.str("type") == "pixel_is") match else !match) to (if (match) Found(x, y) else null)
             }
             "text_present", "text_absent" -> {
                 val lines = svc.readTextPublic(bmp, c.region())
                 val q = (c.str("text") ?: "").lowercase().trim()
                 val hit = lines.firstOrNull { it.first.lowercase().contains(q) }
-                (if (c.str("type") == "text_present") hit != null else hit == null) to hit?.second
+                (if (c.str("type") == "text_present") hit != null else hit == null) to hit?.let { Found(it.second.first, it.second.second) }
             }
             "number_below", "number_above" -> {
                 val lines = svc.readTextPublic(bmp, c.region())
@@ -219,19 +277,46 @@ object BotEngine {
 
     // ------------------------------------------------------------ actions
     /** returns "stop" to end the bot, else null */
-    private suspend fun runAction(svc: AutomationAccessibilityService, a: JsonObject, found: Pair<Int, Int>?): String? {
+    private suspend fun runAction(svc: AutomationAccessibilityService, a: JsonObject, found: Found?, bmp: Bitmap, key: String, altState: HashMap<String, Boolean>): String? {
         val type = a.str("type") ?: return null
         val action: Action? = when (type) {
             "stop_bot" -> return "stop"
             "wait" -> { delay((a.long("ms") ?: 200L).coerceIn(0, 10_000)); return null }
-            "tap_found" -> { val f = found ?: return null; Action(type = "tap", x = (f.first + (a.int("offsetX") ?: 0)).toFloat(), y = (f.second + (a.int("offsetY") ?: 0)).toFloat()) }
+            "tap_found" -> { val f = found ?: return null; Action(type = "tap", x = (f.x + (a.int("offsetX") ?: 0)).toFloat(), y = (f.y + (a.int("offsetY") ?: 0)).toFloat()) }
+            "tap_all_found" -> {
+                // v2.7: tap every detected object, closest-first order as delivered by the condition
+                val f = found ?: return null
+                val max = (a.int("max") ?: 5).coerceIn(1, 20); val iv = (a.long("intervalMs") ?: 40L).coerceIn(0, 2000)
+                val ox = a.int("offsetX") ?: 0; val oy = a.int("offsetY") ?: 0
+                for ((i, p) in f.all.take(max).withIndex()) {
+                    if (i > 0 && iv > 0) delay(iv)
+                    runCatching { withContext(Dispatchers.Main) { svc.execute(Action(type = "tap", x = (p.first + ox).toFloat(), y = (p.second + oy).toFloat())) } }
+                }
+                return null
+            }
+            "aim_to_found" -> {
+                // v2.7 aimbot: drag the look area so the crosshair lands on the target. Proportional step, clamped, with a deadzone.
+                val f = found ?: return null
+                val cx = a.int("crosshairX") ?: bmp.width / 2; val cy = a.int("crosshairY") ?: bmp.height / 2
+                val ex = (f.x + (a.int("offsetX") ?: 0)) - cx; val ey = (f.y + (a.int("offsetY") ?: 0)) - cy
+                val dz = a.int("deadzone") ?: 12
+                if (Math.abs(ex) <= dz && Math.abs(ey) <= dz) return null
+                val sens = (a.float("sensitivity") ?: 1f).coerceIn(0.05f, 5f); val maxStep = (a.int("maxStep") ?: 300).coerceIn(5, 1500).toFloat()
+                val dx = (ex * sens).coerceIn(-maxStep, maxStep); val dy = (ey * sens).coerceIn(-maxStep, maxStep)
+                Action(type = "aim", x = a.float("x"), y = a.float("y"), dx = dx, dy = dy, duration = (a.long("duration") ?: 60L), finger = a.int("finger") ?: 1, steps = 3, release = true)
+            }
             "tap" -> Action(type = "tap", x = a.float("x"), y = a.float("y"))
             "long_press" -> Action(type = "long_press", x = a.float("x"), y = a.float("y"), duration = a.long("duration"))
             "swipe" -> Action(type = "swipe", x1 = a.float("x1"), y1 = a.float("y1"), x2 = a.float("x2"), y2 = a.float("y2"), duration = a.long("duration"))
             "tap_sequence" -> Action(type = "tap_sequence", points = a["points"]?.let { runCatching { RelayJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(SeqPoint.serializer()), it) }.getOrNull() })
             "repeat_tap" -> Action(type = "repeat_tap", x = a.float("x"), y = a.float("y"), count = a.int("count"), intervalMs = a.long("intervalMs"))
             "joystick" -> Action(type = "joystick", x = a.float("x"), y = a.float("y"), angle = a["angle"]?.jsonPrimitive?.doubleOrNull, distance = a.float("distance"), duration = a.long("duration"), finger = a.int("finger"), release = a["release"]?.jsonPrimitive?.booleanOrNull)
-            "aim" -> Action(type = "aim", x = a.float("x"), y = a.float("y"), dx = a.float("dx"), dy = a.float("dy"), duration = a.long("duration"), finger = a.int("finger"), steps = a.int("steps"), release = a["release"]?.jsonPrimitive?.booleanOrNull)
+            "aim" -> {
+                // v2.7 alternate: flip direction each run → camera sweeps left/right (or up/down) to look for enemies
+                var dx = a.float("dx") ?: 0f; var dy = a.float("dy") ?: 0f
+                if (a["alternate"]?.jsonPrimitive?.booleanOrNull == true) { val flip = altState[key] ?: false; if (flip) { dx = -dx; dy = -dy }; altState[key] = !flip }
+                Action(type = "aim", x = a.float("x"), y = a.float("y"), dx = dx, dy = dy, duration = a.long("duration"), finger = a.int("finger"), steps = a.int("steps"), release = a["release"]?.jsonPrimitive?.booleanOrNull)
+            }
             "fire_burst" -> Action(type = "fire_burst", x = a.float("x"), y = a.float("y"), count = a.int("count"), intervalMs = a.long("intervalMs"), holdMs = a.long("holdMs"))
             "combo" -> Action(type = "combo", steps2 = a["combo"]?.let { runCatching { RelayJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(ComboStep.serializer()), it) }.getOrNull() })
             "finger_up" -> Action(type = "finger_up", finger = a.int("finger") ?: -1)
