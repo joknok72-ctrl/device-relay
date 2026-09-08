@@ -686,6 +686,8 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
       if (['pixel_is', 'pixel_not'].includes(w.type)) { const col = normColor(w.color); if (!col) return { error: `rules[${i}].when[${c}] needs color "#rrggbb" (or @color)` }; w.color = col; if (w.type === 'pixel_is') hasFoundCond = true }
       if (w.type === 'text_present') hasFoundCond = true
       if (w.forMs !== undefined && (!isFin(w.forMs) || w.forMs < 0 || w.forMs > 60_000)) return { error: `rules[${i}].when[${c}].forMs must be 0..60000` }
+      if (w.match !== undefined) { if (w.match !== 'rgb' && w.match !== 'hue') return { error: `rules[${i}].when[${c}].match must be rgb|hue` }; if (w.match === 'rgb') delete w.match }
+      if (w.lockRadius !== undefined && (!isFin(w.lockRadius) || w.lockRadius < 0)) return { error: `rules[${i}].when[${c}].lockRadius must be >= 0` }
       if (['pixel_is', 'pixel_not'].includes(w.type) && (!isFin(w.x) || !isFin(w.y))) return { error: `rules[${i}].when[${c}] (${w.type}) needs x,y` }
       if (['text_present', 'text_absent'].includes(w.type) && (typeof w.text !== 'string' || !w.text.trim())) return { error: `rules[${i}].when[${c}] needs text` }
       if (['number_below', 'number_above'].includes(w.type) && (!validRegion(w.region) || !isFin(w.value))) return { error: `rules[${i}].when[${c}] (${w.type}) needs region {x,y,w,h} and value` }
@@ -709,7 +711,7 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
       // defaults matching the phone's expectations
       if (a.type === 'joystick') { if (!isFin(a.angle)) { const m: Record<string, number> = { right: 0, 'down-right': 45, down: 90, 'down-left': 135, left: 180, 'up-left': 225, up: 270, 'up-right': 315 }; a.angle = m[String(a.direction ?? 'up').toLowerCase()] ?? 270; delete a.direction } a.distance ??= 150; a.duration ??= 500; a.finger ??= 0; a.release ??= true }
       if (a.type === 'aim') { a.dx ??= 0; a.dy ??= 0; a.duration ??= 120; a.finger ??= 1; a.steps ??= 4; a.release ??= true; if (a.alternate !== true) delete a.alternate }
-      if (a.type === 'fire_burst') { a.count ??= 5; a.intervalMs ??= 90; a.holdMs ??= 0; if (!isFin(a.maxRange) || a.maxRange <= 0) delete a.maxRange; else if (!hasFoundCond) return { error: `rules[${i}].then[${t}] fire_burst.maxRange needs a *_present condition` } }
+      if (a.type === 'fire_burst') { a.count ??= 5; a.intervalMs ??= 90; a.holdMs ??= 0; if (!isFin(a.maxRange) || a.maxRange <= 0) delete a.maxRange; else if (!hasFoundCond) return { error: `rules[${i}].then[${t}] fire_burst.maxRange needs a *_present condition` }; if (!isFin(a.gateErr) || a.gateErr <= 0) delete a.gateErr }
       if (a.type === 'repeat_tap') { a.count ??= 5; a.intervalMs ??= 100 }
       if (a.type === 'finger_up') a.finger ??= -1
     }

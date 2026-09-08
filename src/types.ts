@@ -111,11 +111,11 @@ export interface PlaySession { app: string; label?: string; start: number; end: 
 // ---------------------------------------------------------------- v2.6 game bots (run entirely on the phone)
 /** A condition evaluated on the phone against the current frame. */
 /** v2.7: every condition may carry forMs — it only counts as true once it has held continuously for that long. */
-export type BotCondition = ({ forMs?: number }) & (
+export type BotCondition = ({ forMs?: number; /** v3.1 colour match mode: rgb (per-channel tolerance) | hue (hue distance in degrees, ignores shading — best for 3D objects) */ match?: 'rgb' | 'hue' }) & (
   | { type: 'color_present'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minCount?: number }
   | { type: 'color_absent'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minCount?: number }
   /** v2.7 blob detection: an object of this colour (any of colors) between minSize..maxSize px; pick which one becomes `found` */
-  | { type: 'object_present'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minSize?: number; maxSize?: number; pick?: 'largest' | 'nearest' | 'topmost' | 'lowest'; nearX?: number; nearY?: number; minCount?: number }
+  | { type: 'object_present'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minSize?: number; maxSize?: number; pick?: 'largest' | 'nearest' | 'topmost' | 'lowest'; nearX?: number; nearY?: number; minCount?: number; /** v3.1 keep following the object picked last tick if it is still within this many px (default 220, 0 = off) */ lockRadius?: number }
   | { type: 'object_absent'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minSize?: number; maxSize?: number }
   | { type: 'pixel_is'; x: number; y: number; color: string; tolerance?: number }
   | { type: 'pixel_not'; x: number; y: number; color: string; tolerance?: number }
@@ -140,7 +140,7 @@ export type BotAction =
   | { type: 'repeat_tap'; x: number; y: number; count: number; intervalMs: number }
   | { type: 'joystick'; x: number; y: number; angle: number; distance: number; duration: number; finger: number; release: boolean }
   | { type: 'aim'; x: number; y: number; dx: number; dy: number; duration: number; finger: number; steps: number; release: boolean; /** v2.7 flip dx/dy sign every time this action runs (camera sweep) */ alternate?: boolean }
-  | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number; /** v3.0 only fire when the found target is within this many px of the crosshair (needs a *_present condition) */ maxRange?: number; crosshairX?: number; crosshairY?: number }
+  | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number; /** v3.0 only fire when the found target is within this many px of the crosshair (needs a *_present condition) */ maxRange?: number; crosshairX?: number; crosshairY?: number; /** v3.1 skip the burst when the preceding aim correction was larger than this (px) — the crosshair is still moving */ gateErr?: number }
   | { type: 'combo'; combo: ComboStep[] }
   | { type: 'finger_up'; finger: number }
   | { type: 'back' } | { type: 'home' }

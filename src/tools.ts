@@ -556,7 +556,7 @@ export const TOOLS: ToolDef[] = [
       'The user starts/stops it from the Device Relay notification (▶ Bot / ↻ next / ■ Stop) so they never touch the game screen; you can also run/stop it. ' +
       'FASTEST PATH: action=template template=<color_tap|shooter|runner|rhythm|idle_tapper|puzzle_match|fishing|racing|clicker> (color_tap = "see this colour → hit it/press this button", one call, any game) with the @names it lists (game_profile first) → a complete, tuned bot is created in ONE call; then run it and watch. ' +
       'Conditions (AND within a rule; several rules = OR): color_present/color_absent {color|colors[],region?,minCount?,tolerance?} · object_present/object_absent {color|colors[],region?,minSize?,maxSize?,pick:largest|nearest|topmost|lowest,nearX?,nearY?,minCount?} (blob detection: real objects, not just pixels — use it for enemies/heads/notes) · pixel_is/pixel_not {x,y,color} · text_present/text_absent {text,region?} (OCR, slower) · number_below/number_above {region,value} · screen_changed · every_ms {ms} · always. ' +
-      'Any condition takes forMs (must hold that long — avoids flicker). colors:[..] = ANY of several colours (skins/teams/variants). ' +
+      'Any condition takes forMs (must hold that long — avoids flicker) and match:"hue" (v3.1: compare hue in degrees instead of RGB — shading/lighting proof, use it for 3D games; tolerance then = 18-30 degrees). object_present takes lockRadius (target lock: stay on the same enemy). fire_burst takes gateErr (skip the burst while the aim is still correcting > N px). colors:[..] = ANY of several colours (skins/teams/variants). ' +
       'Actions: tap {x,y} · tap_found {offsetX?,offsetY?} (centre of what the first *_present condition found) · tap_all_found {max?,intervalMs?} (every detected object, for match/whack games) · aim_to_found {x,y (look area), crosshairX?,crosshairY?, sensitivity?, maxStep?, deadzone?} (AIMBOT: drags the camera so the crosshair lands on the found object; run it with fire_burst in the same rule) · swipe · long_press · tap_sequence · repeat_tap · joystick · aim {…,alternate:true} (camera SWEEP: flips direction each fire — use with color_absent enemy to look around) · fire_burst · combo · finger_up · back · home · wait {ms} · stop_bot. ' +
       'Every x/y/color/region accepts @names from game_profile (at:"@fire", color:"@enemy", colors:["@enemy","@enemy2"], region:"@hp"). Rule fields: cooldownMs (default 300), priority (higher first), exclusive (default true), enabled, maxFires (e.g. 1 = tap PLAY once). ' +
       'Bot fields: tickMs (default 120; 60-80 for shooters/rhythm), maxRunMs (default 30 min, max 6 h), stopOnAppChange (default true). ' +
@@ -1190,7 +1190,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '3.0.0',
+      version: '3.1.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

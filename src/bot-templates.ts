@@ -75,6 +75,9 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       { key: 'assistRange', kind: 'number', default: 320, doc: 'assist/trigger: only act when the target is within this many px of the crosshair (the user does the coarse aiming)' },
       { key: 'predictMs', kind: 'number', default: 80, doc: 'lead moving targets by this many ms (0 = off)' },
       { key: 'headOffsetY', kind: 'number', default: 0, doc: 'if the head colour marks the whole body, aim this many px ABOVE the blob centre (negative = up), e.g. -25' },
+      { key: 'match', kind: 'text', default: 'hue', doc: 'colour matching: hue (robust to shading/lighting — default for 3D shooters, tolerance = degrees, 18-30) | rgb (exact-ish, tolerance = per-channel 24-40)' },
+      { key: 'lockRadius', kind: 'number', default: 220, doc: 'target lock: keep the same enemy while it stays within this many px (0 = always re-pick nearest)' },
+      { key: 'gateErr', kind: 'number', default: 60, doc: 'do not fire while the aim still had to correct more than this many px (saves ammo, raises accuracy); 0 = always fire' },
       { key: 'evade', kind: 'control', doc: '@control crouch/jump button → pressed every ~3 s while an enemy is visible (harder to hit)' },
       { key: 'playAgain', kind: 'control', doc: '@control PLAY AGAIN / next match button → tapped when the match ends (instead of stop_bot)' },
       { key: 'matchEndText', kind: 'text', default: 'PLAY AGAIN', doc: 'text that appears at match end (with playAgain)' },
@@ -89,9 +92,14 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       const near = p.crosshair ? { nearX: p.crosshair, nearY: p.crosshair } : {}
       const cross = p.crosshair ? { crosshairX: p.crosshair, crosshairY: p.crosshair } : {}
       const reg = p.enemyRegion ? { region: p.enemyRegion } : {}
-      const enemy = { type: 'object_present', ...colors(p.enemy), tolerance: n(p.tolerance, 32), minSize: n(p.minSize, 10), pick: 'nearest', ...near, ...reg }
-      const headCond = { type: 'object_present', ...colors(p.head ?? p.enemy), tolerance: n(p.tolerance, 32), minSize: 4, maxSize: p.head ? 90 : 0, pick: 'nearest', ...near, ...reg }
-      const fire = { type: 'fire_burst', at: p.fire, count: n(p.fireCount, 6), intervalMs: n(p.fireIntervalMs, 70) }
+      const match = s(p.match, 'hue') === 'hue' ? { match: 'hue' } : {}
+      // hue tolerance is in degrees: if the user left the rgb-style default (32) map it to a sane hue window
+      const tolIn = n(p.tolerance, 32)
+      const tol = s(p.match, 'hue') === 'hue' ? (tolIn === 32 ? 22 : Math.min(tolIn, 60)) : tolIn
+      const lock = { lockRadius: n(p.lockRadius, 220) }
+      const enemy = { type: 'object_present', ...colors(p.enemy), tolerance: tol, ...match, minSize: n(p.minSize, 10), pick: 'nearest', ...near, ...reg, ...lock }
+      const headCond = { type: 'object_present', ...colors(p.head ?? p.enemy), tolerance: tol, ...match, minSize: 4, maxSize: p.head ? 90 : 0, pick: 'nearest', ...near, ...reg, ...lock }
+      const fire = { type: 'fire_burst', at: p.fire, count: n(p.fireCount, 6), intervalMs: n(p.fireIntervalMs, 70), ...(n(p.gateErr, 60) > 0 ? { gateErr: n(p.gateErr, 60) } : {}) }
       const headOff = n(p.headOffsetY, 0) ? { offsetY: n(p.headOffsetY, 0) } : {}
       const pred = n(p.predictMs, 80) > 0 ? { predictMs: n(p.predictMs, 80) } : {}
       if (assist) {
@@ -128,7 +136,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       })
       rules.push({
         name: 'sweep-and-advance', priority: 1, cooldownMs: 500,
-        when: [{ type: 'object_absent', ...colors(p.enemy), tolerance: n(p.tolerance, 32), minSize: n(p.minSize, 10), ...(p.enemyRegion ? { region: p.enemyRegion } : {}), forMs: 600 }],
+        when: [{ type: 'object_absent', ...colors(p.enemy), tolerance: tol, ...match, minSize: n(p.minSize, 10), ...(p.enemyRegion ? { region: p.enemyRegion } : {}), forMs: 600 }],
         then: [
           { type: 'aim', at: p.look, dx: n(p.sweepDx, 260), dy: 0, duration: 140, steps: 4, alternate: true },
           ...(p.stick ? [{ type: 'joystick', at: p.stick, direction: 'up', duration: 450, distance: 170 }] : []),
