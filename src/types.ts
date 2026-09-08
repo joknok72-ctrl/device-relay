@@ -185,6 +185,10 @@ export interface Bot {
   autoStart?: boolean
   /** v2.8 learned parameters reported by the phone (e.g. aim_to_found sensitivity per action key) */
   learned?: Record<string, number>
+  /** v3.2 write the learned aim sensitivity back into the rules after each run (default true) */
+  autoApplyLearned?: boolean
+  /** v3.2 how many times the rules were auto-tuned */
+  tuned?: number
   /** v3.0 assist mode: the USER plays (moves, turns the camera); the bot only injects micro-actions (≤60 ms aim nudges + fire taps) when its trigger colour appears. No movement/sweep rules. */
   assist?: boolean
 }

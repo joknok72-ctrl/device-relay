@@ -779,6 +779,8 @@ async function gameBot(env: Bindings, deviceId: string, args: Record<string, unk
       ...((typeof args.autoStart === 'boolean' ? args.autoStart : existing?.autoStart) ? { autoStart: true } : {}),
       ...((typeof args.assist === 'boolean' ? args.assist : existing?.assist) ? { assist: true } : {}),
       ...(existing?.learned ? { learned: existing.learned } : {}),
+      ...(existing?.tuned ? { tuned: existing.tuned } : {}),
+      ...((typeof args.autoApplyLearned === 'boolean' ? args.autoApplyLearned : existing?.autoApplyLearned) === false ? { autoApplyLearned: false } : {}),
       createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(), ...(template ? { template } : existing?.template ? { template: existing.template } : {}),
     }
     const res = (await (await r.fetch(`https://do/bots?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bot) })).json()) as ToolResult

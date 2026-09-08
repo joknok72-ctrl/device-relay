@@ -564,7 +564,7 @@ export const TOOLS: ToolDef[] = [
       'SHOOTER MODES (template=shooter params.mode): assist (DEFAULT — the user plays and turns the camera; when the head colour is within assistRange of the crosshair the bot nudges the aim onto the head with a ≤40 ms drag and fires; predictMs leads moving targets) · trigger (user aims, bot only fires when the head is under the crosshair) · full (plays alone). For Free Fire players who want to play themselves: mode=assist with head=@head is the whole job. ' +
       'SHOOTER RECIPE (full mode): find the enemy colour that is UNIQUE and stable (head/name-tag/health bar/red outline — check with sample_colors + find_objects, not the body which changes with skins); rule 1 (priority 2): object_present @enemy pick nearest → aim_to_found + fire_burst; rule 2 (priority 1): color_absent @enemy forMs 700 → aim alternate:true dx 250 (sweep) + joystick @stick up 400 (advance); rule 3: low HP number_below @hp → joystick back / heal. ' +
       'Loop: create → run → observe 20 s → read status (ruleHits/avgTickMs) → update rules (tolerance/minSize/cooldown/sensitivity) until it fires correctly. ' +
-      'HANDS-FREE (app v2.8+): a floating bubble on the game screen shows ▶/■ and live counters; double-press Volume-Down stops, double-press Volume-Up starts the current bot; autoStart:true launches the bot when the game opens. aim_to_found self-tunes its sensitivity (status.learned) — save the learned value into the rule with action=update when it is stable. ' +
+      'HANDS-FREE (app v2.8+): a floating bubble on the game screen shows ▶/■ and live counters; double-press Volume-Down stops, double-press Volume-Up starts the current bot; autoStart:true launches the bot when the game opens. aim_to_found self-tunes its sensitivity (status.learned) and since v3.2 the relay writes it back into the rule automatically after each run (bot.tuned counts how often) — nothing to do; set autoApplyLearned:false to freeze. ' +
       'action: create | update (id or name) | list | get | delete | run | stop | status | template | templates. Requires Android app v2.7+ for object/aimbot features (v2.6 for the rest).',
     parameters: {
       type: 'object',
@@ -578,6 +578,7 @@ export const TOOLS: ToolDef[] = [
         tickMs: { type: 'integer', description: 'Poll interval 50-2000 (default 120)', minimum: 50, maximum: 2000, default: 120 },
         maxRunMs: { type: 'integer', description: 'Auto-stop after ms (default 1800000 = 30 min, max 21600000)', minimum: 10000, maximum: 21600000 },
         stopOnAppChange: { type: 'boolean', description: 'Stop if the user leaves the game (default true)', default: true },
+        autoApplyLearned: { type: 'boolean', description: 'v3.2: after each run write the self-learned aim sensitivity back into the rules (default true; set false to freeze)', default: true },
         assist: { type: 'boolean', description: 'v3.0: assist bot — the user plays; the bot only injects micro aim nudges/fire when its colour appears (set automatically by template=shooter mode=assist|trigger)', default: false },
         autoStart: { type: 'boolean', description: 'v2.8: start this bot automatically ~2 s after the user opens the game (hands-free). Only one autoStart bot per app is sensible.', default: false },
         template: { type: 'string', description: 'action=template: color_tap | shooter | runner | rhythm | idle_tapper | puzzle_match | fishing | racing | clicker (action=templates lists them with required @names)' },
@@ -1191,7 +1192,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '3.1.0',
+      version: '3.2.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

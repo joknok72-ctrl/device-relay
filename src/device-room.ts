@@ -628,7 +628,18 @@ export class DeviceRoom extends DurableObject<Bindings> {
         if (b) {
           if (msg.running && (!b.lastRun || b.lastRun.end !== undefined || b.lastRun.start !== msg.startedAt)) { b.runs = (b.runs ?? 0) + 1; b.lastRun = { start: msg.startedAt ?? Date.now(), ticks: msg.ticks ?? 0, fired: msg.fired ?? 0 } }
           else if (b.lastRun) { b.lastRun.ticks = msg.ticks ?? b.lastRun.ticks; b.lastRun.fired = msg.fired ?? b.lastRun.fired; if (msg.ruleHits) b.lastRun.ruleHits = msg.ruleHits; if (msg.learned && Object.keys(msg.learned).length) b.learned = { ...(b.learned ?? {}), ...msg.learned }; if (!msg.running) { b.lastRun.end = Date.now(); b.lastRun.stoppedBy = msg.stoppedBy } }
+          // v3.2 auto-apply: when a run ends, bake the learned aim sensitivity into the rules so the next run (even offline, from the bubble) starts tuned
+          let changed = false
+          if (!msg.running && b.learned && b.autoApplyLearned !== false) {
+            for (const [k, v] of Object.entries(b.learned)) {
+              const m = k.match(/^(.+)\/(\d+)\/sensitivity$/); if (!m) continue
+              const rule = b.rules.find((r) => r.name === m[1]); const act = rule?.then[Number(m[2])] as { type?: string; sensitivity?: number } | undefined
+              if (act && act.type === 'aim_to_found' && typeof v === 'number' && v > 0 && Math.abs((act.sensitivity ?? 1) - v) > 0.02) { act.sensitivity = Math.round(v * 100) / 100; changed = true }
+            }
+            if (changed) { b.updatedAt = Date.now(); b.tuned = (b.tuned ?? 0) + 1 }
+          }
           this.ctx.waitUntil(this.ctx.storage.put('bots', this.bots))
+          if (changed) this.pushBots()
         }
         this.broadcastViewers({ ...msg, kind: 'bot_status' })
         break
