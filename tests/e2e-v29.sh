@@ -34,7 +34,7 @@ check ct-cooldown '"cooldownMs":120' "$G"
 R=$(call '{"name":"game_bot","arguments":{"action":"template","template":"color_tap","name":"red-fire","params":{"color":"@red","button":"@fire","region":"@field","repeat":3,"gameOverText":false}}}')
 check ct-button-ok '"ruleNames":["hit-colour"]' "$R"
 G=$(call '{"name":"game_bot","arguments":{"action":"get","name":"red-fire"}}')
-check ct-button-repeat '"type":"repeat_tap","x":900,"y":1700,"count":3' "$(echo "$G" | j 'a=[a for r in d["bot"]["rules"] for a in r["then"] if a["type"]=="repeat_tap"][0]; print(json.dumps({"type":a["type"],"x":a["x"],"y":a["y"],"count":a["count"]},separators=(",",":")))')"
+check ct-button-repeat '"x":900,"y":1700,"type":"repeat_tap","count":3' "$G"
 check ct-region '"region":{"x":0,"y":300,"w":1080,"h":1500}' "$G"
 
 echo "== shooter extras"
