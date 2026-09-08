@@ -11,8 +11,8 @@ j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/nul
 export RELAY_URL=$U RELAY_TOKEN=$T RELAY_DEVICE=$D
 
 echo "== version / catalogue"
-check version '"version":"2.5.0"' "$(curl -s $U/api/health)"
-check tools-78 '78' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"2.6.0"' "$(curl -s $U/api/health)"
+check tools-79 '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check mcp-lists-observe 'smart_tap' "$(curl -s -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' $U/mcp/$T)"
 check bootstrap-v18 'observe [grid]' "$(curl -s $U/agent/$T)"
 check bootstrap-rule0 'START of every session' "$(curl -s $U/agent/$T)"

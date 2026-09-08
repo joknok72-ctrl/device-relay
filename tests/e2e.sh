@@ -13,7 +13,7 @@ check() { # name expected_substring actual
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "== health / me"
-check health '"version":"2.5.0"' "$(curl -s $U/api/health)"
+check health '"version":"2.6.0"' "$(curl -s $U/api/health)"
 check me-admin '"role":"admin"' "$(curl -s "${A[@]}" $U/api/me)"
 check unauth '401' "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer nope' $U/api/devices)"
 
@@ -76,8 +76,8 @@ check other-token-forbidden '403' "$(curl -s -o /dev/null -w '%{http_code}' -H "
 check readonly-ui-ok '"ok":true' "$(curl -s -H "Authorization: Bearer $RO" -H 'Content-Type: application/json' -d '{"name":"get_ui_elements"}' $U/api/devices/$D/tools/call)"
 check readonly-tap-blocked 'read-only' "$(curl -s -H "Authorization: Bearer $RO" -H 'Content-Type: application/json' -d '{"name":"tap","arguments":{"x":5,"y":5}}' $U/api/devices/$D/tools/call)"
 check readonly-batch-blocked 'read-only' "$(curl -s -H "Authorization: Bearer $RO" -H 'Content-Type: application/json' -d '{"name":"batch","arguments":{"steps":[{"name":"press_home"}]}}' $U/api/devices/$D/tools/call)"
-check agent-bootstrap-devtoken 'scoped to ONE device' "$(curl -s $U/agent/$DT | head -c 900)"
-check agent-bootstrap-admin 'ADMIN token' "$(curl -s $U/agent/$T | head -c 900)"
+check agent-bootstrap-devtoken 'scoped to ONE device' "$(curl -s $U/agent/$DT | head -c 4000)"
+check agent-bootstrap-admin 'ADMIN token' "$(curl -s $U/agent/$T | head -c 4000)"
 check monitor-page 'Live Monitor' "$(curl -s $U/monitor/$DT | head -c 600)"
 check monitor-unauth '401' "$(curl -s -o /dev/null -w '%{http_code}' $U/monitor/bad)"
 check mcp-devtoken 'tools' "$(curl -s -X POST $U/mcp/$DT -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -c 100)"
@@ -92,7 +92,7 @@ echo "== macro continueOnError"
 check macro-cont '"action":"home","id":"' "$(curl -s "${A[@]}" -d '{"continueOnError":true,"steps":[{"type":"tap_element","text":"NOPE"},{"type":"home"}]}' $U/api/devices/$D/macro)"
 
 echo "== schema"
-check schema-count '78' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check schema-count '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check openapi-logs 'yes' "$(curl -s "$U/api/tools/schema?format=openapi" | j '"yes" if "/api/devices/{deviceId}/logs" in d["paths"] else "no"')"
 
 echo "== rate limit (130 fast requests on the read-only token)"
