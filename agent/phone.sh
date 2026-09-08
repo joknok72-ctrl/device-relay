@@ -29,6 +29,9 @@
 #   ./phone.sh profile | profile set '<json {controls,colors,regions,settings}>' | profile unset '<json>' | profile delete | sessions [n]   # v2.3 @names
 #   ./phone.sh report "summary" [win|loss|progress|stuck] [score] ["next time advice"]   # v2.4 end-of-session handover (mandatory)
 #   ./phone.sh verify                                    # v2.4 check the profile against the live screen (stale @names)
+#   ./phone.sh stick <X Y|@stick> <up|down|left|right|up-left|...|angle> [ms] [dist] [hold]   # v2.5 joystick (hold = keep finger down)
+#   ./phone.sh aim <X Y|@look> DX DY [ms] | fire <X Y|@fire> [count] [ms] | fireh <X Y|@fire> HOLDMS | fingers up   # v2.5 shooter controls
+#   ./phone.sh combo '<json steps>' | fdown N X Y | fmove N X Y [ms] | fup [N|-1]   # v2.5 multi-touch script / raw fingers
 #   Any coordinate/colour/region arg accepts @names from the profile: tap @jump | tap @jump+20,-10 | color @enemy | objects @enemy | react @note 0,1900,1080,60
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
@@ -227,6 +230,17 @@ if r.get("hint"): print(" ", r["hint"])' ;;
              delete) call game_profile '{"delete":true}' | pretty ;;
              *) echo "profile: get | set '<json>' | unset '<json>' | label <name> | delete" >&2; exit 1 ;;
            esac ;;
+  stick)   n=$(ptn "$1"); p=$(pt "$@"); shift $n; dir="${1:-up}"; rel=true; [[ "${4:-}" == "hold" ]] && rel=false
+           if [[ "$dir" =~ ^[0-9]+$ ]]; then a="\"angle\":$dir"; else a="\"direction\":\"$dir\""; fi
+           call joystick "{$p,$a,\"duration\":${2:-500},\"distance\":${3:-150},\"release\":$rel}" | pretty ;;
+  aim)     n=$(ptn "$1"); p=$(pt "$@"); shift $n; call aim "{$p,\"dx\":${1:-0},\"dy\":${2:-0},\"duration\":${3:-120}}" | pretty ;;
+  fire)    n=$(ptn "$1"); p=$(pt "$@"); shift $n; call fire_burst "{$p,\"count\":${1:-5},\"intervalMs\":${2:-90}}" | pretty ;;
+  fireh)   n=$(ptn "$1"); p=$(pt "$@"); shift $n; call fire_burst "{$p,\"holdMs\":${1:-1000}}" | pretty ;;
+  fingers) call finger '{"op":"up","finger":-1}' | pretty ;;
+  fdown)   call finger "{\"op\":\"down\",\"finger\":$1,\"x\":$2,\"y\":$3}" | pretty ;;
+  fmove)   call finger "{\"op\":\"move\",\"finger\":$1,\"x\":$2,\"y\":$3,\"duration\":${4:-150}}" | pretty ;;
+  fup)     call finger "{\"op\":\"up\",\"finger\":${1:-0}}" | pretty ;;
+  combo)   call combo "$(python3 -c 'import json,sys; print(json.dumps({"steps":json.loads(sys.argv[1])}))' "$1")" | pretty ;;
   report)  call session_report "$(python3 -c 'import json,sys
 a={"summary":sys.argv[1]}
 if len(sys.argv)>2 and sys.argv[2]: a["outcome"]=sys.argv[2]
@@ -301,5 +315,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,51p' "$0" ;;
+  *) sed -n '2,54p' "$0" ;;
 esac

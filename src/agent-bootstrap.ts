@@ -13,7 +13,7 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
   const sessions = extras.sessions ?? []
   const currentApp = extras.currentApp ?? ''
   const fmtProfile = (p: GameProfile) => {
-    const lines: string[] = [`  ▶ ${p.label ?? extras.appLabels?.[p.app] ?? p.app}  (${p.app})`]
+    const lines: string[] = [`  ▶ ${p.label ?? extras.appLabels?.[p.app] ?? p.app}  (${p.app})${p.genre ? `  genre=${p.genre} → see playbook 7.${p.genre}` : '  genre=? (set with game_profile genre=...)'}`]
     const ctl = Object.entries(p.controls); if (ctl.length) lines.push('    controls: ' + ctl.map(([k, v]) => `@${k}=(${v.x},${v.y})${v.reactMs ? `~${v.reactMs}ms` : ''}${v.note ? ` "${v.note}"` : ''}`).join('  '))
     const col = Object.entries(p.colors); if (col.length) lines.push('    colors:   ' + col.map(([k, v]) => `@${k}=${v.hex}${v.tolerance ? `±${v.tolerance}` : ''}`).join('  '))
     const reg = Object.entries(p.regions); if (reg.length) lines.push('    regions:  ' + reg.map(([k, v]) => `@${k}={${v.x},${v.y},${v.w}x${v.h}}`).join('  '))
@@ -36,7 +36,7 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
   const curMacros = macros.filter((m) => m.app === currentApp)
   const quickStart = currentApp
     ? `## 0. QUICK START — the phone is currently in: ${cur?.label ?? extras.appLabels?.[currentApp] ?? currentApp}  (${currentApp})
-${cur ? `You already know this game. Use the @names below directly (tap at:"@jump", auto_react color:"@note" region:"@hitline", read_number region:"@score") — do NOT rediscover.
+${cur ? `You already know this game${cur.genre ? ` (genre: ${cur.genre} → follow playbook 7.${cur.genre})` : ' (genre unknown — set it: game_profile genre=...)'}. Use the @names below directly (tap at:"@jump", joystick at:"@stick", aim at:"@look", fire_burst at:"@fire", read_number region:"@score") — do NOT rediscover.
 ${fmtProfile(cur)}` : 'No profile for this app yet → first turn: observe + sample_colors, calibrate each control, then game_profile set:{...}.'}
 ${curNotes.length ? `Notes for this game: ${curNotes.map((n) => n.text).join(' | ')}` : ''}
 ${curMacros.length ? `Macros for this game: ${curMacros.map((m) => `run_macro "${m.name}"`).join(', ')}` : ''}
@@ -174,9 +174,37 @@ The human can also review/delete/export all of it visually in the owner panel (/
 11. Read section 5b first; after finishing, "remember" anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
 
 ## 7. GAME PLAYBOOK (canvas / OpenGL apps have NO ui tree — vision + precise input only)
+You will play MANY different games. First thing in any game: decide its genre and store it (game_profile genre=shooter|runner|puzzle|rhythm|strategy|rpg|racing|fighting|casual) — then follow that genre's section below. Switching games = switching profiles automatically (everything is keyed by package); never carry @names or assumptions from one game into another.
+
+### 7.shooter — Free Fire, PUBG, CoD Mobile, Brawl Stars, any twin-stick / FPS / TPS  (needs Android app v2.5+)
+  Controls to find & save once: @stick (movement joystick centre, usually bottom-left), @look (empty area on the right half for camera drag), @fire (fire button, bottom-right), @aim/@scope, @jump, @crouch, @reload, @skill1.. ; colours: @enemy (enemy nameplate/outline or health-bar red), @teammate, @loot; regions: @hp (own health bar), @ammo, @minimap, @killfeed.
+  Move:   joystick at:"@stick" direction:"up" duration:2000 release:false      (hold-to-run; call again with another direction to steer; finger op=up finger=0 to stop)
+  Look:   aim at:"@look" dx:+/-N dy:+/-N   (turn right = +dx; look up = -dy). Fine aim: dx 30-80. 180° turn: dx 600-900. Measure once: aim dx:200 then observe how far the world moved; remember the ratio.
+  Shoot:  fire_burst at:"@fire" count:6 intervalMs:80  (or holdMs:1500 for auto weapons). Everything runs on separate fingers: you can move + aim + fire simultaneously via combo.
+  Find enemies: observe (profile-aware) → game.objects["@enemy"] gives each enemy's cx,cy. Enemy at cx > screen centre → aim dx = (cx - centerX) * ratio. Then fire_burst. Verify with observe (did the count drop? did @hp change?).
+  Reflex: auto_react color:"@enemy" region:"@crosshairZone" tapX/tapY at:"@fire" → phone fires the instant an enemy crosses the crosshair (~80 ms).
+  Loop per engagement (ONE combo): [{op:"joystick",at:"@stick",direction:"up-right",duration:400,release:false},{op:"aim",at:"@look",dx:60},{op:"fire",at:"@fire",count:5},{op:"up",finger:-1}]  then observe.
+  Survival: watch_value region:"@hp" condition:below value:30 → retreat (joystick away + heal button). Read @ammo before fights; tap @reload when low. Ads/lobby popups → dismiss_popups.
+  Safety: ALWAYS finish with finger op=up finger=-1 — a finger left down keeps the character running.
+### 7.runner — Subway Surfers, Temple Run, endless runners
+  Save @lanes (left/mid/right x), @jumpSwipe start; colours: @obstacle, @coin, @train. Use track_object on @obstacle to get arrival time; auto_react lanes with swipe reactions: {color:"@obstacle",region:"@laneMid",swipe:{dx:0,dy:-600}} = jump when it reaches the hit zone. read_number region:"@score" after the run, session_report with score.
+### 7.puzzle — match-3, 2048, word/sudoku, merge
+  ui tree usually EMPTY: observe with grid:100 + find_objects per tile colour to build the board as a matrix (cx,cy per tile). Reason about the whole board BEFORE acting; execute moves with swipe / drag (holdMs for drag-and-drop). Verify each move with observe.changed. wait_for_screen stable before reading the next board.
+### 7.rhythm — Piano Tiles, Beatstar, Cytus
+  Save @lane1..@laneN tap points and a thin @hitline region per lane; auto_react lanes:[{color:"@note",region:"@hit1",tapX,tapY},...] stopColor:"@gameover" maxTriggers:200 timeoutMs:40000 — the phone plays the song; you only restart it. Do not tap from the network.
+### 7.strategy / rpg — Clash Royale, Clash of Clans, idle RPGs, card games
+  UI-heavy: prefer smart_tap / tap_text / read_number (elixir, gold, timers) over vision. Timers: watch_value condition:equals value:0. Long deploy = long_press / drag. Save @card1..@card4, @deployZone regions. Turn loops: observe → decide → batch of taps → wait_for_screen stable.
+### 7.racing — Asphalt, Hill Climb, kart games
+  Save @gas @brake @left @right (or tilt is off). Hold controls with finger op=down (gas) while tapping steer; combo: [{op:"down",finger:0,at:"@gas"},{op:"tap",at:"@left",delayMs:300},{op:"tap",at:"@left",delayMs:200}, ...]. track_object on the road edge colour to anticipate turns.
+### 7.fighting — Shadow Fight, MK Mobile, Street Fighter
+  Save @punch @kick @block @special, @dpad directions. Specials = combo with delayMs 50-80 between taps. watch_value region:"@enemyHp" condition:decrease to confirm hits; read @myHp to decide block vs attack.
+### 7.casual — tap games, clickers, mini-games, quizzes
+  smart_tap + repeat_tap + read_number cover 90%. dismiss_popups before every step (ads). For quizzes: read_text → reason → tap_text the answer.
+
+General (all genres):
 Setup (once per game):
   a. ./phone.sh shot g.png 1080 jpeg 100     # high-res + grid every 100px → read exact coordinates off the labelled grid
-  b. Identify controls/HUD. "remember" their coordinates: "GameX: jump=(950,2100) fire=(200,2100) hp-bar y=180 x 120..960".
+  b. Identify controls/HUD and SAVE them as @names: game_profile genre=... set:{controls:{jump:{x:950,y:2100}, fire:{x:200,y:2100}}, regions:{hp:{x:120,y:170,w:840,h:20}}}.
   c. Sample key colours with get_pixels (e.g. HP bar red, enemy colour) and "remember" them for find_color.
 Loop (each turn, ONE round-trip):
   ./phone.sh see tap 540 1500                # act_and_see: action + wait + screenshot in one call
@@ -230,7 +258,7 @@ OCR (v1.7 — read text where there is no ui tree):
   find_colors ["#a","#b",...]  → several colours in one frame (enemies + gems + HP at once)
   session_stats                → your own success rate / latency; adapt if flaky
   live_preview true            → stream frames to the human's /monitor page when they want to watch
-Decision guide: known game (profile in 5f) → play with @names right away. New game → sample_colors, calibrate each control, then game_profile set (not just remember). Moving target → track_object then tap the predicted point. Need a score/timer/HP value → read_number / watch_value (never eyeball digits from a screenshot). About to do a repeatable sequence → record_macro first. Rhythm/multi-column reflexes → auto_react with lanes + stopColor. Several same-colour targets → find_objects then tap_sequence. Must react in <200ms → auto_react (phone-side). Lost / "which screen is this?" → identify_screen. Named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
+Decision guide: unknown genre → look, decide, game_profile genre=... first. Shooter/3D → joystick + aim + fire_burst (+combo) with separate fingers. Known game (profile in 5f) → play with @names right away. New game → sample_colors, calibrate each control, then game_profile set (not just remember). Moving target → track_object then tap the predicted point. Need a score/timer/HP value → read_number / watch_value (never eyeball digits from a screenshot). About to do a repeatable sequence → record_macro first. Rhythm/multi-column reflexes → auto_react with lanes + stopColor. Several same-colour targets → find_objects then tap_sequence. Must react in <200ms → auto_react (phone-side). Lost / "which screen is this?" → identify_screen. Named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
 Rules for games: never spam raw "tap" in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }
