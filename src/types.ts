@@ -73,6 +73,18 @@ export interface Note { text: string; ts: number; /** package name of the app op
 export interface ReactLane { color: string; tolerance?: number; region?: Region; minCount?: number; tapX?: number; tapY?: number; tapOffsetX?: number; tapOffsetY?: number; swipe?: { dx: number; dy: number; durationMs?: number }; cooldownMs?: number; name?: string }
 /** Named screen fingerprint: 112-bit perceptual hash (hex) + a few OCR words, used by identify_screen. */
 export interface ScreenLabel { name: string; hash: string; words: string[]; app?: string; ts: number }
+/** v2.3 structured per-app knowledge: named controls, colours, regions and settings the AI can reference by name (@jump, @enemy...). */
+export interface GameProfile {
+  app: string
+  label?: string
+  controls: Record<string, { x: number; y: number; note?: string; reactMs?: number }>
+  colors: Record<string, { hex: string; tolerance?: number; note?: string }>
+  regions: Record<string, { x: number; y: number; w: number; h: number; note?: string }>
+  settings: Record<string, string | number | boolean>
+  ts: number
+}
+/** v2.3 one play session (from first to last command within the same app, gaps < 10 min). */
+export interface PlaySession { app: string; label?: string; start: number; end: number; commands: number; failed: number; screenshots: number }
 /** In-progress macro recording (record_macro). */
 export interface Recording { name?: string; description?: string; keepWaits: boolean; startedAt: number; lastAt: number; steps: { name: string; arguments?: Record<string, unknown> }[] }
 /** Named, replayable tool sequence stored per device. */
