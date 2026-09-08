@@ -50,6 +50,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private screens: ScreenLabel[] = []
   /** v2.0 macro recording draft (record_macro). */
   private recording: Recording | null = null
+  /** v2.2 apps the AI has seen (package -> label, first/last seen) so memory can be grouped per game. */
+  private apps: Record<string, { label?: string; first: number; last: number; n: number }> = {}
 
   private inputBusy = false
   private inputQueue: Array<() => void> = []
@@ -70,6 +72,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (screens) this.screens = screens
       const rec = await ctx.storage.get<Recording>('recording')
       if (rec) this.recording = rec
+      const apps = await ctx.storage.get<typeof this.apps>('apps')
+      if (apps) this.apps = apps
     })
   }
 
@@ -166,7 +170,7 @@ export class DeviceRoom extends DurableObject<Bindings> {
         const m = (await request.json()) as Partial<Macro>
         const name = String(m.name ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 40)
         if (!name || !Array.isArray(m.steps) || m.steps.length === 0 || m.steps.length > 25) return Response.json({ ok: false, error: 'name and steps[1..25] required' }, { status: 400 })
-        const rec: Macro = { name, steps: m.steps.map((s) => ({ name: String(s.name), arguments: s.arguments ?? {} })), description: m.description?.slice(0, 200), ts: Date.now(), runs: 0 }
+        const rec: Macro = { name, steps: m.steps.map((s) => ({ name: String(s.name), arguments: s.arguments ?? {} })), description: m.description?.slice(0, 200), ts: Date.now(), runs: 0, app: m.app?.slice(0, 120) || undefined }
         const i = this.macros.findIndex((x) => x.name === name)
         if (i >= 0) { rec.runs = this.macros[i].runs; this.macros[i] = rec } else { this.macros.push(rec); if (this.macros.length > MAX_MACROS) this.macros.shift() }
         await this.ctx.storage.put('macros', this.macros)
@@ -199,6 +203,63 @@ export class DeviceRoom extends DurableObject<Bindings> {
         await this.ctx.storage.put('screens', this.screens)
         return Response.json({ ok: true, removed: before - this.screens.length })
       }
+    }
+    // ---------- v2.2 memory management (human-facing) ----------
+    if (url.pathname.endsWith('/memory')) {
+      if (request.method === 'GET') {
+        const groups: Record<string, { app: string; label?: string; lastSeen?: number; notes: (Note & { index: number })[]; macros: Macro[]; screens: ScreenLabel[] }> = {}
+        const g = (app: string) => (groups[app] ??= { app, label: this.apps[app]?.label, lastSeen: this.apps[app]?.last, notes: [], macros: [], screens: [] })
+        this.notes.forEach((n, index) => g(n.app ?? '').notes.push({ ...n, index }))
+        for (const m of this.macros) g(m.app ?? '').macros.push(m)
+        for (const s of this.screens) g(s.app ?? '').screens.push(s)
+        for (const [app, meta] of Object.entries(this.apps)) if (!groups[app]) groups[app] = { app, label: meta.label, lastSeen: meta.last, notes: [], macros: [], screens: [] }
+        const list = Object.values(groups).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
+        return Response.json({
+          deviceId: this.info.deviceId,
+          totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, recording: !!this.recording },
+          recording: this.recording, groups: list, apps: this.apps,
+        })
+      }
+      if (request.method === 'DELETE') {
+        // ?kind=notes|macros|screens|recording|apps|all  &app=<package|"">  &index=<n>  &name=<macro/screen name>
+        const kind = url.searchParams.get('kind') ?? 'all'
+        const app = url.searchParams.get('app')
+        const name = url.searchParams.get('name')
+        const idx = url.searchParams.get('index')
+        const before = { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length }
+        const byApp = <T extends { app?: string }>(arr: T[]) => (app === null ? [] : arr.filter((x) => (x.app ?? '') !== app))
+        if (kind === 'notes' || kind === 'all') {
+          if (idx !== null) { const i = Number(idx); if (Number.isInteger(i) && i >= 0 && i < this.notes.length) this.notes.splice(i, 1) }
+          else this.notes = app !== null ? byApp(this.notes) : []
+        }
+        if (kind === 'macros' || kind === 'all') {
+          if (name) this.macros = this.macros.filter((m) => m.name !== name)
+          else this.macros = app !== null ? byApp(this.macros) : []
+        }
+        if (kind === 'screens' || kind === 'all') {
+          if (name) this.screens = this.screens.filter((s) => s.name !== name)
+          else this.screens = app !== null ? byApp(this.screens) : []
+        }
+        if (kind === 'recording' || kind === 'all') { this.recording = null; await this.ctx.storage.delete('recording'); this.broadcastViewers({ kind: 'recording', active: false }) }
+        if (kind === 'apps' || kind === 'all') { if (app !== null) delete this.apps[app]; else if (kind === 'apps') this.apps = {} }
+        if (kind === 'all' && app === null) this.apps = {}
+        await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps)])
+        return Response.json({ ok: true, removed: { notes: before.notes - this.notes.length, macros: before.macros - this.macros.length, screens: before.screens - this.screens.length, apps: before.apps - Object.keys(this.apps).length }, totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length } })
+      }
+    }
+    if (url.pathname.endsWith('/app-seen') && request.method === 'POST') {
+      const { app, label } = (await request.json()) as { app?: string; label?: string }
+      const pkg = String(app ?? '').trim().slice(0, 120)
+      if (pkg) {
+        const cur = this.apps[pkg] ?? { first: Date.now(), last: 0, n: 0 }
+        cur.last = Date.now(); cur.n++; if (label) cur.label = label.slice(0, 64)
+        this.apps[pkg] = cur
+        // cap to 60 most recent apps
+        const keys = Object.keys(this.apps)
+        if (keys.length > 60) { const oldest = keys.sort((a, b) => this.apps[a].last - this.apps[b].last)[0]; delete this.apps[oldest] }
+        await this.ctx.storage.put('apps', this.apps)
+      }
+      return Response.json({ ok: true })
     }
     if (url.pathname.endsWith('/recording')) {
       if (request.method === 'GET') return Response.json({ recording: this.recording })

@@ -76,7 +76,7 @@ export interface ScreenLabel { name: string; hash: string; words: string[]; app?
 /** In-progress macro recording (record_macro). */
 export interface Recording { name?: string; description?: string; keepWaits: boolean; startedAt: number; lastAt: number; steps: { name: string; arguments?: Record<string, unknown> }[] }
 /** Named, replayable tool sequence stored per device. */
-export interface Macro { name: string; steps: { name: string; arguments?: Record<string, unknown> }[]; description?: string; ts: number; runs?: number }
+export interface Macro { name: string; steps: { name: string; arguments?: Record<string, unknown> }[]; description?: string; ts: number; runs?: number; /** package of the app open when saved (v2.2) */ app?: string }
 
 /** Per-command timeout: long on-phone sequences need more than the default 15s. */
 export function actionTimeoutMs(a: Action): number {
