@@ -55,6 +55,13 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
+**🏆 تسليم بين الجلسات + وعي باللعبة + تحقق ذاتي (v2.4)**
+- **`session_report`**: في نهاية كل جلسة الـ AI يكتب تسليمًا: النتيجة (win/loss/progress/stuck)، النقاط، المستوى، ملخص، ما تعلّمه، **نصيحة للمرة القادمة**، العوائق — يُربط بالجلسة والبروفايل؛ **أفضل نتيجة** تُتابع تلقائيًا؛ المحادثة القادمة تشوف آخر تقرير وـ NEXT TIME في QUICK START (قاعدة إلزامية في الـ bootstrap)
+- **`observe` واعي باللعبة**: لو فيه بروفايل، نفس الاستدعاء يرجّع `game.objects` (كل @color → عدد وأكبر الأجسام بمواقعها) و`game.values` (@score/@coins/@hp... → أرقام) — **نظرة واحدة = حالة اللعبة كاملة**
+- **`game_profile verify=true`**: يفحص كل لون/منطقة/زرار في البروفايل ضد الشاشة الحية ويرجّع `stale[]` — الـ AI يعرف بنفسه إن اللعبة اتحدّثت وإيه اللي محتاج إعادة تعلّم
+- `/setup`: أفضل نتيجة + عدد التقارير + ملخص ونصيحة كل جلسة داخل كل لعبة؛ `/monitor` يستقبل حدث `report`
+- `phone.sh`: `report "summary" [outcome] [score] ["next time"]` · `verify`
+
 **🎯 بروفايل اللعبة + @names + QUICK START (v2.3) — محادثة جديدة تلعب فورًا**
 - **`game_profile`**: قاعدة معرفة مُهيكلة لكل لعبة: أزرار بأسماء (`@jump`=(950,2100) ~120ms)، ألوان (`@enemy`=#ff2020)، مناطق (`@score`={0,0,500x200})، إعدادات — تُحفظ مرة وتبقى
 - **@names في أي أداة**: `tap at:"@jump"` · `tap at:"@jump+20,-10"` · `find_objects color:"@enemy"` · `read_number region:"@score"` · `auto_react color:"@note" region:"@hitline" tapX:"@lane1" stopColor:"@gameover"` · حتى داخل `points:[{at:"@a"}]` و`fallback:{at:"@x"}` — الـ AI ما بيكتب أرقامًا تاني؛ الاسم المجهول يرجّع قائمة الموجود
@@ -207,7 +214,7 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **72 أداة** مباشرة:
+بعدها النموذج يرى **73 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
 - عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
@@ -376,7 +383,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh   # 502 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh   # 554 checks green
 ```
 
 ## Data Architecture
@@ -401,6 +408,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v2.3 — game_profile + @names in every tool, QUICK START bootstrap for the current game, play sessions history, setup page profiles; 72 tools; 502 e2e checks; Android 2.1.0 unchanged)
+- **Last Updated**: 2026-09-08 (v2.4 — session_report handover + bestScore, profile-aware observe (game.objects/values), game_profile verify; 73 tools; 554 e2e checks; Android 2.1.0 unchanged)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
