@@ -92,7 +92,8 @@ function hasRef(v: unknown): boolean {
 }
 /** "@jump" | "@jump+20,-10" -> {name, dx, dy} */
 function parseRef(s: string): { name: string; dx: number; dy: number } | null {
-  const m = s.match(/^@([a-z0-9_-]+)(?:([+-]\d+)(?:,([+-]?\d+))?)?$/i)
+  // name may contain '-', so try the offset form first with a name that stops before a signed number ("@stick-500" → stick, -500)
+  const m = s.match(/^@([a-z0-9_]+(?:-[a-z_][a-z0-9_]*)*)([+-]\d+)(?:,([+-]?\d+))?$/i) ?? s.match(/^@([a-z0-9_-]+)$/i)
   return m ? { name: m[1].toLowerCase(), dx: Number(m[2] ?? 0), dy: Number(m[3] ?? 0) } : null
 }
 /** Replace @refs in tool args using the profile. Returns error if an @ref is unknown. */

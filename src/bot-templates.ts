@@ -100,8 +100,8 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       const sw: Record<string, [number, number]> = { up: [0, -500], down: [0, 500], left: [-450, 0], right: [450, 0] }
       const [dx, dy] = sw[s(p.reaction, 'up')] ?? sw.up
       const from = String(p.swipeFrom ?? '')
-      const sg = (v: number) => (v >= 0 ? '+' + v : String(v))
-      const swipe = (ddx: number, ddy: number) => ({ type: 'swipe', x1: from, y1: from, x2: ddx ? `${from}${sg(ddx)}` : from, y2: ddy ? `${from}${sg(ddy)}` : from, duration: 90 })
+      // @name+dx,dy form (a bare "-500" would be parsed as part of the name); for y fields the first offset is applied to y
+      const swipe = (ddx: number, ddy: number) => ({ type: 'swipe', x1: from, y1: from, x2: ddx ? `${from}${ddx >= 0 ? '+' : ''}${ddx},0` : from, y2: ddy ? `${from}${ddy >= 0 ? '+' : ''}${ddy}` : from, duration: 90 })
       rules.push({
         name: 'dodge', priority: 10, cooldownMs: 250,
         when: [{ type: 'color_present', ...colors(p.obstacle), region: p.lane, minCount: n(p.minCount, 40) }],
