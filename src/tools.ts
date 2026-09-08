@@ -563,6 +563,7 @@ export const TOOLS: ToolDef[] = [
       'ALWAYS add a safety rule: {name:"game over", when:[{type:"text_present",text:"GAME OVER"}], then:[{type:"stop_bot"}]} or a colour version, and a popup rule that taps Close/X. ' +
       'SHOOTER RECIPE: find the enemy colour that is UNIQUE and stable (head/name-tag/health bar/red outline — check with sample_colors + find_objects, not the body which changes with skins); rule 1 (priority 2): object_present @enemy pick nearest → aim_to_found + fire_burst; rule 2 (priority 1): color_absent @enemy forMs 700 → aim alternate:true dx 250 (sweep) + joystick @stick up 400 (advance); rule 3: low HP number_below @hp → joystick back / heal. ' +
       'Loop: create → run → observe 20 s → read status (ruleHits/avgTickMs) → update rules (tolerance/minSize/cooldown/sensitivity) until it fires correctly. ' +
+      'HANDS-FREE (app v2.8+): a floating bubble on the game screen shows ▶/■ and live counters; double-press Volume-Down stops, double-press Volume-Up starts the current bot; autoStart:true launches the bot when the game opens. aim_to_found self-tunes its sensitivity (status.learned) — save the learned value into the rule with action=update when it is stable. ' +
       'action: create | update (id or name) | list | get | delete | run | stop | status | template | templates. Requires Android app v2.7+ for object/aimbot features (v2.6 for the rest).',
     parameters: {
       type: 'object',
@@ -576,6 +577,7 @@ export const TOOLS: ToolDef[] = [
         tickMs: { type: 'integer', description: 'Poll interval 50-2000 (default 120)', minimum: 50, maximum: 2000, default: 120 },
         maxRunMs: { type: 'integer', description: 'Auto-stop after ms (default 1800000 = 30 min, max 21600000)', minimum: 10000, maximum: 21600000 },
         stopOnAppChange: { type: 'boolean', description: 'Stop if the user leaves the game (default true)', default: true },
+        autoStart: { type: 'boolean', description: 'v2.8: start this bot automatically ~2 s after the user opens the game (hands-free). Only one autoStart bot per app is sensible.', default: false },
         template: { type: 'string', description: 'action=template: shooter | runner | rhythm | idle_tapper | puzzle_match | fishing | racing | clicker (action=templates lists them with required @names)' },
         params: { type: 'object', description: 'action=template: overrides for the template, e.g. {enemy:"@enemy", fire:"@fire", stick:"@stick", look:"@look", hp:"@hp", sensitivity:0.8, fireCount:6}' },
       },
@@ -1186,7 +1188,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '2.7.0',
+      version: '2.8.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

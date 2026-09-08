@@ -698,7 +698,7 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
       if (a.type === 'tap_found' && !hasFoundCond) return { error: `rules[${i}] (${name}) uses tap_found but has no color_present/object_present/pixel_is/text_present condition` }
       if (a.type === 'tap_all_found' && !hasObjectCond) return { error: `rules[${i}] (${name}) uses tap_all_found but has no object_present condition` }
       if (a.type === 'aim_to_found' && !hasFoundCond) return { error: `rules[${i}] (${name}) uses aim_to_found but has no *_present condition` }
-      if (a.type === 'aim_to_found') { if (!isFin(a.x) || !isFin(a.y)) return { error: `rules[${i}].then[${t}] aim_to_found needs x,y (start point on the look area, or at:"@look")` }; a.sensitivity ??= 1; a.maxStep ??= 300; a.deadzone ??= 12; a.duration ??= 60; a.finger ??= 1 }
+      if (a.type === 'aim_to_found') { if (!isFin(a.x) || !isFin(a.y)) return { error: `rules[${i}].then[${t}] aim_to_found needs x,y (start point on the look area, or at:"@look")` }; a.sensitivity ??= 1; a.maxStep ??= 300; a.deadzone ??= 12; a.duration ??= 60; a.finger ??= 1; if (a.autoTune !== false) delete a.autoTune }
       if (a.type === 'tap_all_found') { a.max ??= 5; a.intervalMs ??= 40 }
       if (['tap', 'long_press', 'repeat_tap', 'joystick', 'aim', 'fire_burst'].includes(a.type) && (!isFin(a.x) || !isFin(a.y))) return { error: `rules[${i}].then[${t}] (${a.type}) needs x,y (or at:"@control")` }
       if (a.type === 'swipe' && ![a.x1, a.y1, a.x2, a.y2].every(isFin)) return { error: `rules[${i}].then[${t}] swipe needs x1,y1,x2,y2` }
@@ -773,6 +773,8 @@ async function gameBot(env: Bindings, deviceId: string, args: Record<string, unk
       rules: v.rules!, tickMs: isFin(args.tickMs) ? Math.min(Math.max(args.tickMs, 50), 2000) : existing?.tickMs ?? 120,
       maxRunMs: isFin(args.maxRunMs) ? Math.min(Math.max(args.maxRunMs, 10_000), 21_600_000) : existing?.maxRunMs ?? 1_800_000,
       stopOnAppChange: typeof args.stopOnAppChange === 'boolean' ? args.stopOnAppChange : existing?.stopOnAppChange ?? true,
+      ...((typeof args.autoStart === 'boolean' ? args.autoStart : existing?.autoStart) ? { autoStart: true } : {}),
+      ...(existing?.learned ? { learned: existing.learned } : {}),
       createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(), ...(template ? { template } : existing?.template ? { template: existing.template } : {}),
     }
     const res = (await (await r.fetch(`https://do/bots?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bot) })).json()) as ToolResult

@@ -133,7 +133,7 @@ export type BotAction =
   /** v2.7 tap every detected object (object_present), up to max, intervalMs apart */
   | { type: 'tap_all_found'; max?: number; intervalMs?: number; offsetX?: number; offsetY?: number }
   /** v2.7 aimbot: drag the look area so the crosshair moves onto the found object. drag = offset * sensitivity, clamped to maxStep */
-  | { type: 'aim_to_found'; x: number; y: number; crosshairX?: number; crosshairY?: number; sensitivity?: number; maxStep?: number; deadzone?: number; duration?: number; finger?: number; offsetX?: number; offsetY?: number }
+  | { type: 'aim_to_found'; x: number; y: number; crosshairX?: number; crosshairY?: number; sensitivity?: number; maxStep?: number; deadzone?: number; duration?: number; finger?: number; offsetX?: number; offsetY?: number; /** v2.8 adapt sensitivity from overshoot/undershoot (default true) */ autoTune?: boolean }
   | { type: 'swipe'; x1: number; y1: number; x2: number; y2: number; duration?: number }
   | { type: 'long_press'; x: number; y: number; duration?: number }
   | { type: 'tap_sequence'; points: SeqPoint[] }
@@ -181,9 +181,13 @@ export interface Bot {
   lastRun?: { start: number; end?: number; ticks: number; fired: number; stoppedBy?: string; ruleHits?: Record<string, number> }
   /** v2.7 template this bot was generated from (shooter/runner/…) */
   template?: string
+  /** v2.8 start automatically ~2 s after this bot's app comes to the foreground (once per app session) */
+  autoStart?: boolean
+  /** v2.8 learned parameters reported by the phone (e.g. aim_to_found sensitivity per action key) */
+  learned?: Record<string, number>
 }
 /** Live bot status reported by the phone */
-export interface BotStatusMessage { kind: 'bot_status'; botId?: string; name?: string; running: boolean; ticks?: number; fired?: number; lastRule?: string; startedAt?: number; stoppedBy?: string; error?: string; ts: number; /** v2.7 */ ruleHits?: Record<string, number>; avgTickMs?: number }
+export interface BotStatusMessage { kind: 'bot_status'; botId?: string; name?: string; running: boolean; ticks?: number; fired?: number; lastRule?: string; startedAt?: number; stoppedBy?: string; error?: string; ts: number; /** v2.7 */ ruleHits?: Record<string, number>; avgTickMs?: number; /** v2.8 self-tuned params (aim gain per action) */ learned?: Record<string, number>; /** v2.8 how the run was started: notification|overlay|volume|auto|relay */ startedBy?: string }
 /** In-progress macro recording (record_macro). */
 export interface Recording { name?: string; description?: string; keepWaits: boolean; startedAt: number; lastAt: number; steps: { name: string; arguments?: Record<string, unknown> }[] }
 /** Named, replayable tool sequence stored per device. */
