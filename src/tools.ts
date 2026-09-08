@@ -816,8 +816,8 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'recall',
-    description: 'List saved notes for this device (index, text, app tag, timestamp). Call at the start of a task to reuse earlier learnings. Filter with app=<package> (or app="current"). Pass forget=index (or forget=-1 for all) to delete.',
-    parameters: { type: 'object', properties: { forget: { type: 'integer', description: 'Delete note at index; -1 deletes all' }, app: { type: 'string', description: 'Only notes tagged with this package ("current" = app open now)' } }, required: [] },
+    description: 'List saved notes for this device (index, text, app tag, timestamp). Call at the start of a task to reuse earlier learnings. Filter with app=<package> (or app="current"). Pass forget=index (or forget=-1 for all, or forget="app" to wipe every note of the current/given app — e.g. when the user says the game was updated and old notes are stale) to delete.',
+    parameters: { type: 'object', properties: { forget: { type: 'string', description: 'Note index to delete; "-1" deletes all; "app" deletes all notes of app (or current app)' }, app: { type: 'string', description: 'Only notes tagged with this package ("current" = app open now)' } }, required: [] },
   },
   { name: 'wake_screen', description: 'Wake the display if it is off (you may still need to swipe up / unlock).', parameters: { type: 'object', properties: {}, required: [] } },
   { name: 'open_quick_settings', description: 'Open the quick-settings panel (Wi-Fi, Bluetooth, flashlight toggles...).', parameters: { type: 'object', properties: {}, required: [] } },
@@ -1005,7 +1005,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '2.1.0',
+      version: '2.2.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

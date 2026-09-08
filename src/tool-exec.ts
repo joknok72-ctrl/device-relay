@@ -150,6 +150,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (res.queuedMs) out.queuedMs = res.queuedMs
   if (res.data !== undefined) out.data = res.data
   if (res.ok) emitOverlay(env, deviceId, action as unknown as Record<string, unknown>, res.data)
+  if (res.ok && (action.type === 'current_app' || action.type === 'ui_dump')) noteAppSeen(env, deviceId, res.data)
   if (name === 'capture_screen') {
     const info = await deviceInfo(env, deviceId)
     out.screen = info.screen
@@ -299,10 +300,16 @@ async function hashOf(env: Bindings, deviceId: string): Promise<{ ok: boolean; h
 /** Best-effort current foreground package (empty string when unknown). */
 async function currentPackage(env: Bindings, deviceId: string): Promise<string> {
   try {
-    const r = await executeTool(env, deviceId, 'get_current_app', {})
-    const d = r.data as { package?: string } | undefined
+    const r = await executeTool(env, deviceId, 'get_current_app', {}, { internal: true })
+    const d = r.data as { package?: string; label?: string } | undefined
     return r.ok && typeof d?.package === 'string' ? d.package : ''
   } catch { return '' }
+}
+/** v2.2: remember which apps/games the AI has worked in (fire-and-forget) so the owner can manage memory per game. */
+function noteAppSeen(env: Bindings, deviceId: string, data: unknown) {
+  const d = data as { package?: string; label?: string } | undefined
+  if (!d?.package || d.package === 'com.devicerelay.client') return
+  room(env, deviceId).fetch(`https://do/app-seen?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: d.package, label: d.label }) }).catch(() => {})
 }
 
 /** Persistent per-device notes (memory across chats). */
@@ -317,6 +324,14 @@ async function remember(env: Bindings, deviceId: string, args: Record<string, un
 }
 async function recall(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
   if (args.forget !== undefined && args.forget !== null) {
+    // forget=index | -1 (all) | "app" (all notes of args.app / current app)
+    if (args.forget === 'app') {
+      let app = typeof args.app === 'string' ? args.app.trim() : 'current'
+      if (app === 'current' || !app) app = await currentPackage(env, deviceId)
+      if (!app) return { ok: false, error: 'could not determine current app; pass app=<package>' }
+      const r = await room(env, deviceId).fetch(`https://do/memory?deviceId=${deviceId}&kind=notes&app=${encodeURIComponent(app)}`, { method: 'DELETE' })
+      return { ...((await r.json()) as ToolResult), app }
+    }
     const idx = Number(args.forget)
     const r = await room(env, deviceId).fetch(`https://do/notes?deviceId=${deviceId}${idx >= 0 ? `&index=${idx}` : ''}`, { method: 'DELETE' })
     return (await r.json()) as ToolResult
@@ -820,8 +835,11 @@ async function saveMacro(env: Bindings, deviceId: string, args: Record<string, u
   const steps = args.steps
   if (!Array.isArray(steps)) return { ok: false, error: 'steps must be an array' }
   for (const s of steps as { name?: string }[]) if (!s?.name || !TOOLS.some((t) => t.name === s.name) || ['run_macro', 'save_macro'].includes(s.name)) return { ok: false, error: `invalid step tool: ${s?.name}` }
-  const r = await room(env, deviceId).fetch(`https://do/macros?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: args.name, steps, description: args.description }) })
-  return (await r.json()) as ToolResult
+  const app = typeof args.app === 'string' && args.app.trim() ? args.app.trim() : await currentPackage(env, deviceId)
+  const r = await room(env, deviceId).fetch(`https://do/macros?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: args.name, steps, description: args.description, app: app || undefined }) })
+  const out = (await r.json()) as ToolResult
+  if (app) out.app = app
+  return out
 }
 async function listMacros(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
   if (typeof args.delete === 'string' && args.delete) {

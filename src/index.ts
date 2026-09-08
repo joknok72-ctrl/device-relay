@@ -14,7 +14,7 @@ import { authenticate, canAccess, extractToken, randomToken, rateLimit, registry
 
 export { DeviceRoom, DeviceRegistry }
 
-const VERSION = '2.1.0'
+const VERSION = '2.2.0'
 
 type Auth = AuthContext & { readOnly?: boolean }
 type Env = { Bindings: AuthEnv; Variables: { auth: Auth } }
@@ -219,6 +219,47 @@ admin.post('/devices/:deviceId/disconnect', async (c) => {
   await room(c, deviceId).fetch(`https://do/disconnect?deviceId=${deviceId}`, { method: 'POST' })
   return c.json({ ok: true })
 })
+/**
+ * v2.2 — AI memory management (what the AI learned about each game/app on a device).
+ * GET    /api/admin/devices/:id/memory                 → grouped by app: notes, macros, labelled screens, recording draft, apps seen
+ * GET    /api/admin/devices/:id/memory?format=export   → downloadable JSON backup
+ * DELETE /api/admin/devices/:id/memory?kind=all|notes|macros|screens|recording|apps&app=<pkg>&index=<n>&name=<x>
+ *   - no params: wipe everything the AI remembers about this device
+ *   - app=<pkg>: wipe only that game's memory (use when the game was updated and old layouts are stale)
+ * POST   /api/admin/devices/:id/memory/import          → restore from an export (merge)
+ */
+admin.get('/devices/:deviceId/memory', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  const mem = (await (await room(c, deviceId).fetch(`https://do/memory?deviceId=${deviceId}`)).json()) as Record<string, unknown>
+  if (c.req.query('format') === 'export') {
+    const body = JSON.stringify({ exportedAt: new Date().toISOString(), version: VERSION, ...mem }, null, 2)
+    return new Response(body, { headers: { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="device-relay-memory-${deviceId}-${new Date().toISOString().slice(0, 10)}.json"` } })
+  }
+  return c.json(mem)
+})
+admin.delete('/devices/:deviceId/memory', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  const qs = new URLSearchParams()
+  for (const k of ['kind', 'app', 'index', 'name']) { const v = c.req.query(k); if (v !== undefined) qs.set(k, v) }
+  return c.json(await (await room(c, deviceId).fetch(`https://do/memory?deviceId=${deviceId}&${qs.toString()}`, { method: 'DELETE' })).json())
+})
+admin.post('/devices/:deviceId/memory/import', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  let body: { groups?: { notes?: { text: string; app?: string }[]; macros?: Record<string, unknown>[]; screens?: Record<string, unknown>[] }[] }
+  try { body = await c.req.json() } catch { return c.json({ error: 'invalid JSON' }, 400) }
+  const r = room(c, deviceId)
+  const hdr = { 'Content-Type': 'application/json' }
+  let notes = 0, macros = 0, screens = 0
+  for (const g of body.groups ?? []) {
+    for (const n of g.notes ?? []) { if (typeof n.text === 'string') { await r.fetch(`https://do/notes?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify({ text: n.text, app: n.app }) }); notes++ } }
+    for (const m of g.macros ?? []) { const res = await r.fetch(`https://do/macros?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(m) }); if (res.ok) macros++ }
+    for (const s of g.screens ?? []) { const res = await r.fetch(`https://do/screens?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(s) }); if (res.ok) screens++ }
+  }
+  return c.json({ ok: true, imported: { notes, macros, screens } })
+})
 /** Everything the setup page needs in one call */
 admin.get('/overview', async (c) => {
   const [devices, tokens] = await Promise.all([allDevices(c.env), reg(c.env).listTokens()])
@@ -267,6 +308,14 @@ app.get('/api/devices/:deviceId/last-screenshot', async (c) => {
   if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
   const g = guardDevice(c, deviceId); if (g) return g
   return c.json(await (await room(c, deviceId).fetch(`https://do/last-screenshot?deviceId=${deviceId}`)).json())
+})
+
+/** v2.2: read-only memory summary for any token that can access the device (admin manages it via /api/admin/.../memory). */
+app.get('/api/devices/:deviceId/memory', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  const g = guardDevice(c, deviceId); if (g) return g
+  return c.json(await (await room(c, deviceId).fetch(`https://do/memory?deviceId=${deviceId}`)).json())
 })
 
 /** Persistent per-device notes (memory across AI sessions). */
