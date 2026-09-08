@@ -133,6 +133,14 @@ class AutomationAccessibilityService : AccessibilityService() {
         // v2.1
         "sample_colors" -> sampleColors(action)
         "track_object" -> trackObject(action)
+        // v2.5 multi-touch engine (shooters / action games)
+        "finger_down" -> fingerDown(action)
+        "finger_move" -> fingerMove(action)
+        "finger_up" -> fingerUp(action)
+        "joystick" -> joystick(action)
+        "aim" -> aim(action)
+        "fire_burst" -> fireBurst(action)
+        "combo" -> combo(action)
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -852,6 +860,155 @@ class AutomationAccessibilityService : AccessibilityService() {
     }
 
     // ---------------------------------------------------------------- v1.5 precision input
+    // ---------------------------------------------------------------- v2.5 multi-touch engine
+    // Persistent "fingers": a finger is a stroke chain (willContinue=true) that stays down until finger_up.
+    // While a finger is down, other gestures (taps, other fingers) can be dispatched concurrently in the same builder.
+    private class Finger(var x: Float, var y: Float, var stroke: GestureDescription.StrokeDescription, val since: Long)
+    private val fingers = HashMap<Int, Finger>()
+
+    /** Dispatch strokes for the given fingers as ONE gesture (they must share a GestureDescription to be simultaneous). */
+    private suspend fun dispatchStrokes(strokes: List<GestureDescription.StrokeDescription>): Outcome {
+        if (strokes.isEmpty()) return Outcome.Ok()
+        val b = GestureDescription.Builder()
+        for (s in strokes.take(10)) b.addStroke(s)
+        return dispatch(b.build())
+    }
+
+    /** Put finger `id` down at (x,y) and keep it there (willContinue). */
+    private suspend fun fingerDown(a: Action): Outcome {
+        val id = (a.finger ?: 0).coerceIn(0, 3); val x = a.x ?: return Outcome.Fail("missing x"); val y = a.y ?: return Outcome.Fail("missing y")
+        if (fingers.containsKey(id)) return Outcome.Fail("finger $id already down; finger_up first")
+        if (fingers.size >= 4) return Outcome.Fail("max 4 fingers")
+        val hold = (a.duration ?: 60L).coerceIn(20, 1000)
+        val s = GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, hold, true)
+        val r = dispatchStrokes(listOf(s))
+        if (r is Outcome.Fail) return r
+        fingers[id] = Finger(x, y, s, android.os.SystemClock.elapsedRealtime())
+        return Outcome.Ok(data = buildJsonObject { put("finger", id); put("x", x.toInt()); put("y", y.toInt()); put("down", fingers.size) })
+    }
+
+    /** Move finger `id` to (x,y) over duration ms (path may include intermediate points). Stays down afterwards. */
+    private suspend fun fingerMove(a: Action): Outcome {
+        val id = (a.finger ?: 0).coerceIn(0, 3)
+        val f = fingers[id] ?: return Outcome.Fail("finger $id is not down; finger_down first")
+        val pts = a.points?.takeIf { it.isNotEmpty() } ?: listOfNotNull(if (a.x != null && a.y != null) SeqPoint(a.x, a.y) else null)
+        if (pts.isEmpty()) return Outcome.Fail("finger_move requires x,y or points")
+        val dur = (a.duration ?: 150L).coerceIn(20, 10_000)
+        val path = Path().apply { moveTo(f.x, f.y); for (p in pts) lineTo(p.x, p.y) }
+        val s = f.stroke.continueStroke(path, 0, dur, true)
+        val r = dispatchStrokes(listOf(s))
+        if (r is Outcome.Fail) return r
+        f.stroke = s; f.x = pts.last().x; f.y = pts.last().y
+        return Outcome.Ok(data = buildJsonObject { put("finger", id); put("x", f.x.toInt()); put("y", f.y.toInt()) })
+    }
+
+    /** Lift finger `id` (or all fingers when finger=-1). */
+    private suspend fun fingerUp(a: Action): Outcome {
+        val ids = if (a.finger == -1) fingers.keys.toList() else listOf((a.finger ?: 0).coerceIn(0, 3))
+        val strokes = ArrayList<GestureDescription.StrokeDescription>()
+        for (id in ids) { val f = fingers[id] ?: continue; strokes.add(f.stroke.continueStroke(Path().apply { moveTo(f.x, f.y) }, 0, 20, false)) }
+        if (strokes.isEmpty()) return Outcome.Ok(data = buildJsonObject { put("lifted", 0); put("down", fingers.size) })
+        val r = dispatchStrokes(strokes)
+        for (id in ids) fingers.remove(id)
+        if (r is Outcome.Fail) return Outcome.Fail("finger_up: ${r.error}")
+        return Outcome.Ok(data = buildJsonObject { put("lifted", strokes.size); put("down", fingers.size) })
+    }
+
+    /**
+     * Virtual joystick: press at centre (cx,cy), push to angle/distance, hold for durationMs, optionally release.
+     * angle in degrees: 0 = right, 90 = down (screen coords), 180 = left, 270 = up. Uses finger slot `finger` (default 0).
+     * If the finger is already down (a previous joystick call with release=false) it just moves it — seamless direction changes.
+     */
+    private suspend fun joystick(a: Action): Outcome {
+        val cx = a.x ?: return Outcome.Fail("joystick requires x,y (stick centre)"); val cy = a.y ?: return Outcome.Fail("missing y")
+        val id = (a.finger ?: 0).coerceIn(0, 3)
+        val angle = Math.toRadians((a.angle ?: 270.0)); val dist = (a.distance ?: 150f).coerceIn(10f, 800f)
+        val tx = cx + (Math.cos(angle) * dist).toFloat(); val ty = cy + (Math.sin(angle) * dist).toFloat()
+        val hold = (a.duration ?: 500L).coerceIn(50, 40_000); val release = a.release != false
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val existing = fingers[id]
+        if (existing == null) {
+            val down = fingerDown(Action(type = "finger_down", x = cx, y = cy, finger = id, duration = 40))
+            if (down is Outcome.Fail) return down
+        }
+        val mv = fingerMove(Action(type = "finger_move", x = tx, y = ty, finger = id, duration = 80))
+        if (mv is Outcome.Fail) return mv
+        // hold the stick: keep the stroke alive with tiny continuation segments (max 1s each) so the game keeps receiving MOVE events
+        var remaining = hold - 80
+        while (remaining > 0) {
+            val seg = Math.min(remaining, 900L)
+            val f = fingers[id] ?: break
+            val s = f.stroke.continueStroke(Path().apply { moveTo(f.x, f.y); lineTo(f.x + 0.5f, f.y) }, 0, seg, true)
+            val r = dispatchStrokes(listOf(s)); if (r is Outcome.Fail) return Outcome.Fail("joystick hold: ${r.error}")
+            f.stroke = s; f.x += 0.5f
+            remaining -= seg
+        }
+        if (release) fingerUp(Action(type = "finger_up", finger = id))
+        return Outcome.Ok(data = buildJsonObject { put("finger", id); put("angle", a.angle ?: 270.0); put("distance", dist.toInt()); put("heldMs", android.os.SystemClock.elapsedRealtime() - t0); put("released", release); put("tipX", tx.toInt()); put("tipY", ty.toInt()) })
+    }
+
+    /** Aim/camera drag: swipe by (dx,dy) starting at (x,y) on the look area, with a separate finger so the movement stick can stay held. */
+    private suspend fun aim(a: Action): Outcome {
+        val x = a.x ?: return Outcome.Fail("aim requires x,y (start point on the look area)"); val y = a.y ?: return Outcome.Fail("missing y")
+        val dx = a.dx ?: 0f; val dy = a.dy ?: 0f
+        if (dx == 0f && dy == 0f) return Outcome.Fail("aim requires dx and/or dy")
+        val id = (a.finger ?: 1).coerceIn(0, 3); val dur = (a.duration ?: 120L).coerceIn(20, 3000)
+        val steps = (a.steps ?: 1).coerceIn(1, 20)
+        if (fingers.containsKey(id)) fingerUp(Action(type = "finger_up", finger = id))
+        // one continuous drag with `steps` intermediate points so games sample smooth motion
+        val pts = (1..steps).map { i -> SeqPoint(x + dx * i / steps, y + dy * i / steps) }
+        val down = fingerDown(Action(type = "finger_down", x = x, y = y, finger = id, duration = 30)); if (down is Outcome.Fail) return down
+        val mv = fingerMove(Action(type = "finger_move", points = pts, finger = id, duration = dur)); if (mv is Outcome.Fail) return mv
+        if (a.release != false) fingerUp(Action(type = "finger_up", finger = id))
+        return Outcome.Ok(data = buildJsonObject { put("finger", id); put("dx", dx.toInt()); put("dy", dy.toInt()); put("durationMs", dur) })
+    }
+
+    /** Fire button burst: `count` taps at (x,y) every intervalMs, on its own finger so movement/aim fingers stay down. holdMs>0 = hold the button instead of tapping. */
+    private suspend fun fireBurst(a: Action): Outcome {
+        val x = a.x ?: return Outcome.Fail("fire_burst requires x,y"); val y = a.y ?: return Outcome.Fail("missing y")
+        val holdMs = (a.holdMs ?: 0L)
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        if (holdMs > 0) {
+            val r = gesture(tapPath(x, y), holdMs.coerceIn(50, 30_000))
+            return if (r is Outcome.Fail) r else Outcome.Ok(data = buildJsonObject { put("held", holdMs); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0) })
+        }
+        val count = (a.count ?: 5).coerceIn(1, 200); val interval = (a.intervalMs ?: 90L).coerceIn(30, 2000)
+        var done = 0
+        for (i in 0 until count) {
+            val r = gesture(tapPath(x, y), 35); if (r is Outcome.Fail) return Outcome.Fail("shot ${i + 1}/$count failed: ${r.error}")
+            done++
+            val target = t0 + (i + 1) * interval; val wait = target - android.os.SystemClock.elapsedRealtime(); if (i < count - 1 && wait > 0) delay(wait)
+        }
+        return Outcome.Ok(data = buildJsonObject { put("shots", done); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0) })
+    }
+
+    /**
+     * combo: a timed script of multi-touch steps executed on the phone with no network jitter.
+     * steps[]: {op:"down"|"move"|"up"|"tap"|"wait"|"joystick"|"aim"|"fire", finger?, x?, y?, dx?, dy?, angle?, distance?, duration?, delayMs?, count?}
+     */
+    private suspend fun combo(a: Action): Outcome {
+        val steps = a.steps2 ?: return Outcome.Fail("combo requires steps")
+        if (steps.isEmpty() || steps.size > 40) return Outcome.Fail("combo steps must be 1..40")
+        val t0 = android.os.SystemClock.elapsedRealtime(); var done = 0
+        for ((i, s) in steps.withIndex()) {
+            if ((s.delayMs ?: 0L) > 0) delay(s.delayMs!!)
+            val r: Outcome = when (s.op) {
+                "down" -> fingerDown(Action(type = "finger_down", x = s.x, y = s.y, finger = s.finger, duration = s.duration))
+                "move" -> fingerMove(Action(type = "finger_move", x = s.x, y = s.y, finger = s.finger, duration = s.duration))
+                "up" -> fingerUp(Action(type = "finger_up", finger = s.finger ?: 0))
+                "tap" -> gesture(tapPath(s.x, s.y), (s.duration ?: 40L).coerceIn(20, 5000))
+                "wait" -> { delay((s.duration ?: 100L).coerceIn(0, 10_000)); Outcome.Ok() }
+                "joystick" -> joystick(Action(type = "joystick", x = s.x, y = s.y, finger = s.finger, angle = s.angle, distance = s.distance, duration = s.duration, release = s.release))
+                "aim" -> aim(Action(type = "aim", x = s.x, y = s.y, dx = s.dx, dy = s.dy, finger = s.finger, duration = s.duration, release = s.release))
+                "fire" -> fireBurst(Action(type = "fire_burst", x = s.x, y = s.y, count = s.count, intervalMs = s.intervalMs, holdMs = s.holdMs))
+                else -> Outcome.Fail("unknown op ${s.op}")
+            }
+            if (r is Outcome.Fail) { fingerUp(Action(type = "finger_up", finger = -1)); return Outcome.Fail("combo step ${i + 1} (${s.op}) failed: ${r.error}") }
+            done++
+        }
+        return Outcome.Ok(data = buildJsonObject { put("steps", done); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0); put("fingersDown", fingers.size) })
+    }
+
     private suspend fun tapSequence(points: List<SeqPoint>?): Outcome {
         if (points.isNullOrEmpty()) return Outcome.Fail("tap_sequence requires points")
         var done = 0

@@ -83,6 +83,27 @@ data class Action(
     val ignoreGrey: Boolean? = null,     // sample_colors
     val samples: Int? = null,            // track_object
     val predictMs: Long? = null,         // track_object
+    // v2.5 multi-touch
+    val finger: Int? = null,             // finger slot 0-3 (-1 = all for finger_up)
+    val angle: Double? = null,           // joystick: degrees (0=right, 90=down, 270=up)
+    val distance: Float? = null,         // joystick: push distance px
+    val release: Boolean? = null,        // joystick/aim: lift finger at the end (default true)
+    val dx: Float? = null,               // aim
+    val dy: Float? = null,               // aim
+    val steps: Int? = null,              // aim: intermediate points
+    @SerialName("combo") val steps2: List<ComboStep>? = null, // combo steps
+)
+
+@Serializable
+data class ComboStep(
+    val op: String,
+    val finger: Int? = null,
+    val x: Float? = null, val y: Float? = null,
+    val dx: Float? = null, val dy: Float? = null,
+    val angle: Double? = null, val distance: Float? = null,
+    val duration: Long? = null, val delayMs: Long? = null,
+    val count: Int? = null, val intervalMs: Long? = null, val holdMs: Long? = null,
+    val release: Boolean? = null,
 )
 
 @Serializable

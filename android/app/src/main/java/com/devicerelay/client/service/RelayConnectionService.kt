@@ -234,6 +234,9 @@ class RelayConnectionService : Service() {
             "read_text" -> 25_000L
             "auto_react" -> base + (a.timeoutMs ?: 10_000L)
             "track_object" -> base + (a.samples ?: 5) * (a.intervalMs ?: 120L)
+            "joystick" -> base + (a.duration ?: 500L)
+            "fire_burst" -> base + (a.holdMs ?: 0L) + (a.count ?: 5) * (a.intervalMs ?: 90L)
+            "combo" -> base + (a.steps2?.sumOf { (it.delayMs ?: 0L) + (it.duration ?: 0L) + (it.holdMs ?: 0L) + (it.count ?: 0) * (it.intervalMs ?: 90L) } ?: 0L)
             else -> base
         }
     }
