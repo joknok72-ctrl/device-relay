@@ -253,17 +253,18 @@ admin.delete('/devices/:deviceId/memory', async (c) => {
 admin.post('/devices/:deviceId/memory/import', async (c) => {
   const deviceId = c.req.param('deviceId')
   if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
-  let body: { groups?: { notes?: { text: string; app?: string }[]; macros?: Record<string, unknown>[]; screens?: Record<string, unknown>[] }[] }
+  let body: { groups?: { app?: string; notes?: { text: string; app?: string }[]; macros?: Record<string, unknown>[]; screens?: Record<string, unknown>[]; profile?: Record<string, unknown> }[] }
   try { body = await c.req.json() } catch { return c.json({ error: 'invalid JSON' }, 400) }
   const r = room(c, deviceId)
   const hdr = { 'Content-Type': 'application/json' }
-  let notes = 0, macros = 0, screens = 0
+  let notes = 0, macros = 0, screens = 0, profiles = 0
   for (const g of body.groups ?? []) {
+    if (g.profile && g.app) { const res = await r.fetch(`https://do/profile?deviceId=${deviceId}&app=${encodeURIComponent(g.app)}`, { method: 'POST', headers: hdr, body: JSON.stringify({ replace: g.profile }) }); if (res.ok) profiles++ }
     for (const n of g.notes ?? []) { if (typeof n.text === 'string') { await r.fetch(`https://do/notes?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify({ text: n.text, app: n.app }) }); notes++ } }
     for (const m of g.macros ?? []) { const res = await r.fetch(`https://do/macros?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(m) }); if (res.ok) macros++ }
     for (const s of g.screens ?? []) { const res = await r.fetch(`https://do/screens?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(s) }); if (res.ok) screens++ }
   }
-  return c.json({ ok: true, imported: { notes, macros, screens } })
+  return c.json({ ok: true, imported: { notes, macros, screens, profiles } })
 })
 /** Everything the setup page needs in one call */
 admin.get('/overview', async (c) => {

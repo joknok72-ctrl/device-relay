@@ -128,7 +128,7 @@
           <button class="btn btn-d !py-1" id="mem-wipe"><i class="fas fa-trash"></i> مسح كل الذاكرة</button>
         </div>
       </div>
-      <p class="text-xs text-slate-500 mb-3">كل محادثة جديدة يقرأ الـ AI هذه الذاكرة تلقائيًا (ملاحظات • ماكروهات • شاشات مسمّاة). لو لعبة اتحدّثت وتغيّرت واجهتها، امسح ذاكرتها فقط من زر <i class="fas fa-trash"></i> بجوار اسمها — وهيبدأ يتعلّمها من جديد بدون معلومات قديمة خاطئة. المسح لا يمسّ الأجهزة أو التوكنات.</p>
+      <p class="text-xs text-slate-500 mb-3">كل محادثة جديدة يقرأ الـ AI هذه الذاكرة تلقائيًا (🎯 بروفايل اللعبة: أزرار/ألوان/مناطق بأسماء • ملاحظات • ماكروهات • شاشات مسمّاة • سجل اللعب) ويبدأ اللعب فورًا بدون إعادة اكتشاف. لو لعبة اتحدّثت وتغيّرت واجهتها، امسح ذاكرتها فقط من زر <i class="fas fa-trash"></i> بجوار اسمها — وهيبدأ يتعلّمها من جديد بدون معلومات قديمة خاطئة. المسح لا يمسّ الأجهزة أو التوكنات.</p>
       <div id="mem-totals" class="text-xs text-slate-400 mb-3"></div>
       <div id="mem-groups" class="space-y-3"></div>
       <p id="mem-empty" class="text-slate-500 text-sm hidden">لا توجد ذاكرة محفوظة لهذا الجهاز بعد — ستمتلئ مع أول لعبة يلعبها الـ AI.</p>
@@ -214,13 +214,16 @@
   function renderMemory(m) {
     const el = $('#mem-groups'); el.innerHTML = ''
     const t = m.totals || {}
-    $('#mem-totals').innerHTML = `📝 ${t.notes || 0} ملاحظة · ⏯️ ${t.macros || 0} ماكرو · 🖼️ ${t.screens || 0} شاشة مسمّاة · 🎮 ${t.apps || 0} تطبيق شوهد${t.recording ? ' · <span class="text-rose-300">⏺ تسجيل ماكرو جارٍ</span> <button class="btn btn-s !py-0 !px-2" data-mem="recording">إلغاء التسجيل</button>' : ''}`
-    const groups = (m.groups || []).filter(g => g.notes.length || g.macros.length || g.screens.length || g.app)
+    $('#mem-totals').innerHTML = `📝 ${t.notes || 0} ملاحظة · ⏯️ ${t.macros || 0} ماكرو · 🖼️ ${t.screens || 0} شاشة مسمّاة · 🎯 ${t.profiles || 0} بروفايل لعبة · 🕒 ${t.sessions || 0} جلسة لعب · 🎮 ${t.apps || 0} تطبيق شوهد${t.recording ? ' · <span class="text-rose-300">⏺ تسجيل ماكرو جارٍ</span> <button class="btn btn-s !py-0 !px-2" data-mem="recording">إلغاء التسجيل</button>' : ''}`
+    const groups = (m.groups || []).filter(g => g.notes.length || g.macros.length || g.screens.length || g.profile || g.app)
+    const sessionsByApp = {}; for (const s of (m.sessions || [])) (sessionsByApp[s.app] ??= []).push(s)
     $('#mem-empty').classList.toggle('hidden', groups.length > 0)
     for (const g of groups) {
       const isGeneral = !g.app
       const title = isGeneral ? 'عام (بدون تطبيق محدد)' : `${esc(g.label || g.app.split('.').pop())} <span class="text-slate-500 font-normal mono text-xs ltr">${esc(g.app)}</span>`
-      const n = g.notes.length + g.macros.length + g.screens.length
+      const p = g.profile; const pn = p ? Object.keys(p.controls || {}).length + Object.keys(p.colors || {}).length + Object.keys(p.regions || {}).length + Object.keys(p.settings || {}).length : 0
+      const n = g.notes.length + g.macros.length + g.screens.length + pn
+      const sess = sessionsByApp[g.app] || []
       const card = document.createElement('details')
       card.className = 'bg-slate-800/60 rounded-xl border border-slate-700/60'
       card.open = n > 0 && groups.length <= 3
@@ -228,14 +231,16 @@
         <summary class="cursor-pointer p-3 flex items-center justify-between gap-2 flex-wrap">
           <span class="font-semibold"><i class="fas fa-gamepad text-fuchsia-400 ml-1"></i> ${title}</span>
           <span class="text-xs text-slate-400 flex items-center gap-3">
-            <span>${g.notes.length} ملاحظة · ${g.macros.length} ماكرو · ${g.screens.length} شاشة${g.lastSeen ? ' · آخر لعب ' + ago(g.lastSeen) : ''}</span>
+            <span>${pn ? '🎯 ' + pn + ' · ' : ''}${g.notes.length} ملاحظة · ${g.macros.length} ماكرو · ${g.screens.length} شاشة${g.sessions ? ' · ' + g.sessions + ' جلسة (' + Math.round((g.playedMs || 0) / 60000) + ' د)' : ''}${g.lastSeen ? ' · آخر لعب ' + ago(g.lastSeen) : ''}</span>
             ${n ? `<button class="btn btn-d !py-0.5 !px-2" data-mem="app" data-app="${esc(g.app)}" title="مسح كل ذاكرة هذه اللعبة"><i class="fas fa-trash"></i> مسح ذاكرة اللعبة</button>` : `<button class="btn btn-s !py-0.5 !px-2" data-mem="forget-app" data-app="${esc(g.app)}" title="إزالة من القائمة"><i class="fas fa-xmark"></i></button>`}
           </span>
         </summary>
         <div class="px-3 pb-3 space-y-2 text-sm">
+          ${pn ? `<div><div class="text-xs text-slate-400 mb-1 flex items-center justify-between"><span>🎯 بروفايل اللعبة — أسماء يستخدمها الـ AI مباشرة (@name)</span><button class="btn btn-d !py-0 !px-2" data-mem="profile" data-app="${esc(g.app)}" title="حذف البروفايل فقط"><i class="fas fa-xmark"></i></button></div><div class="grid sm:grid-cols-2 gap-1 text-xs">${Object.entries(p.controls || {}).map(([k, v]) => `<div class="bg-slate-900/60 rounded px-2 py-1 ltr"><span class="text-amber-300 mono">@${esc(k)}</span> <span class="text-slate-500">control</span> (${v.x},${v.y})${v.reactMs ? ` ~${v.reactMs}ms` : ''}${v.note ? ` <span class="text-slate-400">${esc(v.note)}</span>` : ''}</div>`).join('')}${Object.entries(p.colors || {}).map(([k, v]) => `<div class="bg-slate-900/60 rounded px-2 py-1 ltr"><span class="text-amber-300 mono">@${esc(k)}</span> <span class="text-slate-500">color</span> <span class="inline-block w-3 h-3 rounded align-middle" style="background:${esc(v.hex)}"></span> ${esc(v.hex)}${v.tolerance ? ` ±${v.tolerance}` : ''}</div>`).join('')}${Object.entries(p.regions || {}).map(([k, v]) => `<div class="bg-slate-900/60 rounded px-2 py-1 ltr"><span class="text-amber-300 mono">@${esc(k)}</span> <span class="text-slate-500">region</span> {${v.x},${v.y} ${v.w}×${v.h}}</div>`).join('')}${Object.entries(p.settings || {}).map(([k, v]) => `<div class="bg-slate-900/60 rounded px-2 py-1 ltr"><span class="text-amber-300 mono">@${esc(k)}</span> <span class="text-slate-500">setting</span> ${esc(JSON.stringify(v))}</div>`).join('')}</div></div>` : ''}
           ${g.notes.length ? `<div><div class="text-xs text-slate-400 mb-1">📝 ملاحظات (إحداثيات، ألوان، حيل)</div><ul class="space-y-1">${g.notes.map(x => `<li class="flex items-start gap-2 bg-slate-900/60 rounded p-2"><span class="flex-1 whitespace-pre-wrap break-words">${esc(x.text)}</span><span class="text-xs text-slate-500 whitespace-nowrap">${fmtDate(x.ts)}</span><button class="btn btn-d !py-0 !px-2" data-mem="note" data-index="${x.index}" title="حذف هذه الملاحظة"><i class="fas fa-xmark"></i></button></li>`).join('')}</ul></div>` : ''}
           ${g.macros.length ? `<div><div class="text-xs text-slate-400 mb-1">⏯️ ماكروهات (سلاسل محفوظة)</div><ul class="space-y-1">${g.macros.map(x => `<li class="flex items-center gap-2 bg-slate-900/60 rounded p-2"><span class="mono ltr">${esc(x.name)}</span><span class="flex-1 text-slate-400 text-xs">${esc(x.description || '')} · ${x.steps.length} خطوة · شُغّل ${x.runs || 0}×</span><button class="btn btn-d !py-0 !px-2" data-mem="macro" data-name="${esc(x.name)}"><i class="fas fa-xmark"></i></button></li>`).join('')}</ul></div>` : ''}
           ${g.screens.length ? `<div><div class="text-xs text-slate-400 mb-1">🖼️ شاشات مسمّاة (بصمات للتعرف)</div><div class="flex flex-wrap gap-1">${g.screens.map(x => `<span class="inline-flex items-center gap-1 bg-slate-900/60 rounded px-2 py-1 text-xs"><span class="mono ltr">${esc(x.name)}</span>${x.words && x.words.length ? `<span class="text-slate-500">${esc(x.words.slice(0, 3).join(' '))}</span>` : ''}<button class="text-rose-300 hover:text-rose-200" data-mem="screen" data-name="${esc(x.name)}"><i class="fas fa-xmark"></i></button></span>`).join('')}</div></div>` : ''}
+          ${sess.length ? `<div><div class="text-xs text-slate-400 mb-1 flex items-center justify-between"><span>🕒 جلسات اللعب (أحدث 5)</span><button class="btn btn-s !py-0 !px-2" data-mem="sessions" data-app="${esc(g.app)}" title="مسح سجل اللعب"><i class="fas fa-xmark"></i></button></div><ul class="text-xs space-y-0.5">${sess.slice(0, 5).map(s => `<li class="flex gap-3 text-slate-300"><span class="text-slate-500">${fmtDate(s.start)}</span><span>${Math.max(1, Math.round((s.end - s.start) / 60000))} د</span><span>${s.commands} أمر</span>${s.failed ? `<span class="text-rose-300">${s.failed} فشل</span>` : ''}</li>`).join('')}</ul></div>` : ''}
           ${!n ? '<div class="text-xs text-slate-500">الـ AI فتح هذا التطبيق لكن لم يحفظ شيئًا عنه بعد.</div>' : ''}
         </div>`
       el.appendChild(card)
@@ -260,6 +265,8 @@
     if (k === 'macro') return confirm(`حذف الماكرو ${b.dataset.name}؟`) && memDelete(`kind=macros&name=${encodeURIComponent(b.dataset.name)}`, 'تم حذف الماكرو')
     if (k === 'screen') return memDelete(`kind=screens&name=${encodeURIComponent(b.dataset.name)}`, 'تم حذف الشاشة')
     if (k === 'recording') return memDelete('kind=recording', 'تم إلغاء التسجيل')
+    if (k === 'profile') return confirm('حذف بروفايل اللعبة (الأزرار/الألوان/المناطق)؟ الـ AI سيعيد اكتشافها.') && memDelete(`kind=profiles&app=${encodeURIComponent(b.dataset.app)}`, 'تم حذف البروفايل')
+    if (k === 'sessions') return memDelete(`kind=sessions&app=${encodeURIComponent(b.dataset.app)}`, 'تم مسح سجل اللعب')
     if (k === 'app') return confirm(`مسح كل ما تعلّمه الـ AI عن هذه اللعبة؟\n(ملاحظات + ماكروهات + شاشات) — سيبدأ من الصفر في المحادثة القادمة.`) && memDelete(`kind=all&app=${encodeURIComponent(b.dataset.app)}`, 'تم مسح ذاكرة اللعبة')
     if (k === 'forget-app') return memDelete(`kind=apps&app=${encodeURIComponent(b.dataset.app)}`, 'تمت الإزالة')
   })

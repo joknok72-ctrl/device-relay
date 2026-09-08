@@ -26,6 +26,8 @@
 #   ./phone.sh num [x,y,w,h] [label] | watchnum <change|increase|decrease|above|below|equals> [value] [x,y,w,h] [ms]   # v2.1 numbers
 #   ./phone.sh calib X Y                                # v2.1 calibrate: does this control react? how fast?
 #   ./phone.sh memory | memory wipe <package|all> | memory export   # v2.2 what the AI remembers, grouped per game (wipe needs admin token)
+#   ./phone.sh profile | profile set '<json {controls,colors,regions,settings}>' | profile unset '<json>' | profile delete | sessions [n]   # v2.3 @names
+#   Any coordinate/colour/region arg accepts @names from the profile: tap @jump | tap @jump+20,-10 | color @enemy | objects @enemy | react @note 0,1900,1080,60
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -55,6 +57,10 @@ call() { # tool json
   local d; d=$(dev); [[ -z "$d" ]] && { echo "no phone registered/online" >&2; exit 2; }
   curl -s "${AUTH[@]}" -d "{\"name\":\"$1\",\"arguments\":${2:-{\}}}" "$RELAY_URL/api/devices/$d/tools/call"
 }
+# pt "@jump" -> '"at":"@jump"' ; pt 540 990 -> '"x":540,"y":990'  (v2.3 @names from game_profile)
+pt() { if [[ "$1" == @* ]]; then echo "\"at\":\"$1\""; else echo "\"x\":$1,\"y\":$2"; fi; }
+# shift count consumed by pt: 1 for @name, 2 for X Y
+ptn() { [[ "$1" == @* ]] && echo 1 || echo 2; }
 pretty() { python3 -c 'import json,sys; d=json.load(sys.stdin); d.pop("image",None); print(json.dumps(d,ensure_ascii=False,indent=1))'; }
 
 cmd="${1:-help}"; shift || true
@@ -89,7 +95,7 @@ if img: open("see.png","wb").write(base64.b64decode(img["base64"])); d["saved"]=
 print(json.dumps(d,ensure_ascii=False,indent=1))' ;;
   seq)     call tap_sequence "{\"points\":$1}" | pretty ;;
   path)    call swipe_path "{\"points\":$1,\"duration\":${2:-500}}" | pretty ;;
-  rep)     call repeat_tap "{\"x\":$1,\"y\":$2,\"count\":${3:-5},\"intervalMs\":${4:-100}}" | pretty ;;
+  rep)     n=$(ptn "$1"); p=$(pt "$@"); shift $n; call repeat_tap "{$p,\"count\":${1:-5},\"intervalMs\":${2:-100}}" | pretty ;;
   mtap)    call multi_tap "{\"points\":$1,\"duration\":${2:-60}}" | pretty ;;
   px)      call get_pixels "{\"points\":$1}" | pretty ;;
   color)   call find_color "{\"color\":\"$1\",\"tolerance\":${2:-24}}" | pretty ;;
@@ -202,6 +208,27 @@ if sys.argv[2]: a["value"]=float(sys.argv[2])
 if sys.argv[3]:
   x,y,w,h=map(int,sys.argv[3].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
 print(json.dumps(a))' "${1:-change}" "${2:-}" "${3:-}" "${4:-10000}")" | pretty ;;
+  profile) sub="${1:-get}"; case "$sub" in
+             get)    call game_profile '{"history":true}' | python3 -c '
+import json,sys; r=json.load(sys.stdin)
+if not r.get("ok"): print(r); sys.exit(1)
+p=r["profile"]; print("app: %s%s  (profile %s)" % (r["app"], (" — "+p["label"]) if p.get("label") else "", "exists" if r.get("exists") else "MISSING"))
+for k,v in p.get("controls",{}).items(): print("  @%-14s control (%d,%d)%s %s" % (k, v["x"], v["y"], (" ~%dms" % v["reactMs"]) if v.get("reactMs") else "", v.get("note","")))
+for k,v in p.get("colors",{}).items(): print("  @%-14s color   %s%s %s" % (k, v["hex"], (" ±%d" % v["tolerance"]) if v.get("tolerance") else "", v.get("note","")))
+for k,v in p.get("regions",{}).items(): print("  @%-14s region  {%d,%d %dx%d} %s" % (k, v["x"], v["y"], v["w"], v["h"], v.get("note","")))
+for k,v in p.get("settings",{}).items(): print("  @%-14s setting %r" % (k, v))
+for h in r.get("history",[]): print("  played %s  %dmin  %d cmds (%d failed)" % (h["when"][:16], h["minutes"], h["commands"], h["failed"]))
+if r.get("hint"): print(" ", r["hint"])' ;;
+             set)    call game_profile "$(python3 -c 'import json,sys; print(json.dumps({"set":json.loads(sys.argv[1])}))' "$1")" | pretty ;;
+             unset)  call game_profile "$(python3 -c 'import json,sys; print(json.dumps({"unset":json.loads(sys.argv[1])}))' "$1")" | pretty ;;
+             label)  call game_profile "$(python3 -c 'import json,sys; print(json.dumps({"label":sys.argv[1]}))' "$1")" | pretty ;;
+             delete) call game_profile '{"delete":true}' | pretty ;;
+             *) echo "profile: get | set '<json>' | unset '<json>' | label <name> | delete" >&2; exit 1 ;;
+           esac ;;
+  sessions) d=$(dev); curl -s "${AUTH[@]}" "$RELAY_URL/api/devices/$d/memory" | python3 -c '
+import json,sys,datetime; m=json.load(sys.stdin); n=int(sys.argv[1])
+for s in m.get("sessions",[])[:n]: print("  %s  %3dmin  %-28s %4d cmds  %d failed" % (datetime.datetime.fromtimestamp(s["start"]/1000).strftime("%Y-%m-%d %H:%M"), max(1,round((s["end"]-s["start"])/60000)), s.get("label") or s["app"], s["commands"], s["failed"]))
+print("(current app: %s)" % (m.get("currentApp") or "?"))' "${1:-15}" ;;
   memory)  d=$(dev); sub="${1:-show}"; case "$sub" in
              show) curl -s "${AUTH[@]}" "$RELAY_URL/api/devices/$d/memory" | python3 -c '
 import json,sys,time; m=json.load(sys.stdin); t=m.get("totals",{})
@@ -217,7 +244,7 @@ for g in m.get("groups",[]):
              export) curl -s "${AUTH[@]}" "$RELAY_URL/api/admin/devices/$d/memory?format=export" ;;
              *) echo "memory: show | wipe <package|all> | export" >&2; exit 1 ;;
            esac ;;
-  calib)   call calibrate "{\"x\":$1,\"y\":$2}" | pretty ;;
+  calib)   call calibrate "{$(pt "$@")}" | pretty ;;
   unlabel) call identify_screen "{\"delete\":\"${1:-*}\"}" | pretty ;;
   history) call recent_actions "{\"limit\":${1:-20}}" | python3 -c '
 import json,sys; d=json.load(sys.stdin)
@@ -232,9 +259,9 @@ for a in d.get("actions",[]):
   notifs)  call get_notifications "{\"limit\":${1:-20}}" | pretty ;;
   clip)    call set_clipboard "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1],"paste":sys.argv[2]=="paste"}))' "$1" "${2:-}")" | pretty ;;
   batch)   call batch "$(python3 -c 'import json,sys; print(json.dumps({"steps":json.loads(sys.argv[1]),"continueOnError":sys.argv[2]=="continue"}))' "$1" "${2:-}")" | pretty ;;
-  tap)     call tap "{\"x\":$1,\"y\":$2}" | pretty ;;
-  dtap)    call double_tap "{\"x\":$1,\"y\":$2}" | pretty ;;
-  long)    call long_press "{\"x\":$1,\"y\":$2,\"duration\":${3:-800}}" | pretty ;;
+  tap)     call tap "{$(pt "$@")}" | pretty ;;
+  dtap)    call double_tap "{$(pt "$@")}" | pretty ;;
+  long)    n=$(ptn "$1"); p=$(pt "$@"); shift $n; call long_press "{$p,\"duration\":${1:-800}}" | pretty ;;
   tapel)   call tap_element "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1]}))' "$*")" | pretty ;;
   tapid)   call tap_element "{\"elementId\":\"$1\"}" | pretty ;;
   type)    txt="$1"; sub=false; [[ "${2:-}" == "submit" ]] && sub=true
@@ -258,5 +285,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,47p' "$0" ;;
+  *) sed -n '2,49p' "$0" ;;
 esac
