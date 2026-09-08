@@ -20,7 +20,7 @@ check fire-maxrange-needs-present 'fire_burst.maxRange needs' "$(call "$BAD"'[{"
 R=$(call "$BAD"'[{"when":[{"type":"object_present","color":"#ff0000"}],"then":[{"type":"aim_to_found","x":800,"y":1200,"predictMs":900,"maxRange":250},{"type":"fire_burst","x":900,"y":1700,"maxRange":250}]}]}}')
 check aim-predict-clamped '"predictMs":600' "$(call '{"name":"game_bot","arguments":{"action":"get","name":"x"}}')"
 check aim-maxrange '"maxRange":250' "$(call '{"name":"game_bot","arguments":{"action":"get","name":"x"}}')"
-check predict-zero-dropped 'False' "$(call "$BAD"'[{"when":[{"type":"object_present","color":"#ff0000"}],"then":[{"type":"aim_to_found","x":800,"y":1200,"predictMs":0}]}]}}' >/dev/null; call '{"name":"game_bot","arguments":{"action":"get","name":"x"}}' | j '"predictMs" in json.dumps(d)')"
+check predict-zero-dropped 'False' "$(call '{"name":"game_bot","arguments":{"action":"create","name":"x0","rules":[{"when":[{"type":"object_present","color":"#ff0000"}],"then":[{"type":"aim_to_found","x":800,"y":1200,"predictMs":0}]}]}}' >/dev/null; call '{"name":"game_bot","arguments":{"action":"get","name":"x0"}}' | j '"predictMs" in json.dumps(d)')"
 
 echo "== shooter assist (head only)"
 call '{"name":"game_profile","arguments":{"set":{"controls":{"fire":{"x":900,"y":1700},"look":{"x":800,"y":1200},"stick":{"x":250,"y":1900},"cross":{"x":540,"y":1170},"heal":{"x":100,"y":1500}},"colors":{"head":{"hex":"#ff00ff"},"body":{"hex":"#ff0000"}},"regions":{"hp":{"x":0,"y":0,"w":300,"h":80}}}}}' >/dev/null

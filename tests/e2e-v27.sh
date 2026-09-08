@@ -80,11 +80,11 @@ TL=$(call '{"name":"game_bot","arguments":{"action":"templates"}}')
 check templates-ok '"ok":true' "$TL"
 check templates-9 '9' "$(echo "$TL" | j 'len(d["templates"])')"
 check templates-ids 'color_tap,shooter,runner,rhythm,idle_tapper,clicker,puzzle_match,fishing,racing' "$(echo "$TL" | j '",".join(t["id"] for t in d["templates"])')"
-check templates-params 'enemy*:color' "$TL"
+check templates-params 'head:color' "$TL"
 check template-unknown 'unknown template' "$(call '{"name":"game_bot","arguments":{"action":"template","template":"chess"}}')"
-check template-missing 'needs params: enemy' "$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"fire":"@fire"}}}')"
+check template-missing 'needs params: fire' "$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"head":"@enemy"}}}')"
 
-R=$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"enemy":"@enemy","fire":"@fire","look":"@look","stick":"@stick","hp":"@hp","heal":"@heal","crosshair":"@cross","sensitivity":0.8}}}')
+R=$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"mode":"full","enemy":"@enemy","fire":"@fire","look":"@look","stick":"@stick","hp":"@hp","heal":"@heal","crosshair":"@cross","sensitivity":0.8}}}')
 check shooter-ok '"ok":true' "$R"
 check shooter-name '"name":"shooter-bot"' "$R"
 check shooter-template '"template":"shooter"' "$R"
@@ -104,7 +104,7 @@ check shooter-stop '"type":"stop_bot"' "$G"
 check shooter-stored-template '"template":"shooter"' "$G"
 # re-run the template with the same name = overwrite, keeps id
 ID1=$(echo "$G" | j 'd["bot"]["id"]')
-R=$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"enemy":["@enemy","@enemy2"],"fire":"@fire","look":"@look","gameOverText":false}}}')
+R=$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"mode":"full","enemy":["@enemy","@enemy2"],"fire":"@fire","look":"@look","gameOverText":false}}}')
 check shooter-overwrite-id "\"id\":\"$ID1\"" "$R"
 check shooter-no-gameover-rule '"ruleNames":["aim-and-fire","sweep-and-advance"]' "$R"
 check shooter-multi-colour '"colors":["#ff0000","#00ff00"]' "$(call '{"name":"game_bot","arguments":{"action":"get","name":"shooter-bot"}}')"

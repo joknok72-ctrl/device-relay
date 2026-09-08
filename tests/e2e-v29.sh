@@ -40,7 +40,7 @@ check ct-button-repeat '"x":900,"y":1700,"type":"repeat_tap","count":3' "$G"
 check ct-region '"region":{"x":0,"y":300,"w":1080,"h":1500}' "$G"
 
 echo "== shooter extras"
-R=$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"enemy":"@red","fire":"@fire","look":"@look","stick":"@stick","head":"@head","evade":"@crouch","playAgain":"@again"}}}')
+R=$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"mode":"full","enemy":"@red","fire":"@fire","look":"@look","stick":"@stick","head":"@head","evade":"@crouch","playAgain":"@again"}}}')
 check sh-ok '"ok":true' "$R"
 check sh-rules '"ruleNames":["game-over","headshot","evade","play-again","aim-and-fire","sweep-and-advance"]' "$R"
 G=$(call '{"name":"game_bot","arguments":{"action":"get","name":"shooter-bot"}}')
