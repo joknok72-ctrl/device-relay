@@ -16,8 +16,8 @@ memdel 'kind=all' >/dev/null
 call '{"name":"get_current_app"}' >/dev/null   # registers current app + opens a session
 
 echo "== version"
-check version '"version":"2.3.0"' "$(curl -s $U/api/health)"
-check tools-72 '72' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"2.4.0"' "$(curl -s $U/api/health)"
+check tools-73 '73' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check tap-at-param '"at":{"type":"string"' "$(curl -s "$U/api/tools/schema?format=raw" | j 'json.dumps([t for t in d if t["name"]=="tap"][0]["parameters"]["properties"]).replace(" ","")')"
 
 echo "== no profile yet"

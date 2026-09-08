@@ -12,8 +12,8 @@ P=/home/user/webapp/agent/phone.sh
 call '{"name":"open_recents"}' >/dev/null
 
 echo "== version / catalogue"
-check version '"version":"2.3.0"' "$(curl -s $U/api/health)"
-check tools-72 '72' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"2.4.0"' "$(curl -s $U/api/health)"
+check tools-73 '73' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check bootstrap-v21 'sample_colors [region]' "$(curl -s $U/agent/$T)"
 check bootstrap-guide 'New game → sample_colors' "$(curl -s $U/agent/$T)"
 
