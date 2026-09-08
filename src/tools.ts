@@ -36,11 +36,11 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'tap',
-    description: 'Tap (single click) the phone screen at pixel coordinates (x, y). Origin is top-left.',
+    description: 'Tap (single click) the phone screen at pixel coordinates (x, y). Origin is top-left. You may pass at:"@name" (a control saved in game_profile) instead of x/y.',
     parameters: {
       type: 'object',
-      properties: { x: coord('Horizontal pixel position'), y: coord('Vertical pixel position') },
-      required: ['x', 'y'],
+      properties: { x: coord('Horizontal pixel position'), y: coord('Vertical pixel position'), at: { type: 'string', description: '"@control" from game_profile instead of x/y (e.g. "@jump", "@jump+20,-10")' } },
+      required: [],
     },
   },
   {
@@ -548,6 +548,28 @@ export const TOOLS: ToolDef[] = [
       required: ['enabled'],
     },
   },
+  // ---------------------------------------------------------------- v2.3 game profile (@names) + play history
+  {
+    name: 'game_profile',
+    description:
+      'The structured knowledge base for the CURRENT game/app (auto-tagged by package): named controls (x,y), colours (hex), regions ({x,y,w,h}) and settings. ' +
+      'Once saved you can use @names in ANY tool instead of raw numbers: tap at:"@jump" · find_objects color:"@enemy" · auto_react color:"@note" region:"@hitline" tapX/tapY via at:"@lane1" · read_number region:"@score" · x:"@jump" also works, and x:"@jump+40" offsets. ' +
+      'The next chat gets the whole profile in its bootstrap and can start playing immediately without rediscovery. ' +
+      'Actions: get (default) · set {controls:{jump:{x,y,note?}}, colors:{enemy:{hex,tolerance?}}, regions:{hud:{x,y,w,h}}, settings:{difficulty:"hard"}} · unset {controls:["old"]} · delete=true wipes the profile. ' +
+      'ALWAYS save controls after calibrate, colours after sample_colors, regions after you crop a HUD area. Names: a-z 0-9 - _ (max 60 each).',
+    parameters: {
+      type: 'object',
+      properties: {
+        app: { type: 'string', description: 'Package (default: current app)' },
+        label: { type: 'string', description: 'Human game name to store' },
+        set: { type: 'object', description: '{controls?, colors?, regions?, settings?} entries to add/replace' },
+        unset: { type: 'object', description: '{controls?:[names], colors?:[...], regions?:[...], settings?:[...]} to remove' },
+        delete: { type: 'boolean', description: 'true = delete the whole profile for this app' },
+        history: { type: 'boolean', description: 'true = also return recent play sessions for this app (when, how long, how many commands/failures)' },
+      },
+      required: [],
+    },
+  },
   // ---------------------------------------------------------------- v2.1 colour discovery, motion, numbers, calibration
   {
     name: 'sample_colors',
@@ -843,8 +865,9 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile'; error?: string } {
   switch (name) {
+    case 'game_profile': return { special: 'game_profile' }
     case 'sample_colors': return { action: { type: 'sample_colors', region: args.region, maxColors: args.maxColors, quant: args.quant, ignoreGrey: args.ignoreGrey } }
     case 'track_object': return { action: { type: 'track_object', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, samples: args.samples, intervalMs: args.intervalMs, predictMs: args.predictMs } }
     case 'read_number': return { special: 'read_number' }
@@ -1005,7 +1028,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '2.2.0',
+      version: '2.3.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
@@ -1022,7 +1045,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
-  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value',
+  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile',
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */

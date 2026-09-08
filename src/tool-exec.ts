@@ -58,7 +58,7 @@ function room(env: Bindings, deviceId: string) {
   return env.DEVICE_ROOM.get(env.DEVICE_ROOM.idFromName(deviceId))
 }
 /** Input tools that must not be captured by record_macro (meta / non-replayable). */
-const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups'])
+const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate'])
 
 /** Push a visual event to /monitor viewers (fire-and-forget). */
 function overlay(env: Bindings, deviceId: string, o: Record<string, unknown>) {
@@ -70,8 +70,83 @@ export async function deviceInfo(env: Bindings, deviceId: string): Promise<Devic
   return (await r.json()) as DeviceInfo
 }
 
+// ---------------------------------------------------------------- v2.3 @name resolution against the game profile
+interface ProfileRec { app: string; label?: string; controls: Record<string, { x: number; y: number; note?: string; reactMs?: number }>; colors: Record<string, { hex: string; tolerance?: number }>; regions: Record<string, { x: number; y: number; w: number; h: number }>; settings: Record<string, unknown>; ts: number }
+async function loadProfile(env: Bindings, deviceId: string, app?: string): Promise<{ app: string; profile: ProfileRec | null }> {
+  let pkg = app?.trim() ?? ''
+  if (!pkg || pkg === 'current') {
+    // cheap: the DO remembers the last app it saw; only ask the phone when it knows nothing
+    const r = (await (await room(env, deviceId).fetch(`https://do/profile?deviceId=${deviceId}`)).json()) as { currentApp?: string }
+    pkg = r.currentApp || (await currentPackage(env, deviceId))
+  }
+  if (!pkg) return { app: '', profile: null }
+  const r = (await (await room(env, deviceId).fetch(`https://do/profile?deviceId=${deviceId}&app=${encodeURIComponent(pkg)}`)).json()) as { profile: ProfileRec | null }
+  return { app: pkg, profile: r.profile }
+}
+function hasRef(v: unknown): boolean {
+  if (typeof v === 'string') return v.startsWith('@')
+  if (Array.isArray(v)) return v.some(hasRef)
+  if (v && typeof v === 'object') return Object.values(v as Record<string, unknown>).some(hasRef)
+  return false
+}
+/** "@jump" | "@jump+20,-10" -> {name, dx, dy} */
+function parseRef(s: string): { name: string; dx: number; dy: number } | null {
+  const m = s.match(/^@([a-z0-9_-]+)(?:([+-]\d+)(?:,([+-]?\d+))?)?$/i)
+  return m ? { name: m[1].toLowerCase(), dx: Number(m[2] ?? 0), dy: Number(m[3] ?? 0) } : null
+}
+/** Replace @refs in tool args using the profile. Returns error if an @ref is unknown. */
+function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Record<string, unknown>; error?: string; used: string[] } {
+  const used: string[] = []
+  let error: string | undefined
+  const look = (ref: string) => { const r = parseRef(ref); if (!r) { error = `bad reference ${ref}`; return null } return r }
+  const walk = (v: unknown, key?: string): unknown => {
+    if (Array.isArray(v)) return v.map((x) => walk(x))
+    if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      const out: Record<string, unknown> = {}
+      // point objects: {at:"@jump"} or x/y refs
+      const at = typeof o.at === 'string' && o.at.startsWith('@') ? look(o.at) : null
+      if (at) {
+        const c = p.controls[at.name]
+        if (!c) error = `unknown control @${at.name} (known: ${Object.keys(p.controls).join(', ') || 'none'})`
+        else { out.x = c.x + at.dx; out.y = c.y + at.dy; used.push('@' + at.name) }
+      }
+      for (const [k, val] of Object.entries(o)) {
+        if (k === 'at' && at) continue
+        out[k] = walk(val, k)
+      }
+      return out
+    }
+    if (typeof v === 'string' && v.startsWith('@')) {
+      const r = look(v); if (!r) return v
+      const k = (key ?? '').toLowerCase()
+      if (k === 'color' || k === 'stopcolor' || k === 'colors' || k === 'hex') { const c = p.colors[r.name]; if (!c) { error = `unknown color @${r.name} (known: ${Object.keys(p.colors).join(', ') || 'none'})`; return v } used.push('@' + r.name); return c.hex }
+      if (k === 'region' || k === 'stopregion') { const g = p.regions[r.name]; if (!g) { error = `unknown region @${r.name} (known: ${Object.keys(p.regions).join(', ') || 'none'})`; return v } used.push('@' + r.name); return { x: g.x, y: g.y, w: g.w, h: g.h } }
+      if (/^(x|x1|x2|tapx|cx)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.x + r.dx }
+      if (/^(y|y1|y2|tapy|cy)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.y + (r.dx || 0) } // for y fields the single offset applies to y
+      // colors arrays
+      const c = p.colors[r.name]; if (c) { used.push('@' + r.name); return c.hex }
+      const s = p.settings[r.name]; if (s !== undefined) { used.push('@' + r.name); return s }
+      error = `unknown reference @${r.name}`
+      return v
+    }
+    return v
+  }
+  const resolved = walk(args) as Record<string, unknown>
+  return { args: resolved, error, used }
+}
+
 /** Execute one AI tool against a device and return a normalized result. */
 export async function executeTool(env: Bindings, deviceId: string, name: string, args: Record<string, unknown>, opts: ExecOptions = {}): Promise<ToolResult> {
+  // v2.3: resolve @names (controls / colours / regions / settings from game_profile) anywhere in the arguments
+  let usedRefs: string[] | undefined
+  if (args && hasRef(args) && name !== 'game_profile' && name !== 'remember' && name !== 'record_macro' && name !== 'save_macro') {
+    const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
+    if (!profile) return { ok: false, error: `arguments use @names but no game_profile exists for ${app || 'the current app'} — save one with game_profile set:{...} first` }
+    const r = resolveRefs(args, profile)
+    if (r.error) return { ok: false, error: r.error, profile: { controls: Object.keys(profile.controls), colors: Object.keys(profile.colors), regions: Object.keys(profile.regions) } }
+    args = r.args; usedRefs = r.used
+  }
   const mapped = toolToAction(name, args ?? {})
   if (mapped.error) return { ok: false, error: mapped.error }
   if (opts.readOnly && !READ_ONLY_TOOLS.has(name)) return { ok: false, error: `token is read-only: tool '${name}' not allowed` }
@@ -112,6 +187,10 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'do_until') return doUntil(env, deviceId, args, opts)
   if (mapped.special === 'dismiss_popups') return dismissPopups(env, deviceId, args, opts)
   if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
+  if (mapped.special === 'game_profile') {
+    if (opts.readOnly && (args.set || args.unset || args.delete || args.label)) return { ok: false, error: 'token is read-only: game_profile can only be read' }
+    return gameProfile(env, deviceId, args)
+  }
   if (mapped.special === 'read_number') return readNumber(env, deviceId, args, opts)
   if (mapped.special === 'watch_value') return watchValue(env, deviceId, args, opts)
   if (mapped.special === 'calibrate') return calibrate(env, deviceId, args, opts)
@@ -147,6 +226,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   const res = (await r.json()) as CommandResult
 
   const out: ToolResult = { ok: res.ok, error: res.error, durationMs: res.durationMs }
+  if (usedRefs?.length) out.resolved = usedRefs
   if (res.queuedMs) out.queuedMs = res.queuedMs
   if (res.data !== undefined) out.data = res.data
   if (res.ok) emitOverlay(env, deviceId, action as unknown as Record<string, unknown>, res.data)
@@ -523,6 +603,34 @@ async function dismissPopups(env: Bindings, deviceId: string, args: Record<strin
     await new Promise((res) => setTimeout(res, 600))
   }
   return { ok: true, dismissed: dismissed.length, actions: dismissed, durationMs: Date.now() - t0 }
+}
+
+// ---------------------------------------------------------------- v2.3 game profile
+async function gameProfile(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
+  if (!app) return { ok: false, error: 'could not determine the current app; pass app=<package>' }
+  const r = room(env, deviceId)
+  const q = `https://do/profile?deviceId=${deviceId}&app=${encodeURIComponent(app)}`
+  if (args.delete === true) { const res = (await (await r.fetch(q, { method: 'DELETE' })).json()) as ToolResult; return { ...res, app } }
+  const hasSet = args.set && typeof args.set === 'object', hasUnset = args.unset && typeof args.unset === 'object'
+  let prof = profile
+  if (hasSet || hasUnset || typeof args.label === 'string') {
+    // validate shapes
+    const set = (args.set ?? {}) as Record<string, Record<string, unknown>>
+    for (const [name, c] of Object.entries(set.controls ?? {})) { const o = c as { x?: unknown; y?: unknown }; if (!Number.isFinite(Number(o?.x)) || !Number.isFinite(Number(o?.y))) return { ok: false, error: `controls.${name} needs numeric x,y` } }
+    for (const [name, c] of Object.entries(set.colors ?? {})) { const o = c as { hex?: unknown }; if (typeof o?.hex !== 'string' || !/^#?[0-9a-f]{6}$/i.test(o.hex)) return { ok: false, error: `colors.${name} needs hex "#rrggbb"` }; (o as { hex: string }).hex = '#' + o.hex.replace('#', '').toLowerCase() }
+    for (const [name, g] of Object.entries(set.regions ?? {})) { const o = g as { x?: unknown; y?: unknown; w?: unknown; h?: unknown }; if (![o?.x, o?.y, o?.w, o?.h].every((n) => Number.isFinite(Number(n)))) return { ok: false, error: `regions.${name} needs numeric x,y,w,h` } }
+    const res = (await (await r.fetch(q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: args.label, set: args.set, unset: args.unset }) })).json()) as { ok: boolean; error?: string; profile?: ProfileRec }
+    if (!res.ok) return { ok: false, error: res.error }
+    prof = res.profile ?? null
+  }
+  const out: ToolResult = { ok: true, app, exists: !!prof, profile: prof ?? { app, controls: {}, colors: {}, regions: {}, settings: {} } }
+  if (!prof) out.hint = 'no profile yet — after sample_colors/calibrate save with game_profile set:{controls:{jump:{x,y}}, colors:{enemy:{hex}}, regions:{score:{x,y,w,h}}}'
+  if (args.history === true) {
+    const s = (await (await r.fetch(`https://do/sessions?deviceId=${deviceId}&app=${encodeURIComponent(app)}&limit=10`)).json()) as { sessions: { start: number; end: number; commands: number; failed: number }[] }
+    out.history = s.sessions.map((x) => ({ when: new Date(x.start).toISOString(), minutes: Math.round((x.end - x.start) / 60000), commands: x.commands, failed: x.failed }))
+  }
+  return out
 }
 
 // ---------------------------------------------------------------- v2.1 numbers + calibration
