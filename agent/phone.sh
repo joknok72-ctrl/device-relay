@@ -33,6 +33,7 @@
 #   ./phone.sh aim <X Y|@look> DX DY [ms] | fire <X Y|@fire> [count] [ms] | fireh <X Y|@fire> HOLDMS | fingers up   # v2.5 shooter controls
 #   ./phone.sh combo '<json steps>' | fdown N X Y | fmove N X Y [ms] | fup [N|-1]   # v2.5 multi-touch script / raw fingers
 #   ./phone.sh bot [list] | bot get <name> | bot run <name> | bot stop | bot status | bot delete <name> | bot create '<json {name,rules,...}>'   # v2.6 on-phone bots (0 tokens; ▶/■ from the notification)
+#   ./phone.sh bot templates | bot template <shooter|runner|rhythm|idle_tapper|clicker|puzzle_match|fishing|racing> '<json params {enemy:"@enemy",fire:"@fire",...}>' [name]   # v2.7 one-call tuned bots (aimbot etc.)
 #   Any coordinate/colour/region arg accepts @names from the profile: tap @jump | tap @jump+20,-10 | color @enemy | objects @enemy | react @note 0,1900,1080,60
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
@@ -264,8 +265,17 @@ print("  live: %s" % ("RUNNING %s (ticks %s, fired %s)" % (st.get("name"), st.ge
              stop)   call game_bot '{"action":"stop"}' | pretty ;;
              status) call game_bot '{"action":"status"}' | pretty ;;
              delete) call game_bot "$(python3 -c 'import json,sys; print(json.dumps({"action":"delete","name":sys.argv[1]}))' "${1:?name}")" | pretty ;;
+             templates) call game_bot '{"action":"templates"}' | python3 -c '
+import json,sys; r=json.load(sys.stdin)
+for t in r.get("templates",[]):
+  print("%-13s [%s] %s  (tick %dms)" % (t["id"], t["genre"], t["title"], t["tickMs"]))
+  for p in t["params"]: print("     ", p)
+print("common:", r["templates"][0]["common"] if r.get("templates") else "")' ;;
+             template) call game_bot "$(python3 -c 'import json,sys; a={"action":"template","template":sys.argv[1],"params":json.loads(sys.argv[2] if len(sys.argv)>2 and sys.argv[2] else "{}")}
+if len(sys.argv)>3 and sys.argv[3]: a["name"]=sys.argv[3]
+print(json.dumps(a))' "${1:?template id}" "${2:-}" "${3:-}")" | pretty ;;
              create|update) call game_bot "$(python3 -c 'import json,sys; a=json.loads(sys.argv[2]); a["action"]=sys.argv[1]; print(json.dumps(a))' "$sub" "${1:?json}")" | pretty ;;
-             *) echo "bot: list | get <name> | run <name> | stop | status | delete <name> | create '<json>' | update '<json>'" >&2; exit 1 ;;
+             *) echo "bot: list | get <name> | run <name> | stop | status | delete <name> | create '<json>' | update '<json>' | templates | template <id> '<json params>' [name]" >&2; exit 1 ;;
            esac ;;
   verify)  call game_profile '{"verify":true}' | python3 -c '
 import json,sys; r=json.load(sys.stdin)
@@ -335,5 +345,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,50p' "$0" ;;
+  *) sed -n '2,51p' "$0" ;;
 esac
