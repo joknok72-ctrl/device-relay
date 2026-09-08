@@ -55,6 +55,14 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
+**🎯 بروفايل اللعبة + @names + QUICK START (v2.3) — محادثة جديدة تلعب فورًا**
+- **`game_profile`**: قاعدة معرفة مُهيكلة لكل لعبة: أزرار بأسماء (`@jump`=(950,2100) ~120ms)، ألوان (`@enemy`=#ff2020)، مناطق (`@score`={0,0,500x200})، إعدادات — تُحفظ مرة وتبقى
+- **@names في أي أداة**: `tap at:"@jump"` · `tap at:"@jump+20,-10"` · `find_objects color:"@enemy"` · `read_number region:"@score"` · `auto_react color:"@note" region:"@hitline" tapX:"@lane1" stopColor:"@gameover"` · حتى داخل `points:[{at:"@a"}]` و`fallback:{at:"@x"}` — الـ AI ما بيكتب أرقامًا تاني؛ الاسم المجهول يرجّع قائمة الموجود
+- **QUICK START (قسم 0 في الـ bootstrap)**: المحادثة الجديدة تشوف فورًا "الموبايل الآن في Space Runner — أنت تعرف هذه اللعبة: @jump @fire @enemy..." + ملاحظاتها + ماكروهاتها + أول أمر مقترح — بدون إعادة اكتشاف (قاعدة 0: ممنوع إعادة sample_colors/calibrate لأزرار معروفة)
+- **سجل اللعب (5g)**: جلسات لكل لعبة (متى، كم دقيقة، كم أمر، كم فشل) — تلقائيًا من التطبيق المفتوح؛ `game_profile history=true`
+- لوحة `/setup`: البروفايل (@names ملوّنة) وجلسات اللعب داخل كل لعبة مع حذف منفصل؛ التصدير/الاستيراد يشمل البروفايلات
+- `phone.sh`: `tap @jump` · `tap @jump+20,-10` · `long @jump` · `rep @jump 5` · `objects @enemy` · `color @enemy` · `profile [set|unset|label|delete]` · `sessions`
+
 **🧠 إدارة ذاكرة الـ AI لكل لعبة (v2.2)**
 - قسم **"ذاكرة الـ AI"** في لوحة `/setup`: كل ما تعلّمه الـ AI مجمّع **لكل لعبة/تطبيق** (اسم اللعبة + package + آخر لعب): 📝 ملاحظات · ⏯️ ماكروهات · 🖼️ شاشات مسمّاة · ⏺ تسجيل جارٍ
 - مسح بضغطة: **لعبة واحدة بكاملها** (لما اللعبة تتحدّث وملاحظاتها تبقى قديمة) · ملاحظة واحدة · ماكرو واحد · شاشة واحدة · أو كل الذاكرة. لا يمسّ الأجهزة أو التوكنات
@@ -199,7 +207,7 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **71 أداة** مباشرة:
+بعدها النموذج يرى **72 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
 - عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
@@ -368,7 +376,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh   # 428 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh   # 502 checks green
 ```
 
 ## Data Architecture
@@ -393,6 +401,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v2.2 — per-game AI memory management in /setup: view, delete one game / one item / all, export/import; macros app-tagged; recall forget=app; 71 tools; 428 e2e checks; Android 2.1.0 unchanged)
+- **Last Updated**: 2026-09-08 (v2.3 — game_profile + @names in every tool, QUICK START bootstrap for the current game, play sessions history, setup page profiles; 72 tools; 502 e2e checks; Android 2.1.0 unchanged)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
