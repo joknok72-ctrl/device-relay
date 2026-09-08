@@ -227,8 +227,39 @@
       drawMarks()
     }
     im.src = `data:${r.image.mime};base64,${r.image.base64}`
+    $('#suggest-btn').disabled = false
     const app = await tool('get_current_app'); if (app.ok && app.data && app.data.package) { profileApp = app.data.package; toast('اللعبة الحالية: ' + (app.data.label || app.data.package), 'ok') }
     drawMarks()
+  }
+  // v3.2 auto-suggest: dominant saturated colours → verify each as objects → rank by (few, mid-sized, saturated) → user picks with one tap
+  $('#suggest-btn').onclick = async () => {
+    if (!shot) return
+    const target = things().find((t) => t.kind === 'color' && t.req) || things().find((t) => t.kind === 'color'); if (!target) return
+    $('#suggest-btn').disabled = true; $('#probe').innerHTML = '<i class="fas fa-spinner fa-spin"></i> نحلّل ألوان الشاشة…'
+    const sc = await tool('sample_colors', { maxColors: 10, quant: 24, ignoreGrey: true })
+    const cands = (sc.ok && sc.data && sc.data.colors) || []
+    const mode = tuneVal('match', 'rgb') === 'hue' ? 'hue' : 'rgb'; const tol = mode === 'hue' ? 22 : 30
+    const scored = []
+    for (const c of cands.slice(0, 8)) {
+      const fo = await tool('find_objects', { color: c.hex, tolerance: tol, minSize: 6, maxResults: 12, match: mode })
+      const objs = (fo.ok && fo.data && fo.data.objects) || []
+      if (!objs.length) continue
+      const v = parseInt(c.hex.slice(1), 16); const r = v >> 16 & 255, g = v >> 8 & 255, b = v & 255; const sat = (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(1, Math.max(r, g, b))
+      const mid = objs.filter((o) => o.bounds && o.bounds.w >= 8 && o.bounds.w <= 220 && o.bounds.h >= 8 && o.bounds.h <= 260).length
+      // good enemy colours: saturated, few objects (1-6), small share of the screen
+      const score = sat * 3 + (objs.length >= 1 && objs.length <= 6 ? 2 : 0) + (mid / Math.max(1, objs.length)) * 2 - Math.min(2, (c.share || 0) / 8)
+      scored.push({ hex: c.hex, count: objs.length, share: c.share, sat, objects: objs, score, cx: objs[0].cx, cy: objs[0].cy })
+    }
+    scored.sort((a, b) => b.score - a.score)
+    $('#suggest-btn').disabled = false
+    if (!scored.length) { $('#probe').innerHTML = '<span class="warn">لم نجد لونًا مميزًا يشكّل أجسامًا — تأكد إن العدو ظاهر في الصورة، أو فعّل تحديد العدو بلون صارخ من إعدادات اللعبة</span>'; return }
+    $('#probe').innerHTML = `<div class="text-slate-300 mb-1">اقتراحات لـ <b>${target.label}</b> (اضغط واحدًا):</div><div class="flex flex-wrap gap-2">${scored.slice(0, 5).map((c, i) => `<button class="btn btn-s !py-1" data-sug="${i}"><span class="sw inline-block" style="background:${c.hex}"></span> <span class="mono ltr">${c.hex}</span> <span class="text-xs text-slate-400">${c.count} جسم · ${(c.share || 0).toFixed(1)}%</span>${i === 0 ? ' <span class="text-emerald-300 text-xs">★ الأفضل</span>' : ''}</button>`).join('')}</div>`
+    $('#probe').querySelectorAll('[data-sug]').forEach((btn) => btn.onclick = () => {
+      const c = scored[Number(btn.dataset.sug)]
+      marks[target.key] = { kind: 'color', hex: c.hex, tol, ok: true, count: c.count, x: c.cx, y: c.cy, objects: c.objects }
+      picking = null; drawMarks(); renderThings(); updateSave()
+      $('#probe').innerHTML = `<span class="sw inline-block align-middle" style="background:${c.hex}"></span> <span class="mono ltr">${c.hex}</span> — <span class="ok">✓ تم اختياره لـ ${target.label} (${c.count} جسم مُحاط على الصورة)</span>`
+    })
   }
   $('#clear-btn').onclick = () => { for (const k of Object.keys(marks)) delete marks[k]; drawMarks(); renderThings(); updateSave() }
 
@@ -242,7 +273,11 @@
     for (const t of things()) {
       const m = marks[t.key]; if (!m) continue; i++
       if (t.kind === 'region') { const a = toImg(m.x, m.y), b = toImg(m.x + m.w, m.y + m.h); const d = document.createElement('div'); d.className = 'box'; d.style.cssText = `left:${a.x}px;top:${a.y}px;width:${b.x - a.x}px;height:${b.y - a.y}px`; d.title = t.label; el.appendChild(d) }
-      else { const p = toImg(m.x, m.y); const d = document.createElement('div'); d.className = 'mark'; d.style.cssText = `left:${p.x}px;top:${p.y}px;${t.kind === 'color' ? `background:${m.hex}` : 'background:#38bdf8'}`; d.textContent = i; d.title = t.label; el.appendChild(d) }
+      else {
+        const p = toImg(m.x, m.y); const d = document.createElement('div'); d.className = 'mark'; d.style.cssText = `left:${p.x}px;top:${p.y}px;${t.kind === 'color' ? `background:${m.hex}` : 'background:#38bdf8'}`; d.textContent = i; d.title = t.label; el.appendChild(d)
+        // what the bot sees: outline every detected object of this colour
+        for (const o of (m.objects || []).slice(0, 12)) { const b = o.bounds || {}; const a = toImg(b.x, b.y), c = toImg(b.x + b.w, b.y + b.h); const q = document.createElement('div'); q.className = 'box'; q.style.cssText = `left:${a.x}px;top:${a.y}px;width:${Math.max(6, c.x - a.x)}px;height:${Math.max(6, c.y - a.y)}px;border-color:${m.hex};background:transparent;border-style:solid`; el.appendChild(q) }
+      }
     }
   }
   window.addEventListener('resize', drawMarks)
@@ -286,7 +321,7 @@
     const tol = mode === 'hue' ? Math.min(tuneVal('tolerance', 22) === 32 ? 22 : tuneVal('tolerance', 22), 60) : tuneVal('tolerance', 30)
     const fo = await tool('find_objects', { color: hex, tolerance: tol, minSize: tuneVal('minSize', 8), maxResults: 12, match: mode })
     const count = fo.ok && fo.data ? fo.data.count || 0 : 0
-    marks[t.key] = { kind: 'color', hex, tol, ok: count > 0, count, x: p.x, y: p.y }
+    marks[t.key] = { kind: 'color', hex, tol, ok: count > 0, count, x: p.x, y: p.y, objects: (fo.ok && fo.data && fo.data.objects) || [] }
     const grey = isGreyish(hex)
     $('#probe').innerHTML = `<span class="sw inline-block align-middle" style="background:${hex}"></span> <span class="mono ltr">${hex}</span> — ${count ? `<span class="ok">✓ ${count} جسم بهذا اللون على الشاشة الآن</span>` : '<span class="warn">لم يُكتشف كجسم — اضغط على نقطة أوضح/أكبر</span>'}${grey ? ' <span class="warn">⚠ لون رمادي/غامق — سيلتقط أشياء كثيرة؛ اختر لونًا مميزًا (إطار العدو/اسمه/شريط صحته)</span>' : ''}${count > 8 ? ' <span class="warn">⚠ كثير جدًا — قد يكون لون خلفية؛ قلّل التسامح أو اختر لونًا أدق</span>' : ''}`
   }
