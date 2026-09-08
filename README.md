@@ -55,6 +55,16 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
+**🎮 محرك لمس متعدد + ألعاب الشوتر + playbooks لكل نوع لعبة (v2.5)**
+- **أصابع دائمة (حتى 4)**: `finger op=down/move/up` — إصبع يفضل مضغوطًا ويتحرك بينما أصابع أخرى تضغط (عبر `StrokeDescription.continueStroke` في Android)
+- **`joystick`**: عصا حركة افتراضية — مركز + اتجاه/زاوية + مسافة + مدة؛ `release=false` يخلي الشخصية تجري والاستدعاء التالي يغيّر الاتجاه بدون توقف
+- **`aim`**: سحب الكاميرا/التصويب (dx/dy) بإصبع مستقل بنقاط وسيطة سلسة — يعمل أثناء الحركة
+- **`fire_burst`**: زرار النار: رشّة (count/interval) أو ضغط مستمر (holdMs) — الإيقاع على الموبايل
+- **`combo`**: سكربت لمس متعدد موقوت يُنفّذ كاملًا على الموبايل (down/move/up/tap/wait/joystick/aim/fire) — "تحرّك + صوّب + اضرب + ارفع الأصابع" في طلب واحد؛ أي فشل يرفع كل الأصابع
+- **@names في كل ده**: `joystick at:"@stick"` · `aim at:"@look"` · `fire_burst at:"@fire"` · حتى داخل خطوات `combo`
+- **نوع اللعبة (`game_profile genre=`)** + **8 playbooks** في الـ bootstrap: shooter (Free Fire/PUBG/CoD/Brawl Stars) · runner · puzzle · rhythm · strategy/rpg · racing · fighting · casual — كل واحد بـ: الأزرار اللي يحفظها، كيف يتحرك/يصوّب/يضرب، حلقة الاشتباك، البقاء، الأمان. QUICK START يحيل للـ playbook المناسب للعبة المفتوحة؛ التبديل بين الألعاب = تبديل بروفايل تلقائيًا
+- `phone.sh`: `stick @stick up 800 200 hold` · `aim @look 60 -10` · `fire @fire 6 80` · `fireh @fire 1500` · `fingers` · `fdown/fmove/fup` · `combo '<json>'`
+
 **🏆 تسليم بين الجلسات + وعي باللعبة + تحقق ذاتي (v2.4)**
 - **`session_report`**: في نهاية كل جلسة الـ AI يكتب تسليمًا: النتيجة (win/loss/progress/stuck)، النقاط، المستوى، ملخص، ما تعلّمه، **نصيحة للمرة القادمة**، العوائق — يُربط بالجلسة والبروفايل؛ **أفضل نتيجة** تُتابع تلقائيًا؛ المحادثة القادمة تشوف آخر تقرير وـ NEXT TIME في QUICK START (قاعدة إلزامية في الـ bootstrap)
 - **`observe` واعي باللعبة**: لو فيه بروفايل، نفس الاستدعاء يرجّع `game.objects` (كل @color → عدد وأكبر الأجسام بمواقعها) و`game.values` (@score/@coins/@hp... → أرقام) — **نظرة واحدة = حالة اللعبة كاملة**
@@ -129,6 +139,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v2.5**: محرك لمس متعدد — أصابع دائمة بـ `continueStroke` (`finger_down/move/up`)، `joystick` (يبقي العصا حية بمقاطع متواصلة)، `aim`، `fire_burst`، `combo`
 - **v2.1**: `sample_colors` (تكميم ألوان + تجاهل الرمادي)، `track_object` (عيّنات + انحدار خطي للسرعة)
 - **v2.0**: `auto_react` بمسارات متعددة (cooldown لكل مسار)، ردود فعل swipe، `stopColor`
 - **v1.9**: `find_objects` (connected-component labelling على شبكة مخفّضة)، `auto_react` (حلقة مراقبة→ضغط محلية حتى 40 ثانية / 200 ضغطة بـ cooldown)
@@ -214,7 +225,7 @@ claude mcp add --transport http device-relay https://device-relay.cracknew37.wor
 { "mcpServers": { "device-relay": { "url": "https://device-relay.cracknew37.workers.dev/mcp",
   "headers": { "Authorization": "Bearer <RELAY_TOKEN>" } } } }
 ```
-بعدها النموذج يرى **73 أداة** مباشرة:
+بعدها النموذج يرى **78 أداة** مباشرة:
 - مراقبة: `get_ui_elements` (شجرة الواجهة: نص/id/إحداثيات — الأدق), `capture_screen(maxWidth?, format?, quality?)`, `get_current_app`, `get_device_status`, `get_device_info`, `get_notifications`
 - عناصر: `tap_element(text|elementId)`, `type_text(text, submit)`, `set_clipboard(text, paste)`, `wait_for_element`, `find_and_tap`, `scroll_element`
 - تطبيقات: `open_app`, `open_url`, `list_apps`
@@ -329,6 +340,11 @@ python agent_runner.py shell                                     # REPL: tap 540
   "lanes":[{"color":"#00e676","region":{"x":270,"y":1900,"w":270,"h":60},"tapX":405,"tapY":2200},
            {"color":"#ff1744","region":{"x":400,"y":1200,"w":280,"h":400},"swipe":{"dx":0,"dy":-600}}],
   "stopColor":"#212121","stopRegion":{"x":0,"y":0,"w":1080,"h":300},"maxTriggers":120,"timeoutMs":40000}
+// v2.5 shooter (fingers stay down across calls)
+{"type":"joystick","x":250,"y":1900,"angle":270,"distance":200,"duration":2000,"finger":0,"release":false}
+{"type":"aim","x":800,"y":1200,"dx":60,"dy":-10,"duration":120,"finger":1,"steps":4,"release":true}
+{"type":"fire_burst","x":950,"y":1700,"count":6,"intervalMs":80,"holdMs":0}
+{"type":"combo","combo":[{"op":"joystick","x":250,"y":1900,"angle":315,"duration":400,"release":false},{"op":"aim","x":800,"y":1200,"dx":60},{"op":"fire","x":950,"y":1700,"count":5},{"op":"up","finger":-1}]}
 // v2.1
 {"type":"sample_colors","maxColors":8,"quant":32}
 {"type":"track_object","color":"#ff2020","samples":5,"intervalMs":120,"predictMs":300}
@@ -383,7 +399,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh   # 554 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh   # 632 checks green
 ```
 
 ## Data Architecture
@@ -408,6 +424,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v2.4 — session_report handover + bestScore, profile-aware observe (game.objects/values), game_profile verify; 73 tools; 554 e2e checks; Android 2.1.0 unchanged)
+- **Last Updated**: 2026-09-08 (v2.5 — multi-touch engine: persistent fingers, joystick, aim, fire_burst, combo; genre playbooks (shooter/runner/puzzle/rhythm/strategy/racing/fighting/casual); 78 tools; 632 e2e checks; Android 2.5.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
