@@ -55,7 +55,9 @@ object BotEngine {
     )
 
     /** v2.8 aim auto-tune state per action key */
-    private class AimTune(var gain: Float, var lastEx: Int = 0, var lastEy: Int = 0, var lastDx: Float = 0f, var lastDy: Float = 0f, var pending: Boolean = false, var samples: Int = 0)
+    private class AimTune(var gain: Float, var lastEx: Int = 0, var lastEy: Int = 0, var lastDx: Float = 0f, var lastDy: Float = 0f, var pending: Boolean = false, var samples: Int = 0,
+        /** v3.0 target tracking for lead prediction: last seen position/time and smoothed velocity (px/ms) */
+        var tx: Int = 0, var ty: Int = 0, var tAt: Long = 0L, var vx: Float = 0f, var vy: Float = 0f)
 
     /** What a condition "found": a single point plus (for object_present) every detected object. */
     private class Found(val x: Int, val y: Int, val all: List<Pair<Int, Int>> = listOf(x to y))
@@ -305,9 +307,24 @@ object BotEngine {
                 // v2.7 aimbot: drag the look area so the crosshair lands on the target. Proportional step, clamped, with a deadzone.
                 val f = found ?: return null
                 val cx = a.int("crosshairX") ?: bmp.width / 2; val cy = a.int("crosshairY") ?: bmp.height / 2
-                val ex = (f.x + (a.int("offsetX") ?: 0)) - cx; val ey = (f.y + (a.int("offsetY") ?: 0)) - cy
-                val dz = a.int("deadzone") ?: 12
                 val tune = aimTune.getOrPut(key) { AimTune((a.float("sensitivity") ?: 1f).coerceIn(0.05f, 5f)) }
+                // v3.0 lead prediction: smoothed target velocity from consecutive detections (only when the same target is tracked: jump < 250 px)
+                val nowT = SystemClock.elapsedRealtime()
+                var px = f.x + (a.int("offsetX") ?: 0); var py = f.y + (a.int("offsetY") ?: 0)
+                val predictMs = a.int("predictMs") ?: 0
+                if (tune.tAt > 0 && nowT - tune.tAt in 15..400 && Math.abs(f.x - tune.tx) < 250 && Math.abs(f.y - tune.ty) < 250) {
+                    val dt = (nowT - tune.tAt).toFloat()
+                    // the camera drag we injected also moves the target on screen: subtract the expected shift (-lastDx*? unknown gain) — keep it simple: only trust motion when we did not drag last tick
+                    val ivx = (f.x - tune.tx) / dt; val ivy = (f.y - tune.ty) / dt
+                    if (!tune.pending) { tune.vx = tune.vx * 0.5f + ivx * 0.5f; tune.vy = tune.vy * 0.5f + ivy * 0.5f }
+                    if (predictMs > 0) { px += (tune.vx * predictMs).toInt().coerceIn(-200, 200); py += (tune.vy * predictMs).toInt().coerceIn(-200, 200) }
+                } else { tune.vx = 0f; tune.vy = 0f }
+                tune.tx = f.x; tune.ty = f.y; tune.tAt = nowT
+                val ex = px - cx; val ey = py - cy
+                // v3.0 assist range: the user aims coarsely — only nudge when the target is already close to the crosshair
+                val maxRange = a.int("maxRange") ?: 0
+                if (maxRange > 0 && (Math.abs(ex) > maxRange || Math.abs(ey) > maxRange)) { tune.pending = false; return null }
+                val dz = a.int("deadzone") ?: 12
                 // v2.8 auto-tune: compare how far the target actually moved after the previous drag with what we asked for.
                 // ratio = observed movement / requested drag → if the crosshair moved less than the error we corrected (undershoot) raise gain, if it overshot lower it.
                 if (a["autoTune"]?.jsonPrimitive?.booleanOrNull != false && tune.pending && Math.abs(tune.lastDx) > 20) {
@@ -336,7 +353,16 @@ object BotEngine {
                 if (a["alternate"]?.jsonPrimitive?.booleanOrNull == true) { val flip = altState[key] ?: false; if (flip) { dx = -dx; dy = -dy }; altState[key] = !flip }
                 Action(type = "aim", x = a.float("x"), y = a.float("y"), dx = dx, dy = dy, duration = a.long("duration"), finger = a.int("finger"), steps = a.int("steps"), release = a["release"]?.jsonPrimitive?.booleanOrNull)
             }
-            "fire_burst" -> Action(type = "fire_burst", x = a.float("x"), y = a.float("y"), count = a.int("count"), intervalMs = a.long("intervalMs"), holdMs = a.long("holdMs"))
+            "fire_burst" -> {
+                // v3.0 trigger-bot: only fire when the found target is within maxRange px of the crosshair (user aims, bot shoots)
+                val maxRange = a.int("maxRange") ?: 0
+                if (maxRange > 0) {
+                    val f = found ?: return null
+                    val cx = a.int("crosshairX") ?: bmp.width / 2; val cy = a.int("crosshairY") ?: bmp.height / 2
+                    if (Math.abs(f.x - cx) > maxRange || Math.abs(f.y - cy) > maxRange) return null
+                }
+                Action(type = "fire_burst", x = a.float("x"), y = a.float("y"), count = a.int("count"), intervalMs = a.long("intervalMs"), holdMs = a.long("holdMs"))
+            }
             "combo" -> Action(type = "combo", steps2 = a["combo"]?.let { runCatching { RelayJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(ComboStep.serializer()), it) }.getOrNull() })
             "finger_up" -> Action(type = "finger_up", finger = a.int("finger") ?: -1)
             "back" -> Action(type = "back")
