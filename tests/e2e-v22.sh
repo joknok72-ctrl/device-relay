@@ -21,7 +21,7 @@ check bootstrap-forget-app 'recall forget="app"' "$(curl -s $U/agent/$T)"
 
 echo "== seed memory for two games"
 memdel 'kind=all' >/dev/null
-check wipe-empty '"totals":{"notes":0,"macros":0,"screens":0}' "$(memdel 'kind=all')"
+check wipe-empty '"totals":{"notes":0,"macros":0,"screens":0,"profiles":0}' "$(memdel 'kind=all')"
 call '{"name":"remember","arguments":{"text":"jump=(950,2100)"}}' >/dev/null
 call '{"name":"remember","arguments":{"text":"fire=(200,2100)"}}' >/dev/null
 call '{"name":"remember","arguments":{"text":"other game note","app":"com.other.game"}}' >/dev/null
@@ -33,7 +33,7 @@ call '{"name":"label_screen","arguments":{"name":"menu"}}' >/dev/null
 
 echo "== grouped view"
 M=$(mem '')
-check mem-totals '"totals":{"notes":4,"macros":2,"screens":1,"apps":1,"recording":false}' "$M"
+check mem-totals '"totals":{"notes":4,"macros":2,"screens":1,"apps":1,"profiles":0,"sessions":' "$M"
 check mem-group-spacerunner '"app":"com.example.spacerunner","label":"Space Runner"' "$M"
 check mem-group-notes 'True' "$(echo "$M" | j 'any(g["app"]=="com.example.spacerunner" and len(g["notes"])==2 and len(g["macros"])==1 and len(g["screens"])==1 for g in d["groups"])')"
 check mem-group-other 'True' "$(echo "$M" | j 'any(g["app"]=="com.other.game" and len(g["notes"])==1 and len(g["macros"])==1 for g in d["groups"])')"
@@ -47,7 +47,7 @@ echo "== granular delete"
 check del-note-index '"removed":{"notes":1,' "$(memdel 'kind=notes&index=0')"
 check del-macro-name '"removed":{"notes":0,"macros":1,' "$(memdel 'kind=macros&name=other-macro')"
 check del-screen-name '"screens": 1' "$(memdel 'kind=screens&name=menu' | j 'json.dumps(d["removed"])')"
-check del-app-only-other '"removed":{"notes":1,"macros":0,"screens":0,"apps":0}' "$(memdel 'kind=all&app=com.other.game')"
+check del-app-only-other '"removed":{"notes":1,"macros":0,"screens":0,"apps":0,"profiles":0,"sessions":0}' "$(memdel 'kind=all&app=com.other.game')"
 check del-app-keeps-others 'True' "$(mem '' | j 'd["totals"]["notes"]==2 and any(g["app"]=="com.example.spacerunner" for g in d["groups"])')"
 check del-general '"notes": 1' "$(memdel 'kind=notes&app=' | j 'json.dumps(d["removed"])')"
 check del-apps-list '"apps": 1' "$(memdel 'kind=apps&app=com.example.spacerunner' | j 'json.dumps(d["removed"])')"
@@ -69,7 +69,7 @@ check export-header 'attachment; filename="device-relay-memory-test-phone-' "$(c
 check export-body '"exportedAt"' "$EXP"
 check export-version '"version": "2.3.0"' "$EXP"
 memdel 'kind=all' >/dev/null
-check import '"imported":{"notes":1,"macros":2,"screens":1}' "$(curl -s "${A[@]}" -d "$EXP" $U/api/admin/devices/$D/memory/import)"
+check import '"imported":{"notes":1,"macros":2,"screens":1,"profiles":0}' "$(curl -s "${A[@]}" -d "$EXP" $U/api/admin/devices/$D/memory/import)"
 check import-restored '"notes": 1, "macros": 2, "screens": 1' "$(mem '' | j 'json.dumps(d["totals"])')"
 check import-badjson 'invalid JSON' "$(curl -s "${A[@]}" -d 'nope' $U/api/admin/devices/$D/memory/import)"
 
