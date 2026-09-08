@@ -140,6 +140,14 @@
 - bootstrap فيه قسم **8. BOT BUILDER**: الإجراء (استكشف → profile → قواعد → run → راقب 20 ثانية → عدّل)، كتالوج قواعد لكل نوع (shooter/runner/rhythm/idle/puzzle)، قواعد أمان (دائمًا قاعدة `stop_bot` على GAME OVER/popup).
 - `phone.sh bot list|get|run|stop|status|delete|create|update` · مسارات admin `GET/DELETE /api/admin/devices/:id/bots[/:botId]`, `POST .../bots/:botId/run`, `POST .../bots/stop` · تصدير/استيراد الذاكرة يشمل البوتات.
 
+**🎯 v2.7 — بوتات أقوى من اللاعب: aimbot، كشف أجسام، قوالب جاهزة، استراتيجية ألوان**
+- **قوالب بوتات بنداء واحد** `game_bot action=template template=shooter|runner|rhythm|idle_tapper|clicker|puzzle_match|fishing|racing params={...@names}` — بوت كامل مضبوط مع قواعد الأمان. `action=templates` يعرض القوالب والمعاملات المطلوبة.
+- **قالب الشوتر** (Free Fire/PUBG/CoD): `object_present @enemy pick:nearest` → **`aim_to_found`** (يجرّ الكاميرا حتى يقع التصويب على العدو، بحساسية وdeadzone وmaxStep) + `fire_burst` كل 70ms = تتبع + رشّ مستمر · **`aim alternate:true`** يكنس الكاميرا يمين/شمال + `joystick` يتقدّم لما مفيش عدو (يبص حواليه بدل ما يزّق في حيطة) · قاعدة HP منخفض → علاج/انسحاب · إيقاف على GAME OVER.
+- **كشف أجسام** `object_present/object_absent` (blobs حقيقية بدل بكسلات: `minSize/maxSize` تفصل الرأس عن الجسم، `pick: largest|nearest|topmost|lowest`, `nearX/nearY`) · **`colors:[..]`** أي-من حتى 8 ألوان (فرق/سكنات/نوتات) · **`forMs`** الشرط لازم يستمر مدة (يقتل الفليكر) · **`tap_all_found`** يضغط كل الأجسام المكتشفة (Whack/Pop/Match) · **`maxFires`** (مثلاً PLAY مرة واحدة).
+- **استراتيجية الألوان في الـ bootstrap**: لون مستقل لكل شيء (@enemy, @enemyHead, @coin, @bomb…)، اختيار ألوان فريدة ومستقرة (name-tag/health bar/outline مش الجسم)، التحقق بـ `find_objects`، ونصيحة للمستخدم: غيّر لون تحديد العدو في إعدادات اللعبة (Free Fire/PUBG/CoD) للون صارخ يبقى @enemy.
+- **تشخيص**: `bot_status` يرجّع `ruleHits` (كل قاعدة ضربت كام مرة) و`avgTickMs` → الـ AI يعرف فورًا القاعدة اللي ألوانها غلط أو الtick البطيء. اللوحة تعرض القالب و ruleHits.
+- `@stick-500` (اسم فيه شرطة + إزاحة سالبة) يُحلَّل حسب البروفايل · `phone.sh bot templates | bot template <id> '<params>' [name]`.
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -150,6 +158,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v2.7**: `BotEngine` — كشف أجسام (`scanObjects`) مع pick/size، ألوان متعددة، `forMs`، `tap_all_found`، **`aim_to_found` aimbot** تناسبي مع deadzone، `aim.alternate`، `maxFires`، `ruleHits/avgTickMs`
 - **v2.6**: `BotEngine` — محرك قواعد على الجهاز (حلقة tick، تقييم شروط بالألوان/OCR/الأرقام، تنفيذ الأفعال بنفس محرك اللمس المتعدد)، أزرار إشعار ▶/↻/■، `bot_sync/bot_start/bot_stop/bot_status`
 - **v2.5**: محرك لمس متعدد — أصابع دائمة بـ `continueStroke` (`finger_down/move/up`)، `joystick` (يبقي العصا حية بمقاطع متواصلة)، `aim`، `fire_burst`، `combo`
 - **v2.1**: `sample_colors` (تكميم ألوان + تجاهل الرمادي)، `track_object` (عيّنات + انحدار خطي للسرعة)
@@ -411,7 +420,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v26.sh   # 744 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v27.sh   # 837 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -436,6 +445,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v2.6 — game bots: rule engine on the phone (colour/OCR/number conditions → tap/joystick/fire/combo actions), zero AI tokens while running, ▶/↻/■ from the notification, bots UI in setup page, BOT BUILDER bootstrap section; 79 tools; 744 e2e checks; Android 2.6.0)
+- **Last Updated**: 2026-09-08 (v2.7 — stronger bots: 8 one-call templates, shooter aimbot (object detection → aim_to_found + fire_burst, camera sweep, HP retreat), multi-colour any-of, forMs, tap_all_found, maxFires, ruleHits diagnostics, colour-strategy bootstrap; 79 tools; 837 e2e checks; Android 2.7.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
