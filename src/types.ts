@@ -73,7 +73,7 @@ export type Action =
   // v2.1
   | { type: 'sample_colors'; region?: Region; maxColors?: number; quant?: number; ignoreGrey?: boolean }
   | { type: 'track_object'; color: string; tolerance?: number; region?: Region; minCount?: number; samples?: number; intervalMs?: number; predictMs?: number }
-  | { type: 'find_objects'; color: string; tolerance?: number; region?: Region; minSize?: number; maxResults?: number }
+  | { type: 'find_objects'; color: string; tolerance?: number; region?: Region; minSize?: number; maxResults?: number; /** v3.1 */ match?: 'rgb' | 'hue' }
   | { type: 'auto_react'; color: string; tolerance?: number; region?: Region; minCount?: number; tapOffsetX?: number; tapOffsetY?: number; tapX?: number; tapY?: number; maxTriggers?: number; timeoutMs?: number; intervalMs?: number; cooldownMs?: number;
       /** v2.0: extra lanes (each its own colour/region/reaction); the top-level fields act as lane 0 */
       lanes?: ReactLane[]; /** v2.0: stop the loop when this colour is present (e.g. GAME OVER red banner) */ stopColor?: string; stopRegion?: Region; stopMinCount?: number }

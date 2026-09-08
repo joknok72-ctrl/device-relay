@@ -272,6 +272,7 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       if (typeof a.color !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(a.color.trim())) return { error: 'find_objects requires color "#RRGGBB"' }
       const action: Action = { type: 'find_objects', color: '#' + a.color.trim().replace('#', '').toLowerCase(), tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24, minSize: isNum(a.minSize) ? clamp(Math.round(a.minSize), 1, 2000) : 12, maxResults: isNum(a.maxResults) ? clamp(Math.round(a.maxResults), 1, 40) : 10 }
       const region = parseRegion(a.region); if (region) action.region = region
+      if (a.match === 'hue') action.match = 'hue'
       return { action }
     }
     case 'auto_react': {

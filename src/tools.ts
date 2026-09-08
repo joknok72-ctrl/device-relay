@@ -808,6 +808,7 @@ export const TOOLS: ToolDef[] = [
     parameters: {
       type: 'object',
       properties: {
+        match: { type: 'string', description: 'v3.1: rgb (default) | hue — hue-distance matching in degrees (tolerance 18-30), robust to shading on 3D objects' },
         color: { type: 'string', description: '"#rrggbb" target colour' },
         tolerance: { type: 'integer', description: 'Per-channel tolerance 0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
         region: { type: 'object', description: '{x,y,w,h} search area in original pixels' },
@@ -1035,7 +1036,7 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'read_number': return { special: 'read_number' }
     case 'watch_value': return { special: 'watch_value' }
     case 'calibrate': return { special: 'calibrate' }
-    case 'find_objects': return { action: { type: 'find_objects', color: args.color, tolerance: args.tolerance, region: args.region, minSize: args.minSize, maxResults: args.maxResults } }
+    case 'find_objects': return { action: { type: 'find_objects', color: args.color, tolerance: args.tolerance, region: args.region, minSize: args.minSize, maxResults: args.maxResults, match: args.match } }
     case 'auto_react': return { action: { type: 'auto_react', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, tapOffsetX: args.tapOffsetX, tapOffsetY: args.tapOffsetY, tapX: args.tapX, tapY: args.tapY, maxTriggers: args.maxTriggers, timeoutMs: args.timeoutMs, intervalMs: args.intervalMs, cooldownMs: args.cooldownMs, lanes: args.lanes, stopColor: args.stopColor, stopRegion: args.stopRegion, stopMinCount: args.stopMinCount } }
     case 'record_macro': return { special: 'record_macro' }
     case 'label_screen': return { special: 'label_screen' }

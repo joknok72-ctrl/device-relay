@@ -595,7 +595,7 @@ class AutomationAccessibilityService : AccessibilityService() {
     private suspend fun findObjects(a: Action): Outcome {
         val color = a.color ?: return Outcome.Fail("find_objects requires color")
         val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
-        return Outcome.Ok(data = scanObjects(bmp, color, (a.tolerance ?: 24).coerceIn(0, 128), a.region, (a.minSize ?: 12).coerceIn(1, 2000), (a.maxResults ?: 10).coerceIn(1, 40)))
+        return Outcome.Ok(data = scanObjects(bmp, color, (a.tolerance ?: 24).coerceIn(0, 128), a.region, (a.minSize ?: 12).coerceIn(1, 2000), (a.maxResults ?: 10).coerceIn(1, 40), a.match ?: "rgb"))
     }
 
     // ---------------------------------------------------------------- v2.1 colour discovery + motion tracking

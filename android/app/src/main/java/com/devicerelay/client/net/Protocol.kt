@@ -67,6 +67,7 @@ data class Action(
     val fps: Float? = null,              // stream
     // v1.9
     val minSize: Int? = null,            // find_objects: ignore blobs smaller than this (px)
+    val match: String? = null,           // v3.1 find_objects: rgb | hue
     val tapOffsetX: Int? = null,         // auto_react
     val tapOffsetY: Int? = null,         // auto_react
     val tapX: Int? = null,               // auto_react: fixed tap point
