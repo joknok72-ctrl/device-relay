@@ -58,7 +58,7 @@ function room(env: Bindings, deviceId: string) {
   return env.DEVICE_ROOM.get(env.DEVICE_ROOM.idFromName(deviceId))
 }
 /** Input tools that must not be captured by record_macro (meta / non-replayable). */
-const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate'])
+const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report'])
 
 /** Push a visual event to /monitor viewers (fire-and-forget). */
 function overlay(env: Bindings, deviceId: string, o: Record<string, unknown>) {
@@ -71,7 +71,7 @@ export async function deviceInfo(env: Bindings, deviceId: string): Promise<Devic
 }
 
 // ---------------------------------------------------------------- v2.3 @name resolution against the game profile
-interface ProfileRec { app: string; label?: string; controls: Record<string, { x: number; y: number; note?: string; reactMs?: number }>; colors: Record<string, { hex: string; tolerance?: number }>; regions: Record<string, { x: number; y: number; w: number; h: number }>; settings: Record<string, unknown>; ts: number }
+interface ProfileRec { app: string; label?: string; controls: Record<string, { x: number; y: number; note?: string; reactMs?: number }>; colors: Record<string, { hex: string; tolerance?: number }>; regions: Record<string, { x: number; y: number; w: number; h: number }>; settings: Record<string, unknown>; ts: number; bestScore?: number; lastReport?: unknown; reports?: number }
 async function loadProfile(env: Bindings, deviceId: string, app?: string): Promise<{ app: string; profile: ProfileRec | null }> {
   let pkg = app?.trim() ?? ''
   if (!pkg || pkg === 'current') {
@@ -187,6 +187,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'do_until') return doUntil(env, deviceId, args, opts)
   if (mapped.special === 'dismiss_popups') return dismissPopups(env, deviceId, args, opts)
   if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
+  if (mapped.special === 'session_report') return sessionReport(env, deviceId, args)
   if (mapped.special === 'game_profile') {
     if (opts.readOnly && (args.set || args.unset || args.delete || args.label)) return { ok: false, error: 'token is read-only: game_profile can only be read' }
     return gameProfile(env, deviceId, args)
@@ -442,6 +443,9 @@ async function observe(env: Bindings, deviceId: string, args: Record<string, unk
   if (colors.length) tasks.push(executeTool(env, deviceId, 'find_colors', { colors, tolerance: args.tolerance, region: args.region }, opts).then((r) => ['colors', r]))
   if (wantDiff) tasks.push(executeTool(env, deviceId, 'screen_diff', {}, opts).then((r) => ['diff', r]))
   if (args.identify !== false) tasks.push(identifyScreen(env, deviceId, {}, opts).then((r) => ['screen', r]))
+  // v2.4 profile-aware: evaluate the game's @colors (objects) and numeric @regions in the same call
+  let profileP: Promise<ProfileRec | null> | undefined
+  if (args.profile !== false) profileP = loadProfile(env, deviceId).then((x) => x.profile).catch(() => null)
   const settled = await Promise.all(tasks.map((p) => p.catch((e) => ['error', { ok: false, error: String(e) }] as [string, ToolResult])))
   const parts: Record<string, ToolResult> = {}
   for (const [k, r] of settled) parts[k] = r
@@ -467,6 +471,33 @@ async function observe(env: Bindings, deviceId: string, args: Record<string, unk
   if (parts.screen) {
     out.screenName = parts.screen.ok ? (parts.screen.screenName as string | null) : null
     if (parts.screen.ok && parts.screen.confidence !== undefined && Number(parts.screen.count) > 0) out.screenConfidence = parts.screen.confidence
+  }
+  if (profileP) {
+    const prof = await profileP
+    if (prof && (Object.keys(prof.colors).length || Object.keys(prof.regions).length)) {
+      const game: Record<string, unknown> = { app: prof.app, label: prof.label }
+      const colorNames = Object.keys(prof.colors).slice(0, 6)
+      const objs: Record<string, unknown> = {}
+      await Promise.all(colorNames.map(async (nm) => {
+        const c = prof.colors[nm]
+        const r = await executeTool(env, deviceId, 'find_objects', { color: c.hex, tolerance: c.tolerance ?? 24, maxResults: 5, ...(args.region ? { region: args.region } : {}) }, { ...opts, internal: true })
+        const d = r.data as { count?: number; objects?: { cx: number; cy: number; area: number }[] } | undefined
+        objs['@' + nm] = r.ok ? { count: d?.count ?? 0, objects: (d?.objects ?? []).slice(0, 5).map((o) => ({ cx: o.cx, cy: o.cy, area: o.area })) } : { error: r.error }
+      }))
+      if (colorNames.length) game.objects = objs
+      // numeric regions: names that hint at numbers, or any region when OCR lines exist
+      const numRegions = Object.entries(prof.regions).filter(([nm]) => /score|coin|gem|gold|hp|health|time|timer|level|lvl|distance|point|kill|money|cash|star|ammo|energy|combo|wave|round/i.test(nm)).slice(0, 4)
+      if (numRegions.length) {
+        const values: Record<string, unknown> = {}
+        await Promise.all(numRegions.map(async ([nm, g]) => {
+          const r = await readNumber(env, deviceId, { region: { x: g.x, y: g.y, w: g.w, h: g.h } }, { ...opts, internal: true })
+          values['@' + nm] = r.ok ? r.value : null
+        }))
+        game.values = values
+      }
+      if (prof.bestScore !== undefined) game.bestScore = prof.bestScore
+      out.game = game
+    }
   }
   // the call is ok if at least the screenshot (or, image=false, the OCR/app) worked
   out.ok = wantImage ? !!parts.shot?.ok : (parts.ocr?.ok ?? parts.app?.ok ?? false)
@@ -627,9 +658,50 @@ async function gameProfile(env: Bindings, deviceId: string, args: Record<string,
   const out: ToolResult = { ok: true, app, exists: !!prof, profile: prof ?? { app, controls: {}, colors: {}, regions: {}, settings: {} } }
   if (!prof) out.hint = 'no profile yet — after sample_colors/calibrate save with game_profile set:{controls:{jump:{x,y}}, colors:{enemy:{hex}}, regions:{score:{x,y,w,h}}}'
   if (args.history === true) {
-    const s = (await (await r.fetch(`https://do/sessions?deviceId=${deviceId}&app=${encodeURIComponent(app)}&limit=10`)).json()) as { sessions: { start: number; end: number; commands: number; failed: number }[] }
-    out.history = s.sessions.map((x) => ({ when: new Date(x.start).toISOString(), minutes: Math.round((x.end - x.start) / 60000), commands: x.commands, failed: x.failed }))
+    const s = (await (await r.fetch(`https://do/sessions?deviceId=${deviceId}&app=${encodeURIComponent(app)}&limit=10`)).json()) as { sessions: { start: number; end: number; commands: number; failed: number; report?: { outcome?: string; score?: number; summary: string } }[] }
+    out.history = s.sessions.map((x) => ({ when: new Date(x.start).toISOString(), minutes: Math.round((x.end - x.start) / 60000), commands: x.commands, failed: x.failed, ...(x.report ? { outcome: x.report.outcome, score: x.report.score, summary: x.report.summary } : {}) }))
   }
+  if (args.verify === true && prof) out.verify = await verifyProfile(env, deviceId, prof)
+  return out
+}
+
+/** v2.4: check every profile colour/region against the live screen; report what looks stale. */
+async function verifyProfile(env: Bindings, deviceId: string, p: ProfileRec): Promise<Record<string, unknown>> {
+  const colors = Object.entries(p.colors)
+  const regions = Object.entries(p.regions)
+  const stale: string[] = []
+  const colorResults: Record<string, unknown> = {}
+  if (colors.length) {
+    const r = await executeTool(env, deviceId, 'find_colors', { colors: colors.slice(0, 8).map(([, c]) => c.hex), tolerance: 30 }, { internal: true })
+    const res = (r.data as { results?: { color: string; found: boolean; count: number }[] } | undefined)?.results ?? []
+    colors.slice(0, 8).forEach(([name, c], i) => { const x = res[i]; colorResults['@' + name] = x ? { present: x.found, count: x.count } : { error: r.error }; if (x && !x.found) stale.push(`@${name} (${c.hex}) not on screen right now`) })
+  }
+  const regionResults: Record<string, unknown> = {}
+  for (const [name, g] of regions.slice(0, 6)) {
+    const r = await executeTool(env, deviceId, 'read_text', { region: { x: g.x, y: g.y, w: g.w, h: g.h } }, { internal: true })
+    const lines = (r.data as { lines?: { text: string }[] } | undefined)?.lines ?? []
+    regionResults['@' + name] = { ok: r.ok, lines: lines.length, text: lines.slice(0, 3).map((l) => l.text) }
+  }
+  const controlsOff: string[] = []
+  const info = await deviceInfo(env, deviceId)
+  for (const [name, c] of Object.entries(p.controls)) if (info.screen && (c.x < 0 || c.y < 0 || c.x > info.screen.w || c.y > info.screen.h)) { controlsOff.push('@' + name); stale.push(`@${name} is outside the ${info.screen.w}x${info.screen.h} screen`) }
+  return { colors: colorResults, regions: regionResults, controlsOffScreen: controlsOff, stale, verdict: stale.length ? 'some entries look stale — re-check them with observe before trusting; delete with game_profile unset' : 'profile consistent with the current screen' }
+}
+
+/** v2.4 end-of-session handover */
+async function sessionReport(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const summary = String(args.summary ?? '').trim()
+  if (!summary) return { ok: false, error: 'session_report requires summary' }
+  let app = typeof args.app === 'string' && args.app.trim() ? args.app.trim() : ''
+  let label: string | undefined
+  if (!app) {
+    const r = await executeTool(env, deviceId, 'get_current_app', {}, { internal: true })
+    const d = r.data as { package?: string; label?: string } | undefined
+    app = d?.package ?? ''; label = d?.label
+  }
+  const res = await room(env, deviceId).fetch(`https://do/session-report?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: app || undefined, label, summary, outcome: args.outcome, score: args.score, level: args.level, learned: args.learned, nextTime: args.nextTime, blockers: args.blockers }) })
+  const out = (await res.json()) as ToolResult
+  if (out.ok) out.hint = out.newBest ? 'NEW BEST SCORE saved to the profile' : 'saved; the next session will see this in QUICK START'
   return out
 }
 

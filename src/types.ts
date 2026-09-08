@@ -82,9 +82,15 @@ export interface GameProfile {
   regions: Record<string, { x: number; y: number; w: number; h: number; note?: string }>
   settings: Record<string, string | number | boolean>
   ts: number
+  /** v2.4 progress tracking filled by session_report */
+  bestScore?: number
+  lastReport?: SessionReport
+  reports?: number
 }
+/** v2.4 end-of-session handover written by the AI for the next session. */
+export interface SessionReport { ts: number; outcome?: 'win' | 'loss' | 'progress' | 'stuck' | 'other'; score?: number; level?: string; summary: string; learned?: string[]; nextTime?: string; blockers?: string[]; durationMs?: number }
 /** v2.3 one play session (from first to last command within the same app, gaps < 10 min). */
-export interface PlaySession { app: string; label?: string; start: number; end: number; commands: number; failed: number; screenshots: number }
+export interface PlaySession { app: string; label?: string; start: number; end: number; commands: number; failed: number; screenshots: number; report?: SessionReport }
 /** In-progress macro recording (record_macro). */
 export interface Recording { name?: string; description?: string; keepWaits: boolean; startedAt: number; lastAt: number; steps: { name: string; arguments?: Record<string, unknown> }[] }
 /** Named, replayable tool sequence stored per device. */

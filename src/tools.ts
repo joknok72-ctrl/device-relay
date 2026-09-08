@@ -548,6 +548,28 @@ export const TOOLS: ToolDef[] = [
       required: ['enabled'],
     },
   },
+  // ---------------------------------------------------------------- v2.4 handover + progress
+  {
+    name: 'session_report',
+    description:
+      'END-OF-SESSION HANDOVER. Call this when you finish (or get stuck / the user stops you) so the NEXT chat starts smarter: outcome, score reached, level, a 1-3 sentence summary, what you learned (facts), what to do next time, and blockers. ' +
+      'It is attached to the current play session and to the game profile (bestScore is tracked automatically; the bootstrap QUICK START shows the last report + best score). ' +
+      'Keep learned[] factual and short; put coordinates/colours in game_profile instead.',
+    parameters: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'What happened this session (1-3 sentences)' },
+        outcome: { type: 'string', description: 'win | loss | progress | stuck | other' },
+        score: { type: 'number', description: 'Final score / coins / distance if applicable' },
+        level: { type: 'string', description: 'Level / stage / rank reached' },
+        learned: { type: 'array', description: 'Facts worth passing on, e.g. "ads appear after every 2 runs", "jump reacts 120ms late"', items: { type: 'string' } },
+        nextTime: { type: 'string', description: 'Concrete advice for the next session' },
+        blockers: { type: 'array', description: 'Things that stopped you (login wall, missing permission, unknown screen)', items: { type: 'string' } },
+        app: { type: 'string', description: 'Package (default current app)' },
+      },
+      required: ['summary'],
+    },
+  },
   // ---------------------------------------------------------------- v2.3 game profile (@names) + play history
   {
     name: 'game_profile',
@@ -566,6 +588,7 @@ export const TOOLS: ToolDef[] = [
         unset: { type: 'object', description: '{controls?:[names], colors?:[...], regions?:[...], settings?:[...]} to remove' },
         delete: { type: 'boolean', description: 'true = delete the whole profile for this app' },
         history: { type: 'boolean', description: 'true = also return recent play sessions for this app (when, how long, how many commands/failures)' },
+        verify: { type: 'boolean', description: 'true = check the profile against the CURRENT screen: is each colour still present (count), does each region still contain text? Returns stale[] so you know what to re-learn after a game update' },
       },
       required: [],
     },
@@ -765,6 +788,7 @@ export const TOOLS: ToolDef[] = [
         image: { type: 'boolean', description: 'Include the screenshot image (default true; false = text/colours only, much smaller)', default: true },
         diff: { type: 'boolean', description: 'Include screen_diff vs previous call (default true)', default: true },
         identify: { type: 'boolean', description: 'Include screenName from label_screen fingerprints (default true)', default: true },
+        profile: { type: 'boolean', description: 'v2.4: also evaluate the game profile in the same call (default true when a profile exists): every @color → objects found (count, biggest cx/cy), every @region with a number → its value. Result in `game`.', default: true },
       },
       required: [],
     },
@@ -865,8 +889,9 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report'; error?: string } {
   switch (name) {
+    case 'session_report': return { special: 'session_report' }
     case 'game_profile': return { special: 'game_profile' }
     case 'sample_colors': return { action: { type: 'sample_colors', region: args.region, maxColors: args.maxColors, quant: args.quant, ignoreGrey: args.ignoreGrey } }
     case 'track_object': return { action: { type: 'track_object', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, samples: args.samples, intervalMs: args.intervalMs, predictMs: args.predictMs } }
@@ -1028,7 +1053,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '2.3.0',
+      version: '2.4.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

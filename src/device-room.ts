@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, Recording, ScreenLabel } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, Recording, ScreenLabel, SessionReport } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
@@ -319,6 +319,36 @@ export class DeviceRoom extends DurableObject<Bindings> {
         await this.ctx.storage.put('profiles', this.profiles)
         return Response.json({ ok: true, removed: had })
       }
+    }
+    // ---------- v2.4 session report: AI's handover note, attached to the current session + profile ----------
+    if (url.pathname.endsWith('/session-report') && request.method === 'POST') {
+      const b = (await request.json()) as Partial<SessionReport> & { app?: string; label?: string }
+      const app = String(b.app ?? this.currentApp ?? '').trim()
+      if (!app) return Response.json({ ok: false, error: 'no current app' }, { status: 400 })
+      const summary = String(b.summary ?? '').trim().slice(0, 600)
+      if (!summary) return Response.json({ ok: false, error: 'summary required' }, { status: 400 })
+      const cur = this.sessions[0]
+      const rep: SessionReport = {
+        ts: Date.now(), summary,
+        outcome: (['win', 'loss', 'progress', 'stuck', 'other'] as const).find((o) => o === b.outcome),
+        score: typeof b.score === 'number' && Number.isFinite(b.score) ? b.score : undefined,
+        level: typeof b.level === 'string' ? b.level.slice(0, 60) : undefined,
+        learned: Array.isArray(b.learned) ? b.learned.filter((x) => typeof x === 'string').map((x) => x.slice(0, 200)).slice(0, 10) : undefined,
+        nextTime: typeof b.nextTime === 'string' ? b.nextTime.slice(0, 400) : undefined,
+        blockers: Array.isArray(b.blockers) ? b.blockers.filter((x) => typeof x === 'string').map((x) => x.slice(0, 200)).slice(0, 5) : undefined,
+        durationMs: cur && cur.app === app ? cur.end - cur.start : undefined,
+      }
+      if (cur && cur.app === app && Date.now() - cur.end < 10 * 60_000) cur.report = rep
+      else { this.sessions.unshift({ app, label: b.label, start: Date.now(), end: Date.now(), commands: 0, failed: 0, screenshots: 0, report: rep }); if (this.sessions.length > 100) this.sessions.length = 100 }
+      const p: GameProfile = this.profiles[app] ?? { app, controls: {}, colors: {}, regions: {}, settings: {}, ts: Date.now() }
+      if (b.label && !p.label) p.label = b.label.slice(0, 64)
+      p.lastReport = rep; p.reports = (p.reports ?? 0) + 1
+      let newBest = false
+      if (rep.score !== undefined && (p.bestScore === undefined || rep.score > p.bestScore)) { p.bestScore = rep.score; newBest = true }
+      p.ts = Date.now(); this.profiles[app] = p
+      await Promise.all([this.ctx.storage.put('sessions', this.sessions), this.ctx.storage.put('profiles', this.profiles)])
+      this.broadcastViewers({ kind: 'report', app, report: rep, newBest })
+      return Response.json({ ok: true, app, report: rep, bestScore: p.bestScore, newBest, reports: p.reports })
     }
     if (url.pathname.endsWith('/sessions') && request.method === 'GET') {
       const app = url.searchParams.get('app')
