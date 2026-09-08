@@ -6,7 +6,7 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string> }
+export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; bots?: { id: string; app: string; name: string; description?: string; rules: unknown[]; runs?: number; lastRun?: { start: number; end?: number; fired: number; stoppedBy?: string } }[]; botStatus?: { running: boolean; name?: string; fired?: number } | null }
 
 export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = [], screens: ScreenLabel[] = [], extras: BootstrapExtras = {}): string {
   const profiles = extras.profiles ?? []
@@ -31,6 +31,11 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
   const sessionsBlock = sessions.length === 0
     ? '  (no play history yet)'
     : sessions.slice(0, 8).map((s) => `  ${new Date(s.start).toISOString().slice(0, 16).replace('T', ' ')}  ${Math.max(1, Math.round((s.end - s.start) / 60000))}min  ${s.label ?? s.app}  ${s.commands} cmds${s.failed ? ` (${s.failed} failed)` : ''}${s.report ? `  → ${s.report.outcome ?? 'report'}${s.report.score !== undefined ? ` ${s.report.score}` : ''}: ${s.report.summary.slice(0, 80)}` : '  (no report)'}`).join('\n')
+  const bots = extras.bots ?? []
+  const botsFor = (app: string) => bots.filter((b) => b.app === app)
+  const fmtBots = (list: typeof bots) => list.map((b) => `  🤖 ${b.name}  (${b.app})  ${b.rules.length} rules, ran ${b.runs ?? 0}x${b.lastRun ? `, last: ${b.lastRun.fired} fired${b.lastRun.stoppedBy ? `, stopped by ${b.lastRun.stoppedBy}` : ''}` : ''}${b.description ? `  — ${b.description}` : ''}`).join('\n')
+  const botsBlock = bots.length ? fmtBots(bots) : '  (no bots yet — see section 8; the user wants bots they can start from the notification)'
+  const botLive = extras.botStatus?.running ? `⚠ A BOT IS RUNNING RIGHT NOW on the phone: ${extras.botStatus.name} (${extras.botStatus.fired ?? 0} fired). Do not send input while it runs unless asked; game_bot action=stop to take over.` : ''
   const cur = profiles.find((p) => p.app === currentApp)
   const curNotes = notes.filter((n) => n.app === currentApp)
   const curMacros = macros.filter((m) => m.app === currentApp)
@@ -40,6 +45,8 @@ ${cur ? `You already know this game${cur.genre ? ` (genre: ${cur.genre} → foll
 ${fmtProfile(cur)}` : 'No profile for this app yet → first turn: observe + sample_colors, calibrate each control, then game_profile set:{...}.'}
 ${curNotes.length ? `Notes for this game: ${curNotes.map((n) => n.text).join(' | ')}` : ''}
 ${curMacros.length ? `Macros for this game: ${curMacros.map((m) => `run_macro "${m.name}"`).join(', ')}` : ''}
+${botsFor(currentApp).length ? `Bots for this game (user starts them from the notification; you can game_bot action=run/stop/update):\n${fmtBots(botsFor(currentApp))}` : 'No bot for this game yet → if the user wants to relax, build one (section 8).'}
+${botLive}
 Suggested first call:  ${cur ? './phone.sh look' : './phone.sh look 100 && ./phone.sh palette'}
 When you finish (or get stuck):  session_report summary="..." outcome=win|loss|progress|stuck score=N nextTime="..."  — mandatory, it is how the next chat gets smarter.
 `
@@ -149,6 +156,9 @@ ${profilesBlock}
   observe is PROFILE-AWARE (v2.4): when a profile exists it also returns game.objects (each @color → count + biggest blobs) and game.values (numeric @regions like @score → number). One look = full game state.
   session_report at the end of EVERY session (summary, outcome, score, learned[], nextTime). bestScore is tracked; the next chat sees the last report in QUICK START and 5f.
 
+## 5h. Bots on this device (game_bot)
+${botsBlock}
+
 ## 5g. Play history on this device (most recent first)
 ${sessionsBlock}
 
@@ -159,7 +169,7 @@ Everything above (notes, macros, screens) is grouped per app package. If the use
 The human can also review/delete/export all of it visually in the owner panel (/setup, section "ذاكرة الـ AI"). Never keep relying on notes that contradict what you observe — delete them and re-learn.
 
 ## 6. Operating rules
-0. START of every session: read section 0 (QUICK START, incl. the previous session's report and NEXT TIME advice) and 5f (profiles). END of every session: session_report. If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
+0. START of every session: read section 0 (QUICK START, incl. the previous session's report and NEXT TIME advice), 5f (profiles) and 5h (bots). If the user asks for a bot / "بوت" / "يلعب لوحده" / to relax → section 8 is your whole task. END of every session: session_report. If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
 1. Observe before acting: "ui" first (exact, cheap). Use "look" (observe) when visuals matter (games, images, WebView) or when ui is empty — it gives image + text + app + diff at once.
 2. After every action that changes the screen, observe again and verify before the next step.
 3. Coordinates are ORIGINAL screen pixels (screen.w x screen.h). Elements from "ui" are already original. Screenshot px / scale = original.
@@ -172,6 +182,29 @@ The human can also review/delete/export all of it visually in the owner panel (/
 9. Input actions are serialized per phone (a queue); read-only actions (shot/ui/notifs) run in parallel. Results include queuedMs when they had to wait.
 10. For OTP codes / incoming messages use "notifs" (get_notifications) instead of opening apps.
 11. Read section 5b first; after finishing, "remember" anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
+
+## 8. BOT BUILDER (game_bot) — the user's favourite feature: a bot that plays WITHOUT you, started from the phone notification, costs zero tokens
+Why: the user wants to press ▶ in the Device Relay notification and relax. Your job in a session is often NOT to play — it is to BUILD and TEST a bot, then hand it over.
+The bot is a list of rules the PHONE evaluates every tickMs on the live frame: WHEN [pixel/colour/text/number conditions] THEN [taps/swipes/joystick/fire/combo]. Everything is by pixels/colours, so it is fast (~100 ms) and needs no AI.
+Procedure (30-60 tool calls, then the user is free):
+  1. observe grid:100 + sample_colors → understand the game screen. game_profile genre=... set:{controls,colors,regions} (the bot rules will reference these @names).
+  2. Find the TRIGGERS: what pixel/colour/text tells you "act now"? (enemy colour in a zone, a tile turning green, "TAP!" text, a bar filling, a number dropping). Verify each with find_color / get_pixels / read_text on 2-3 different moments.
+  3. game_bot action=create name="<game>-auto" rules=[...] — 3 to 8 rules, ordered by priority: (a) SAFETY first: game over / popup / ad → stop_bot or tap Close; (b) the core reaction(s); (c) a fallback every_ms rule (e.g. keep moving / tap PLAY when idle).
+  4. game_bot action=run → observe every ~5 s for 20-30 s (observe still works while the bot runs) → read the counters in game_bot action=status (fired, lastRule) → fix rules with action=update → run again.
+  5. When it survives 60 s: session_report + tell the user: "البوت اسمه X — شغّله من الإشعار (▶ X) وهو في اللعبة، وأوقفه من ■". Also tell them what it does and does not handle.
+Rule cookbook (copy, then replace @names):
+  popup/ad:    {name:"close-ad", priority:100, when:[{type:"text_present",text:"Close"}], then:[{type:"tap_found"}]}   (tap_found works with text_present too)   or when:[{type:"color_present",color:"@closeX",region:"@topRight",minCount:15}] then:[{type:"tap_found"}]
+  game over:   {name:"game-over", priority:90, when:[{type:"text_present",text:"GAME OVER"}], then:[{type:"wait",ms:1500},{type:"tap",at:"@retry"}]}    or then:[{type:"stop_bot"}] if the user wants to be told
+  tap target:  {name:"hit", when:[{type:"color_present",color:"@target",region:"@playfield",minCount:40}], then:[{type:"tap_found"}], cooldownMs:120}
+  dodge:       {name:"jump", when:[{type:"color_present",color:"@obstacle",region:"@laneAhead",minCount:60}], then:[{type:"swipe",x1:540,y1:1800,x2:540,y2:1200,duration:120}], cooldownMs:500}
+  rhythm:      one rule per lane: when:[{type:"color_present",color:"@note",region:"@hit1",minCount:30}] then:[{type:"tap",at:"@lane1"}] cooldownMs:90, tickMs:60
+  shooter:     {name:"shoot", when:[{type:"color_present",color:"@enemy",region:"@crosshairZone",minCount:25}], then:[{type:"fire_burst",at:"@fire",count:4,intervalMs:80}], cooldownMs:400}
+               {name:"patrol", priority:-1, when:[{type:"every_ms",ms:2500}], then:[{type:"joystick",at:"@stick",direction:"up",duration:1500,release:true}]}
+               {name:"heal", priority:50, when:[{type:"number_below",region:"@hp",value:30}], then:[{type:"tap",at:"@medkit"}], cooldownMs:8000}
+  idle/menu:   {name:"play-again", priority:-5, when:[{type:"text_present",text:"PLAY"}], then:[{type:"tap_found"}], cooldownMs:3000}
+  clicker:     {name:"farm", when:[{type:"always"}], then:[{type:"repeat_tap",at:"@coin",count:10,intervalMs:60}], cooldownMs:0}
+  timeout:     maxRunMs:3600000 (1 h) so the phone does not run all night unless asked.
+Rules of thumb: prefer color_present/pixel_is (≈5 ms) over text_present (≈150 ms; use only for menus/game-over, and set tickMs>=200 if several text rules). Regions small → faster and fewer false positives. cooldownMs ≥ the game's animation time. exclusive:true (default) = one rule per tick; set exclusive:false for rules that must run alongside others (e.g. heal). ALWAYS include a stop/close rule. Test with action=status (fired should grow) — a bot with fired=0 after 20 s has wrong colours/regions: re-check with observe.
 
 ## 7. GAME PLAYBOOK (canvas / OpenGL apps have NO ui tree — vision + precise input only)
 You will play MANY different games. First thing in any game: decide its genre and store it (game_profile genre=shooter|runner|puzzle|rhythm|strategy|rpg|racing|fighting|casual) — then follow that genre's section below. Switching games = switching profiles automatically (everything is keyed by package); never carry @names or assumptions from one game into another.

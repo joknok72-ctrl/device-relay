@@ -89,11 +89,12 @@ app.get('/agent/:token', async (c) => {
         r.fetch(`https://do/notes?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ notes: import('./types').Note[] }>),
         r.fetch(`https://do/macros?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ macros: import('./types').Macro[] }>),
         r.fetch(`https://do/screens?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ screens: import('./types').ScreenLabel[] }>),
-        r.fetch(`https://do/memory?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ groups: { app: string; label?: string; profile?: import('./types').GameProfile }[]; sessions: import('./types').PlaySession[]; currentApp: string }>),
+        r.fetch(`https://do/memory?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ groups: { app: string; label?: string; profile?: import('./types').GameProfile; bots?: import('./types').Bot[] }[]; sessions: import('./types').PlaySession[]; currentApp: string; botStatus?: { running: boolean; name?: string; fired?: number } | null }>),
       ])
       notes = n.notes; macros = m.macros; screens = s.screens
       extras.profiles = mem.groups.map((g) => g.profile).filter((p): p is import('./types').GameProfile => !!p)
       extras.sessions = mem.sessions; extras.currentApp = mem.currentApp
+      extras.bots = mem.groups.flatMap((g) => g.bots ?? []); extras.botStatus = mem.botStatus ?? null
       extras.appLabels = Object.fromEntries(mem.groups.filter((g) => g.label).map((g) => [g.app, g.label as string]))
     } catch { /* ignore */ }
   }
@@ -265,6 +266,27 @@ admin.post('/devices/:deviceId/memory/import', async (c) => {
     for (const s of g.screens ?? []) { const res = await r.fetch(`https://do/screens?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(s) }); if (res.ok) screens++ }
   }
   return c.json({ ok: true, imported: { notes, macros, screens, profiles } })
+})
+/** v2.6 bots: owner controls from the setup page */
+admin.get('/devices/:deviceId/bots', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  return c.json(await (await room(c, deviceId).fetch(`https://do/bots?deviceId=${deviceId}`)).json())
+})
+admin.post('/devices/:deviceId/bots/:botId/run', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  return c.json(await executeTool(c.env, deviceId, 'game_bot', { action: 'run', id: c.req.param('botId') }))
+})
+admin.post('/devices/:deviceId/bots/stop', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  return c.json(await executeTool(c.env, deviceId, 'game_bot', { action: 'stop' }))
+})
+admin.delete('/devices/:deviceId/bots/:botId', async (c) => {
+  const deviceId = c.req.param('deviceId')
+  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
+  return c.json(await (await room(c, deviceId).fetch(`https://do/bots?deviceId=${deviceId}&id=${encodeURIComponent(c.req.param('botId'))}`, { method: 'DELETE' })).json())
 })
 /** Everything the setup page needs in one call */
 admin.get('/overview', async (c) => {
