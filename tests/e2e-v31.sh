@@ -30,7 +30,7 @@ echo "== find_objects match passthrough"
 R=$(curl -s "${A[@]}" -d '{"action":{"type":"find_objects","color":"#ff0000","match":"hue","tolerance":20}}' $U/api/devices/$D/command)
 check fo-ok '"ok":true' "$R"
 check fo-match-logged '"match":"hue"' "$(curl -s "${A[@]}" "$U/api/devices/$D/logs?limit=3")"
-check fo-match-rgb-dropped 'False' "$(curl -s "${A[@]}" -d '{"action":{"type":"find_objects","color":"#ff0000","match":"rgb"}}' $U/api/devices/$D/command >/dev/null; curl -s "${A[@]}" "$U/api/devices/$D/logs?limit=1" | j '"match" in json.dumps(d)')"
+check fo-match-rgb-dropped 'False' "$(curl -s "${A[@]}" -d '{"action":{"type":"find_objects","color":"#00ff00","match":"rgb"}}' $U/api/devices/$D/command >/dev/null; curl -s "${A[@]}" "$U/api/devices/$D/logs?limit=10" | j '"match" in json.dumps([l for l in d if l["action"].get("color")=="#00ff00"])')"
 check fo-tool-match '"ok":true' "$(call '{"name":"find_objects","arguments":{"color":"#ff0000","match":"hue","tolerance":25}}')"
 
 echo "== shooter template v3.1 defaults"
