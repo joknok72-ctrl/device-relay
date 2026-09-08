@@ -53,7 +53,7 @@ check boot-handsfree 'HANDS-FREE controls' "$B"
 check boot-autostart-flag '[autoStart]' "$B"
 check boot-learned 'learned: aim/0/sensitivity=0.73' "$B"
 check boot-volume 'Volume-Up = start' "$B"
-check boot-learned-advice 'copy it into the rule with action=update' "$B"
+check boot-learned-advice 'bakes it into the rule automatically' "$B"
 
 echo "== phone.sh"
 cd /tmp

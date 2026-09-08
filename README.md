@@ -176,6 +176,12 @@
 - **الصانع**: كارت **"🔥 Free Fire — هيدشوت مساعد (جاهز)"** يضبط كل شيء مسبقًا (مساعد + Hue + تثبيت + توقّع حركة + بوابة) — تعلّم لون الراس وزر الضرب ومساحة التصويب وتحفظ. قائمة "طريقة مطابقة اللون" والتحقق من اللون بنفس الوضع.
 - Android 3.1.0.
 
+**🧠 v3.2 — التعلّم يُحفظ تلقائيًا + اقتراح اللون تلقائيًا + رؤية ما يراه البوت**
+- **حساسية التصويب المتعلَّمة تُكتب في القاعدة تلقائيًا**: كان `aim_to_found` يتعلّم `sensitivity` أثناء التشغيل (`status.learned`) وتضيع مع كل تشغيل جديد. الآن الـ relay (Durable Object) عند انتهاء أي تشغيل يكتب القيمة المتعلَّمة في القاعدة نفسها، يزوّد عدّاد `bot.tuned`، ويدفع `bot_sync` للهاتف — كل تشغيل يبدأ من حيث انتهى السابق. `autoApplyLearned:false` يجمّد القاعدة (يبقى `learned` مخزّنًا للمراجعة). `game_bot list` يعرض `tuned/autoStart/assist/template`.
+- **الصانع — زر "✨ اقترح اللون"**: بعد اللقطة، يأخذ `sample_colors` من الشاشة ويجرّب كل لون مرشّح بـ `find_objects` بنفس وضع المطابقة، يقيّمها (عدد أجسام معقول + حجم + تشبّع) ويختار الأنسب — للي مش عارف يلمس اللون بدقة.
+- **الصانع — إطارات الأجسام**: بعد اختيار اللون، الصانع يرسم إطارًا حول كل جسم كشفه الهاتف فعليًا بنفس اللون — تشوف بعينك "البوت شايف إيه" قبل الحفظ؛ لو الإطارات على حاجة غلط غيّر التسامح/الوضع.
+- Android بدون تغيير (3.1.0 — التعلّم كان موجودًا؛ الجديد على الـ relay والصانع).
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -451,7 +457,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v31.sh   # 958 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v32.sh   # 987 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -482,6 +488,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v3.1 — hue colour matching, target lock, fire gate, Free Fire one-tap preset in the builder; 79 tools; 958 e2e checks; Android 3.1.0)
+- **Last Updated**: 2026-09-08 (v3.2 — learned aim sensitivity auto-baked into rules (`tuned`, `autoApplyLearned`), builder auto-suggest colour + object outlines; 79 tools; 987 e2e checks; Android 3.1.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.

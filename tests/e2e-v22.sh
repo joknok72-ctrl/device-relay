@@ -67,7 +67,7 @@ call '{"name":"label_screen","arguments":{"name":"exp-screen"}}' >/dev/null
 EXP=$(mem '?format=export')
 check export-header 'attachment; filename="device-relay-memory-test-phone-' "$(curl -s -D - -o /dev/null "${A[@]}" "$U/api/admin/devices/$D/memory?format=export")"
 check export-body '"exportedAt"' "$EXP"
-check export-version '"version": "3.1.0"' "$EXP"
+check export-version '"version": "3.2.0"' "$EXP"
 memdel 'kind=all' >/dev/null
 check import '"imported":{"notes":1,"macros":2,"screens":1,"profiles":0,"bots":0}' "$(curl -s "${A[@]}" -d "$EXP" $U/api/admin/devices/$D/memory/import)"
 check import-restored '"notes": 1, "macros": 2, "screens": 1' "$(mem '' | j 'json.dumps(d["totals"])')"
