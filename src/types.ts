@@ -57,6 +57,14 @@ export type Action =
   | { type: 'find_colors'; colors: string[]; tolerance?: number; region?: Region }
   | { type: 'stream'; enabled: boolean; fps?: number; maxWidth?: number; quality?: number }
   // v1.9
+  // v2.5 multi-touch
+  | { type: 'finger_down'; finger: number; x: number; y: number; duration?: number }
+  | { type: 'finger_move'; finger: number; x?: number; y?: number; points?: Point[]; duration?: number }
+  | { type: 'finger_up'; finger: number }
+  | { type: 'joystick'; x: number; y: number; angle: number; distance: number; duration: number; finger: number; release: boolean }
+  | { type: 'aim'; x: number; y: number; dx: number; dy: number; duration: number; finger: number; steps: number; release: boolean }
+  | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number }
+  | { type: 'combo'; combo: ComboStep[] }
   // v2.1
   | { type: 'sample_colors'; region?: Region; maxColors?: number; quant?: number; ignoreGrey?: boolean }
   | { type: 'track_object'; color: string; tolerance?: number; region?: Region; minCount?: number; samples?: number; intervalMs?: number; predictMs?: number }
@@ -69,6 +77,8 @@ export interface Point { x: number; y: number }
 export interface SeqPoint extends Point { delayMs?: number; durationMs?: number }
 export interface Region { x: number; y: number; w: number; h: number }
 export interface Note { text: string; ts: number; /** package name of the app open when the note was saved */ app?: string }
+/** v2.5 combo step (executed on the phone) */
+export interface ComboStep { op: 'down' | 'move' | 'up' | 'tap' | 'wait' | 'joystick' | 'aim' | 'fire'; finger?: number; x?: number; y?: number; dx?: number; dy?: number; angle?: number; distance?: number; duration?: number; delayMs?: number; count?: number; intervalMs?: number; holdMs?: number; release?: boolean }
 /** One auto_react lane: colour trigger → tap or swipe. */
 export interface ReactLane { color: string; tolerance?: number; region?: Region; minCount?: number; tapX?: number; tapY?: number; tapOffsetX?: number; tapOffsetY?: number; swipe?: { dx: number; dy: number; durationMs?: number }; cooldownMs?: number; name?: string }
 /** Named screen fingerprint: 112-bit perceptual hash (hex) + a few OCR words, used by identify_screen. */
@@ -82,6 +92,8 @@ export interface GameProfile {
   regions: Record<string, { x: number; y: number; w: number; h: number; note?: string }>
   settings: Record<string, string | number | boolean>
   ts: number
+  /** v2.5 game genre: shooter | runner | puzzle | rhythm | strategy | rpg | racing | casual | other — selects the playbook */
+  genre?: string
   /** v2.4 progress tracking filled by session_report */
   bestScore?: number
   lastReport?: SessionReport
@@ -109,6 +121,9 @@ export function actionTimeoutMs(a: Action): number {
     case 'read_text': return 25_000
     case 'auto_react': return base + (a.timeoutMs ?? 10_000)
     case 'track_object': return base + (a.samples ?? 5) * (a.intervalMs ?? 120)
+    case 'joystick': return base + a.duration
+    case 'fire_burst': return base + a.holdMs + a.count * a.intervalMs
+    case 'combo': return base + a.combo.reduce((t, s) => t + (s.delayMs ?? 0) + (s.duration ?? 0) + (s.holdMs ?? 0) + (s.count ?? 0) * (s.intervalMs ?? 90), 0)
     default: return base
   }
 }
@@ -122,6 +137,7 @@ export const ACTION_TYPES = [
   'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
   'read_text', 'find_colors', 'stream',
   'find_objects', 'auto_react', 'sample_colors', 'track_object',
+  'finger_down', 'finger_move', 'finger_up', 'joystick', 'aim', 'fire_burst', 'combo',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */

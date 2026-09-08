@@ -297,10 +297,11 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (request.method === 'GET') return Response.json({ profile: app ? this.profiles[app] ?? null : null, apps: Object.keys(this.profiles), currentApp: this.currentApp })
       if (request.method === 'POST') {
         if (!app) return Response.json({ ok: false, error: 'app required' }, { status: 400 })
-        const patch = (await request.json()) as { label?: string; set?: Partial<Pick<GameProfile, 'controls' | 'colors' | 'regions' | 'settings'>>; unset?: { controls?: string[]; colors?: string[]; regions?: string[]; settings?: string[] }; replace?: GameProfile }
+        const patch = (await request.json()) as { label?: string; genre?: string; set?: Partial<Pick<GameProfile, 'controls' | 'colors' | 'regions' | 'settings'>>; unset?: { controls?: string[]; colors?: string[]; regions?: string[]; settings?: string[] }; replace?: GameProfile }
         let p: GameProfile = this.profiles[app] ?? { app, controls: {}, colors: {}, regions: {}, settings: {}, ts: Date.now() }
         if (patch.replace) p = { ...patch.replace, app, ts: Date.now() }
         if (patch.label) p.label = patch.label.slice(0, 64)
+        if (patch.genre) p.genre = patch.genre.toLowerCase().slice(0, 20)
         for (const k of ['controls', 'colors', 'regions', 'settings'] as const) {
           const s = patch.set?.[k] as Record<string, unknown> | undefined
           if (s) for (const [name, v] of Object.entries(s)) { const key = name.toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_-]/g, '-').slice(0, 32); if (key) (p[k] as Record<string, unknown>)[key] = v }

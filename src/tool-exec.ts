@@ -71,7 +71,7 @@ export async function deviceInfo(env: Bindings, deviceId: string): Promise<Devic
 }
 
 // ---------------------------------------------------------------- v2.3 @name resolution against the game profile
-interface ProfileRec { app: string; label?: string; controls: Record<string, { x: number; y: number; note?: string; reactMs?: number }>; colors: Record<string, { hex: string; tolerance?: number }>; regions: Record<string, { x: number; y: number; w: number; h: number }>; settings: Record<string, unknown>; ts: number; bestScore?: number; lastReport?: unknown; reports?: number }
+interface ProfileRec { app: string; label?: string; controls: Record<string, { x: number; y: number; note?: string; reactMs?: number }>; colors: Record<string, { hex: string; tolerance?: number }>; regions: Record<string, { x: number; y: number; w: number; h: number }>; settings: Record<string, unknown>; ts: number; genre?: string; bestScore?: number; lastReport?: unknown; reports?: number }
 async function loadProfile(env: Bindings, deviceId: string, app?: string): Promise<{ app: string; profile: ProfileRec | null }> {
   let pkg = app?.trim() ?? ''
   if (!pkg || pkg === 'current') {
@@ -189,7 +189,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
   if (mapped.special === 'session_report') return sessionReport(env, deviceId, args)
   if (mapped.special === 'game_profile') {
-    if (opts.readOnly && (args.set || args.unset || args.delete || args.label)) return { ok: false, error: 'token is read-only: game_profile can only be read' }
+    if (opts.readOnly && (args.set || args.unset || args.delete || args.label || args.genre)) return { ok: false, error: 'token is read-only: game_profile can only be read' }
     return gameProfile(env, deviceId, args)
   }
   if (mapped.special === 'read_number') return readNumber(env, deviceId, args, opts)
@@ -259,6 +259,10 @@ function emitOverlay(env: Bindings, deviceId: string, action: Record<string, unk
     case 'find_objects': { const objs = (d.objects as { bounds: object; cx: number; cy: number; i: number }[] | undefined) ?? []; if (objs.length) overlay(env, deviceId, { type: 'detect', color: action.color, boxes: objs.map((o) => ({ ...o.bounds, cx: o.cx, cy: o.cy, label: `#${o.i}` })) }); return }
     case 'find_image': { const m = (d.matches as { x: number; y: number; w: number; h: number; cx: number; cy: number }[] | undefined) ?? []; if (m.length) overlay(env, deviceId, { type: 'detect', boxes: m }); return }
     case 'read_text': { const lines = (d.lines as { x?: number; y?: number; w?: number; h?: number; cx: number; cy: number; text: string }[] | undefined) ?? []; if (lines.length) overlay(env, deviceId, { type: 'ocr', boxes: lines.slice(0, 40).map((l) => ({ x: l.x, y: l.y, w: l.w, h: l.h, cx: l.cx, cy: l.cy, label: l.text })) }); return }
+    case 'joystick': return overlay(env, deviceId, { type: 'swipe', from: { x: action.x, y: action.y }, to: { x: d.tipX ?? action.x, y: d.tipY ?? action.y } })
+    case 'aim': return overlay(env, deviceId, { type: 'swipe', from: { x: action.x, y: action.y }, to: { x: Number(action.x) + Number(action.dx), y: Number(action.y) + Number(action.dy) } })
+    case 'fire_burst': return overlay(env, deviceId, { type: 'tap', points: [{ x: action.x, y: action.y }], repeat: action.count })
+    case 'finger_down': return overlay(env, deviceId, { type: 'tap', points: [{ x: action.x, y: action.y }] })
     case 'auto_react': { const taps = (d.taps as { x: number; y: number }[] | undefined) ?? []; if (taps.length) overlay(env, deviceId, { type: 'tap', points: taps.map((t) => ({ x: t.x, y: t.y })), reflex: true }); return }
     case 'track_object': { const pts = (d.samples as { x: number; y: number }[] | undefined) ?? []; const p = d.predicted as { x: number; y: number } | undefined; if (pts.length) overlay(env, deviceId, { type: 'path', points: pts.concat(p ? [p] : []), color: action.color }); return }
     case 'sample_colors': { const cs = (d.colors as { hex: string; cx: number; cy: number }[] | undefined) ?? []; if (cs.length) overlay(env, deviceId, { type: 'detect', boxes: cs.map((c) => ({ cx: c.cx, cy: c.cy, color: c.hex, label: c.hex })) }); return }
@@ -645,13 +649,13 @@ async function gameProfile(env: Bindings, deviceId: string, args: Record<string,
   if (args.delete === true) { const res = (await (await r.fetch(q, { method: 'DELETE' })).json()) as ToolResult; return { ...res, app } }
   const hasSet = args.set && typeof args.set === 'object', hasUnset = args.unset && typeof args.unset === 'object'
   let prof = profile
-  if (hasSet || hasUnset || typeof args.label === 'string') {
+  if (hasSet || hasUnset || typeof args.label === 'string' || typeof args.genre === 'string') {
     // validate shapes
     const set = (args.set ?? {}) as Record<string, Record<string, unknown>>
     for (const [name, c] of Object.entries(set.controls ?? {})) { const o = c as { x?: unknown; y?: unknown }; if (!Number.isFinite(Number(o?.x)) || !Number.isFinite(Number(o?.y))) return { ok: false, error: `controls.${name} needs numeric x,y` } }
     for (const [name, c] of Object.entries(set.colors ?? {})) { const o = c as { hex?: unknown }; if (typeof o?.hex !== 'string' || !/^#?[0-9a-f]{6}$/i.test(o.hex)) return { ok: false, error: `colors.${name} needs hex "#rrggbb"` }; (o as { hex: string }).hex = '#' + o.hex.replace('#', '').toLowerCase() }
     for (const [name, g] of Object.entries(set.regions ?? {})) { const o = g as { x?: unknown; y?: unknown; w?: unknown; h?: unknown }; if (![o?.x, o?.y, o?.w, o?.h].every((n) => Number.isFinite(Number(n)))) return { ok: false, error: `regions.${name} needs numeric x,y,w,h` } }
-    const res = (await (await r.fetch(q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: args.label, set: args.set, unset: args.unset }) })).json()) as { ok: boolean; error?: string; profile?: ProfileRec }
+    const res = (await (await r.fetch(q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: args.label, genre: args.genre, set: args.set, unset: args.unset }) })).json()) as { ok: boolean; error?: string; profile?: ProfileRec }
     if (!res.ok) return { ok: false, error: res.error }
     prof = res.profile ?? null
   }

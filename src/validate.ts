@@ -1,4 +1,4 @@
-import type { Action, Point, ReactLane, Region, SeqPoint } from './types'
+import type { Action, ComboStep, Point, ReactLane, Region, SeqPoint } from './types'
 
 const HEX = /^#?[0-9a-fA-F]{6}$/
 const normHex = (c: string) => '#' + c.trim().replace('#', '').toLowerCase()
@@ -198,6 +198,53 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       const action: Action = { type: 'find_colors', colors, tolerance: isNum(a.tolerance) ? clamp(Math.round(a.tolerance), 0, 128) : 24 }
       const region = parseRegion(a.region); if (region) action.region = region
       return { action }
+    }
+    // ---- v2.5 multi-touch
+    case 'finger_down': {
+      if (!isNum(a.x) || !isNum(a.y)) return { error: 'finger_down requires x, y' }
+      return { action: { type: 'finger_down', finger: isNum(a.finger) ? clamp(Math.round(a.finger), 0, 3) : 0, x: Math.round(a.x), y: Math.round(a.y), duration: isNum(a.duration) ? clamp(Math.round(a.duration), 20, 1000) : 60 } }
+    }
+    case 'finger_move': {
+      const action: Action = { type: 'finger_move', finger: isNum(a.finger) ? clamp(Math.round(a.finger), 0, 3) : 0, duration: isNum(a.duration) ? clamp(Math.round(a.duration), 20, 10_000) : 150 }
+      if (Array.isArray(a.points) && a.points.length) { const pts = parsePoints(a.points, 20); if (!pts) return { error: 'bad points' }; action.points = pts }
+      else if (isNum(a.x) && isNum(a.y)) { action.x = Math.round(a.x); action.y = Math.round(a.y) }
+      else return { error: 'finger_move requires x,y or points' }
+      return { action }
+    }
+    case 'finger_up': return { action: { type: 'finger_up', finger: isNum(a.finger) ? clamp(Math.round(a.finger), -1, 3) : 0 } }
+    case 'joystick': {
+      if (!isNum(a.x) || !isNum(a.y)) return { error: 'joystick requires x, y (stick centre)' }
+      let angle = isNum(a.angle) ? a.angle : undefined
+      if (angle === undefined && typeof a.direction === 'string') { const m: Record<string, number> = { right: 0, 'down-right': 45, down: 90, 'down-left': 135, left: 180, 'up-left': 225, up: 270, 'up-right': 315 }; angle = m[a.direction.toLowerCase()] }
+      if (angle === undefined) return { error: 'joystick requires angle (deg, 0=right 90=down 270=up) or direction (up|down|left|right|up-left|...)' }
+      return { action: { type: 'joystick', x: Math.round(a.x), y: Math.round(a.y), angle: ((angle % 360) + 360) % 360, distance: isNum(a.distance) ? clamp(Math.round(a.distance), 10, 800) : 150, duration: isNum(a.duration) ? clamp(Math.round(a.duration), 50, 40_000) : 500, finger: isNum(a.finger) ? clamp(Math.round(a.finger), 0, 3) : 0, release: a.release !== false } }
+    }
+    case 'aim': {
+      if (!isNum(a.x) || !isNum(a.y)) return { error: 'aim requires x, y (start point on the look/camera area)' }
+      const dx = isNum(a.dx) ? Math.round(a.dx) : 0, dy = isNum(a.dy) ? Math.round(a.dy) : 0
+      if (!dx && !dy) return { error: 'aim requires dx and/or dy (pixels to drag the camera)' }
+      return { action: { type: 'aim', x: Math.round(a.x), y: Math.round(a.y), dx: clamp(dx, -3000, 3000), dy: clamp(dy, -3000, 3000), duration: isNum(a.duration) ? clamp(Math.round(a.duration), 20, 3000) : 120, finger: isNum(a.finger) ? clamp(Math.round(a.finger), 0, 3) : 1, steps: isNum(a.steps) ? clamp(Math.round(a.steps), 1, 20) : 4, release: a.release !== false } }
+    }
+    case 'fire_burst': {
+      if (!isNum(a.x) || !isNum(a.y)) return { error: 'fire_burst requires x, y' }
+      return { action: { type: 'fire_burst', x: Math.round(a.x), y: Math.round(a.y), count: isNum(a.count) ? clamp(Math.round(a.count), 1, 200) : 5, intervalMs: isNum(a.intervalMs) ? clamp(Math.round(a.intervalMs), 30, 2000) : 90, holdMs: isNum(a.holdMs) ? clamp(Math.round(a.holdMs), 0, 30_000) : 0 } }
+    }
+    case 'combo': {
+      const raw = a.combo ?? a.steps
+      if (!Array.isArray(raw) || raw.length === 0 || raw.length > 40) return { error: 'combo requires steps[1..40] of {op,...}' }
+      const ops = new Set(['down', 'move', 'up', 'tap', 'wait', 'joystick', 'aim', 'fire'])
+      const combo: ComboStep[] = []
+      for (let i = 0; i < raw.length; i++) {
+        const s = raw[i] as Record<string, unknown>
+        if (!s || typeof s !== 'object' || typeof s.op !== 'string' || !ops.has(s.op)) return { error: `combo[${i}].op must be one of ${[...ops].join('|')}` }
+        const st: ComboStep = { op: s.op as ComboStep['op'] }
+        for (const k of ['finger', 'x', 'y', 'dx', 'dy', 'angle', 'distance', 'duration', 'delayMs', 'count', 'intervalMs', 'holdMs'] as const) if (isNum(s[k])) (st as unknown as Record<string, unknown>)[k] = Math.round(s[k] as number)
+        if (typeof s.release === 'boolean') st.release = s.release
+        if (st.op === 'joystick' && st.angle === undefined && typeof s.direction === 'string') { const m: Record<string, number> = { right: 0, 'down-right': 45, down: 90, 'down-left': 135, left: 180, 'up-left': 225, up: 270, 'up-right': 315 }; st.angle = m[s.direction.toLowerCase()] }
+        if (['down', 'tap', 'joystick', 'aim', 'fire'].includes(st.op) && (st.x === undefined || st.y === undefined)) return { error: `combo[${i}] (${st.op}) requires x, y` }
+        combo.push(st)
+      }
+      return { action: { type: 'combo', combo } }
     }
     case 'sample_colors': {
       const action: Action = { type: 'sample_colors', maxColors: isNum(a.maxColors) ? clamp(Math.round(a.maxColors), 1, 24) : 8, quant: isNum(a.quant) ? clamp(Math.round(a.quant), 8, 64) : 32, ignoreGrey: a.ignoreGrey !== false }

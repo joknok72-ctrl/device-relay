@@ -548,6 +548,88 @@ export const TOOLS: ToolDef[] = [
       required: ['enabled'],
     },
   },
+  // ---------------------------------------------------------------- v2.5 multi-touch engine (shooters / action games)
+  {
+    name: 'joystick',
+    description:
+      'Virtual joystick for movement (Free Fire, PUBG, Brawl Stars, racing...): presses the stick centre (x,y), pushes it toward angle/direction by distance px, HOLDS for duration ms, then releases (release=false keeps the finger down so the next joystick call just changes direction without stopping). ' +
+      'angle: 0=right 90=down 180=left 270=up (or direction:"up"|"down-left"...). Uses finger slot 0 by default, so aim/fire_burst (other fingers) can run WHILE moving. Save the stick centre as a control (@stick) and pass at:"@stick".',
+    parameters: {
+      type: 'object',
+      properties: {
+        x: coord('Stick centre x'), y: coord('Stick centre y'), at: { type: 'string', description: '"@stick" from game_profile instead of x/y' },
+        angle: { type: 'number', description: 'Degrees 0-359 (0=right, 90=down, 270=up)' },
+        direction: { type: 'string', description: 'up | down | left | right | up-left | up-right | down-left | down-right (alternative to angle)' },
+        distance: { type: 'integer', description: 'Push distance px 10-800 (default 150; bigger = run)', minimum: 10, maximum: 800, default: 150 },
+        duration: { type: 'integer', description: 'How long to hold the direction 50-40000 ms (default 500)', minimum: 50, maximum: 40000, default: 500 },
+        finger: { type: 'integer', description: 'Finger slot 0-3 (default 0)', minimum: 0, maximum: 3, default: 0 },
+        release: { type: 'boolean', description: 'Lift the finger at the end (default true). false = keep moving until the next joystick/finger_up', default: true },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'aim',
+    description:
+      'Camera / aim drag for shooters and 3D games: drags finger 1 from (x,y) on the look area by (dx,dy) px over duration ms with smooth intermediate points. Positive dx turns right, positive dy looks down. ' +
+      'Runs on its own finger so a held joystick keeps moving. Typical: small dx (40-120) to fine-aim at an enemy found with find_objects; large dx (400+) to turn around. Save the look area centre as @look.',
+    parameters: {
+      type: 'object',
+      properties: {
+        x: coord('Start x on the look area (usually right half of screen)'), y: coord('Start y'), at: { type: 'string', description: '"@look" control instead of x/y' },
+        dx: { type: 'integer', description: 'Horizontal drag px (-3000..3000)' }, dy: { type: 'integer', description: 'Vertical drag px' },
+        duration: { type: 'integer', description: '20-3000 ms (default 120)', minimum: 20, maximum: 3000, default: 120 },
+        steps: { type: 'integer', description: 'Intermediate points 1-20 (default 4)', minimum: 1, maximum: 20, default: 4 },
+        finger: { type: 'integer', description: 'Finger slot (default 1)', minimum: 0, maximum: 3, default: 1 },
+        release: { type: 'boolean', description: 'Lift at the end (default true)', default: true },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'fire_burst',
+    description:
+      'Fire / attack button: taps (x,y) count times every intervalMs (burst), or holds it for holdMs (auto-fire / charge). Cadence is kept on the phone. Works while joystick/aim fingers are held. Save the button as @fire and pass at:"@fire".',
+    parameters: {
+      type: 'object',
+      properties: {
+        x: coord('Fire button x'), y: coord('Fire button y'), at: { type: 'string', description: '"@fire" control' },
+        count: { type: 'integer', description: 'Shots 1-200 (default 5)', minimum: 1, maximum: 200, default: 5 },
+        intervalMs: { type: 'integer', description: '30-2000 (default 90)', minimum: 30, maximum: 2000, default: 90 },
+        holdMs: { type: 'integer', description: '>0 = hold the button this long instead of tapping (auto-fire / charged shot)', minimum: 0, maximum: 30000, default: 0 },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'finger',
+    description:
+      'Low-level persistent finger control (up to 4 simultaneous fingers, slots 0-3): op=down at (x,y) keeps the finger pressed until op=up; op=move drags it to (x,y) or along points while staying down; op=up lifts it (finger=-1 lifts all). ' +
+      'Use when joystick/aim/fire_burst are not enough: hold a skill button while steering, two-finger pinch-zoom on a map, drag-and-hold mechanics. ALWAYS lift fingers when done (finger op=up finger=-1).',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', description: 'down | move | up' },
+        finger: { type: 'integer', description: 'Slot 0-3 (default 0); -1 with op=up lifts all', minimum: -1, maximum: 3, default: 0 },
+        x: coord('x'), y: coord('y'), at: { type: 'string', description: '"@control" instead of x/y' },
+        points: { type: 'array', description: 'For move: path points [{x,y}...]', items: { type: 'object' } },
+        duration: { type: 'integer', description: 'ms for the move / initial press', minimum: 20, maximum: 10000 },
+      },
+      required: ['op'],
+    },
+  },
+  {
+    name: 'combo',
+    description:
+      'A timed multi-touch SCRIPT executed entirely on the phone (no network jitter between steps): steps[] of {op: down|move|up|tap|wait|joystick|aim|fire, finger?, x?, y?, at?, dx?, dy?, angle?|direction?, distance?, duration?, delayMs?, count?, intervalMs?, holdMs?, release?}. ' +
+      'Examples \u2014 shooter peek-and-shoot: [{op:"joystick",at:"@stick",direction:"right",duration:300,release:false},{op:"aim",at:"@look",dx:60},{op:"fire",at:"@fire",count:6},{op:"up",finger:-1}]. Fighting game special move: [{op:"tap",at:"@down"},{op:"tap",at:"@forward",delayMs:60},{op:"tap",at:"@punch",delayMs:60}]. ' +
+      'Skill-while-moving: [{op:"down",finger:2,at:"@skill"},{op:"joystick",at:"@stick",direction:"up",duration:800},{op:"up",finger:2}]. Any failure lifts all fingers. Save good combos as macros.',
+    parameters: {
+      type: 'object',
+      properties: { steps: { type: 'array', description: '1-40 steps', items: { type: 'object' } } },
+      required: ['steps'],
+    },
+  },
   // ---------------------------------------------------------------- v2.4 handover + progress
   {
     name: 'session_report',
@@ -588,6 +670,7 @@ export const TOOLS: ToolDef[] = [
         unset: { type: 'object', description: '{controls?:[names], colors?:[...], regions?:[...], settings?:[...]} to remove' },
         delete: { type: 'boolean', description: 'true = delete the whole profile for this app' },
         history: { type: 'boolean', description: 'true = also return recent play sessions for this app (when, how long, how many commands/failures)' },
+        genre: { type: 'string', description: 'v2.5: shooter | runner | puzzle | rhythm | strategy | rpg | racing | fighting | casual | other — stored on the profile; the bootstrap shows the matching playbook' },
         verify: { type: 'boolean', description: 'true = check the profile against the CURRENT screen: is each colour still present (count), does each region still contain text? Returns stale[] so you know what to re-learn after a game update' },
       },
       required: [],
@@ -892,6 +975,17 @@ export const TOOLS: ToolDef[] = [
 export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report'; error?: string } {
   switch (name) {
     case 'session_report': return { special: 'session_report' }
+    case 'joystick': return { action: { type: 'joystick', x: args.x, y: args.y, angle: args.angle, direction: args.direction, distance: args.distance, duration: args.duration, finger: args.finger, release: args.release } }
+    case 'aim': return { action: { type: 'aim', x: args.x, y: args.y, dx: args.dx, dy: args.dy, duration: args.duration, steps: args.steps, finger: args.finger, release: args.release } }
+    case 'fire_burst': return { action: { type: 'fire_burst', x: args.x, y: args.y, count: args.count, intervalMs: args.intervalMs, holdMs: args.holdMs } }
+    case 'finger': {
+      const op = String(args.op ?? '').toLowerCase()
+      if (op === 'down') return { action: { type: 'finger_down', finger: args.finger, x: args.x, y: args.y, duration: args.duration } }
+      if (op === 'move') return { action: { type: 'finger_move', finger: args.finger, x: args.x, y: args.y, points: args.points, duration: args.duration } }
+      if (op === 'up') return { action: { type: 'finger_up', finger: args.finger } }
+      return { error: 'finger op must be down|move|up' }
+    }
+    case 'combo': return { action: { type: 'combo', combo: args.steps ?? args.combo } }
     case 'game_profile': return { special: 'game_profile' }
     case 'sample_colors': return { action: { type: 'sample_colors', region: args.region, maxColors: args.maxColors, quant: args.quant, ignoreGrey: args.ignoreGrey } }
     case 'track_object': return { action: { type: 'track_object', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, samples: args.samples, intervalMs: args.intervalMs, predictMs: args.predictMs } }
@@ -1053,7 +1147,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '2.4.0',
+      version: '2.5.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
