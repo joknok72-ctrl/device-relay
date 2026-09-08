@@ -627,7 +627,7 @@ export class DeviceRoom extends DurableObject<Bindings> {
         const b = msg.botId ? this.bots.find((x) => x.id === msg.botId) : undefined
         if (b) {
           if (msg.running && (!b.lastRun || b.lastRun.end !== undefined || b.lastRun.start !== msg.startedAt)) { b.runs = (b.runs ?? 0) + 1; b.lastRun = { start: msg.startedAt ?? Date.now(), ticks: msg.ticks ?? 0, fired: msg.fired ?? 0 } }
-          else if (b.lastRun) { b.lastRun.ticks = msg.ticks ?? b.lastRun.ticks; b.lastRun.fired = msg.fired ?? b.lastRun.fired; if (!msg.running) { b.lastRun.end = Date.now(); b.lastRun.stoppedBy = msg.stoppedBy } }
+          else if (b.lastRun) { b.lastRun.ticks = msg.ticks ?? b.lastRun.ticks; b.lastRun.fired = msg.fired ?? b.lastRun.fired; if (msg.ruleHits) b.lastRun.ruleHits = msg.ruleHits; if (!msg.running) { b.lastRun.end = Date.now(); b.lastRun.stoppedBy = msg.stoppedBy } }
           this.ctx.waitUntil(this.ctx.storage.put('bots', this.bots))
         }
         this.broadcastViewers({ ...msg, kind: 'bot_status' })
