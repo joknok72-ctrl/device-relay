@@ -80,6 +80,7 @@ curl -sS "$RELAY_URL/phone.sh" -o phone.sh && chmod +x phone.sh
 ./phone.sh label "main-menu" | which | screens     # v1.9 screen memory: label current screen / identify / list
 ./phone.sh rec start <name> | rec stop | rec status | rec cancel   # v2.0 record_macro: your next input calls become a replayable macro
 ./phone.sh react2 '<json auto_react args with lanes/stopColor>'    # v2.0 multi-lane reflex loop
+./phone.sh memory | memory wipe <package|all> | memory export > backup.json   # v2.2 per-game AI memory
 ./phone.sh palette [x,y,w,h] | track '#rrggbb' [x,y,w,h] | num [x,y,w,h] [label] | watchnum <change|increase|decrease|above|below> [value] [x,y,w,h] | calib X Y   # v2.1
 ./phone.sh call <tool> '<json args>'   # any tool below
 
@@ -102,6 +103,12 @@ ${macrosBlock}
 
 ## 5d. Labelled screens on this device (label_screen / identify_screen — observe returns screenName)
 ${screensBlock}
+
+## 5e. Memory hygiene
+Everything above (notes, macros, screens) is grouped per app package. If the user says a game was UPDATED / looks different / your notes are wrong:
+  recall forget="app" [app=<package>]   → wipe that game's notes (macros/screens: list_macros delete=..., identify_screen delete=...)
+  ./phone.sh memory                     → see everything grouped per game  ·  ./phone.sh memory wipe <package>  → wipe one game
+The human can also review/delete/export all of it visually in the owner panel (/setup, section "ذاكرة الـ AI"). Never keep relying on notes that contradict what you observe — delete them and re-learn.
 
 ## 6. Operating rules
 0. START of every session: recall (notes for this app are in 5b) + history 10 (what the last session did) + look. Then act.

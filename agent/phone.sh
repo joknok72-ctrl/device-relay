@@ -25,6 +25,7 @@
 #   ./phone.sh track '#rrggbb' [x,y,w,h] [samples]      # v2.1 track_object: velocity + predicted position
 #   ./phone.sh num [x,y,w,h] [label] | watchnum <change|increase|decrease|above|below|equals> [value] [x,y,w,h] [ms]   # v2.1 numbers
 #   ./phone.sh calib X Y                                # v2.1 calibrate: does this control react? how fast?
+#   ./phone.sh memory | memory wipe <package|all> | memory export   # v2.2 what the AI remembers, grouped per game (wipe needs admin token)
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
 #   ./phone.sh type "hello" [submit]
@@ -201,6 +202,21 @@ if sys.argv[2]: a["value"]=float(sys.argv[2])
 if sys.argv[3]:
   x,y,w,h=map(int,sys.argv[3].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
 print(json.dumps(a))' "${1:-change}" "${2:-}" "${3:-}" "${4:-10000}")" | pretty ;;
+  memory)  d=$(dev); sub="${1:-show}"; case "$sub" in
+             show) curl -s "${AUTH[@]}" "$RELAY_URL/api/devices/$d/memory" | python3 -c '
+import json,sys,time; m=json.load(sys.stdin); t=m.get("totals",{})
+print("totals: %d notes, %d macros, %d screens, %d apps%s" % (t.get("notes",0), t.get("macros",0), t.get("screens",0), t.get("apps",0), "  [RECORDING]" if t.get("recording") else ""))
+for g in m.get("groups",[]):
+    name = g.get("app") or "(general)"; lab = g.get("label")
+    print("\n== %s%s" % (name, ("  — "+lab) if lab else ""))
+    for n in g["notes"]: print("  note[%d] %s" % (n["index"], n["text"]))
+    for x in g["macros"]: print("  macro %-24s %d steps, ran %dx  %s" % (x["name"], len(x["steps"]), x.get("runs",0), x.get("description") or ""))
+    for s in g["screens"]: print("  screen %-22s %s" % (s["name"], " ".join(s.get("words",[])[:4])))' ;;
+             wipe) tgt="${2:?package or all}"; if [[ "$tgt" == all ]]; then q="kind=all"; else q="kind=all&app=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$tgt")"; fi
+                   curl -s -X DELETE "${AUTH[@]}" "$RELAY_URL/api/admin/devices/$d/memory?$q" | pretty ;;
+             export) curl -s "${AUTH[@]}" "$RELAY_URL/api/admin/devices/$d/memory?format=export" ;;
+             *) echo "memory: show | wipe <package|all> | export" >&2; exit 1 ;;
+           esac ;;
   calib)   call calibrate "{\"x\":$1,\"y\":$2}" | pretty ;;
   unlabel) call identify_screen "{\"delete\":\"${1:-*}\"}" | pretty ;;
   history) call recent_actions "{\"limit\":${1:-20}}" | python3 -c '
@@ -242,5 +258,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,46p' "$0" ;;
+  *) sed -n '2,47p' "$0" ;;
 esac
