@@ -111,7 +111,7 @@ ws.onmessage = (ev) => {
         ws.send(JSON.stringify({ kind: 'bot_status', running: true, botId: b.id, name: b.name, startedAt: botRunning.startedAt, ticks: 0, fired: 0, ts: Date.now() })) }
     }
     if (a.type === 'bot_stop') { const was = botRunning; botRunning = null; res.data = { stopped: !!was, botId: was?.botId ?? null }
-      if (was) ws.send(JSON.stringify({ kind: 'bot_status', running: false, botId: was.botId, name: was.name, startedAt: was.startedAt, ticks: 12, fired: 3, stoppedBy: 'user', ruleHits: { [ (was.rules && was.rules[0] && was.rules[0].name) || 'rule' ]: 3 }, avgTickMs: 41, ts: Date.now() })) }
+      if (was) ws.send(JSON.stringify({ kind: 'bot_status', running: false, botId: was.botId, name: was.name, startedAt: was.startedAt, ticks: 12, fired: 3, stoppedBy: 'user', ruleHits: { [ (was.rules && was.rules[0] && was.rules[0].name) || 'rule' ]: 3 }, avgTickMs: 41, learned: (was.rules || []).some(r => (r.then || []).some(a => a.type === 'aim_to_found')) ? { [((was.rules[0] || {}).name || 'rule') + '/0/sensitivity']: 0.73 } : undefined, startedBy: 'relay', ts: Date.now() })) }
     if (a.type === 'bot_status') res.data = botRunning ? { running: true, botId: botRunning.botId, name: botRunning.name, startedAt: botRunning.startedAt, ticks: 12, fired: 3, ruleHits: { [(botRunning.rules && botRunning.rules[0] && botRunning.rules[0].name) || 'rule']: 3 }, avgTickMs: 41 } : { running: false, bots: botStore.length }
     ws.send(JSON.stringify(res))
   }, delay)

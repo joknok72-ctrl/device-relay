@@ -6,7 +6,7 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; bots?: { id: string; app: string; name: string; description?: string; rules: unknown[]; runs?: number; lastRun?: { start: number; end?: number; fired: number; stoppedBy?: string } }[]; botStatus?: { running: boolean; name?: string; fired?: number } | null }
+export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; bots?: { id: string; app: string; name: string; description?: string; rules: unknown[]; runs?: number; lastRun?: { start: number; end?: number; fired: number; stoppedBy?: string }; autoStart?: boolean; template?: string; learned?: Record<string, number> }[]; botStatus?: { running: boolean; name?: string; fired?: number } | null }
 
 export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = [], screens: ScreenLabel[] = [], extras: BootstrapExtras = {}): string {
   const profiles = extras.profiles ?? []
@@ -33,7 +33,7 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
     : sessions.slice(0, 8).map((s) => `  ${new Date(s.start).toISOString().slice(0, 16).replace('T', ' ')}  ${Math.max(1, Math.round((s.end - s.start) / 60000))}min  ${s.label ?? s.app}  ${s.commands} cmds${s.failed ? ` (${s.failed} failed)` : ''}${s.report ? `  → ${s.report.outcome ?? 'report'}${s.report.score !== undefined ? ` ${s.report.score}` : ''}: ${s.report.summary.slice(0, 80)}` : '  (no report)'}`).join('\n')
   const bots = extras.bots ?? []
   const botsFor = (app: string) => bots.filter((b) => b.app === app)
-  const fmtBots = (list: typeof bots) => list.map((b) => `  🤖 ${b.name}  (${b.app})  ${b.rules.length} rules, ran ${b.runs ?? 0}x${b.lastRun ? `, last: ${b.lastRun.fired} fired${b.lastRun.stoppedBy ? `, stopped by ${b.lastRun.stoppedBy}` : ''}` : ''}${b.description ? `  — ${b.description}` : ''}`).join('\n')
+  const fmtBots = (list: typeof bots) => list.map((b) => `  🤖 ${b.name}  (${b.app})  ${b.rules.length} rules, ran ${b.runs ?? 0}x${b.lastRun ? `, last: ${b.lastRun.fired} fired${b.lastRun.stoppedBy ? `, stopped by ${b.lastRun.stoppedBy}` : ''}` : ''}${b.autoStart ? '  [autoStart]' : ''}${b.template ? `  [template:${b.template}]` : ''}${b.learned && Object.keys(b.learned).length ? `  learned: ${Object.entries(b.learned).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}${b.description ? `  — ${b.description}` : ''}`).join('\n')
   const botsBlock = bots.length ? fmtBots(bots) : '  (no bots yet — see section 8; the user wants bots they can start from the notification)'
   const botLive = extras.botStatus?.running ? `⚠ A BOT IS RUNNING RIGHT NOW on the phone: ${extras.botStatus.name} (${extras.botStatus.fired ?? 0} fired). Do not send input while it runs unless asked; game_bot action=stop to take over.` : ''
   const cur = profiles.find((p) => p.app === currentApp)
@@ -185,7 +185,7 @@ The human can also review/delete/export all of it visually in the owner panel (/
 11. Read section 5b first; after finishing, "remember" anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
 
 ## 8. BOT BUILDER (game_bot) — the user's favourite feature: a bot that plays WITHOUT you, started from the phone notification, costs zero tokens
-Why: the user wants to press ▶ in the Device Relay notification and relax. Your job in a session is often NOT to play — it is to BUILD, TEST and TUNE a bot, then hand it over. The bot must play BETTER than a human: it reacts in ~70 ms, never blinks, never tires.
+Why: the user wants to press ▶ and relax. HANDS-FREE controls (app v2.8+): a floating bubble over the game (tap = start/stop, drag to move, long-press = hide), double-press Volume-Up = start / Volume-Down = stop, the notification ▶/↻/■, and autoStart:true on the bot = it starts by itself ~2 s after the game opens (the user only opens the game). Offer autoStart when the user says they want zero effort. Your job in a session is often NOT to play — it is to BUILD, TEST and TUNE a bot, then hand it over. The bot must play BETTER than a human: it reacts in ~70 ms, never blinks, never tires.
 The bot is a list of rules the PHONE evaluates every tickMs on the live frame: WHEN [colour/object/pixel/text/number conditions] THEN [taps/swipes/joystick/aim/fire/combo]. Everything is by pixels/colours, so it is fast and needs no AI.
 
 FASTEST PATH — templates (one call, tuned rules, safety included). Use them FIRST, hand-write rules only for unusual games:
@@ -211,7 +211,7 @@ Procedure (30-60 tool calls, then the user is free):
   1. observe grid:100 + sample_colors → understand the screen. game_profile genre=... set:{controls,colors,regions} (the bot rules will reference these @names). For shooters ALWAYS set @fire, @look (empty aim area, right half), @stick, and @enemy.
   2. Find the TRIGGERS and VERIFY each colour with find_objects on 2-3 different moments (with and without the thing on screen).
   3. game_bot action=template … (or action=create with 3-8 rules ordered by priority: safety → core reactions → fallback every_ms/idle rule).
-  4. game_bot action=run → observe every ~5 s for 20-30 s (observe still works while the bot runs) → game_bot action=status: ruleHits tells which rule fires (a core rule with 0 hits = wrong colour/region/minSize; a rule firing constantly = tolerance too high) and avgTickMs (if > tickMs, remove text conditions or shrink regions) → update → run again.
+  4. game_bot action=run → observe every ~5 s for 20-30 s (observe still works while the bot runs) → game_bot action=status: learned shows the self-tuned aim sensitivity (aim_to_found adapts its gain from overshoot/undershoot; when it is stable, copy it into the rule with action=update so the next run starts tuned), ruleHits tells which rule fires (a core rule with 0 hits = wrong colour/region/minSize; a rule firing constantly = tolerance too high) and avgTickMs (if > tickMs, remove text conditions or shrink regions) → update → run again.
   5. When it survives 60 s: session_report + remember the working params ("shooter bot: @enemy=#ff00ff tol 36, sensitivity 0.8") + tell the user: "البوت اسمه X — شغّله من الإشعار (▶ X) وهو في اللعبة، وأوقفه من ■". Say what it handles and what it does not.
 
 Rule cookbook (copy, then replace @names):
