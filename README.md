@@ -148,6 +148,13 @@
 - **تشخيص**: `bot_status` يرجّع `ruleHits` (كل قاعدة ضربت كام مرة) و`avgTickMs` → الـ AI يعرف فورًا القاعدة اللي ألوانها غلط أو الtick البطيء. اللوحة تعرض القالب و ruleHits.
 - `@stick-500` (اسم فيه شرطة + إزاحة سالبة) يُحلَّل حسب البروفايل · `phone.sh bot templates | bot template <id> '<params>' [name]`.
 
+**🖐️ v2.8 — بدون أي لمس: فقاعة فوق اللعبة، أزرار الصوت، تشغيل تلقائي، تصويب يتعلّم**
+- **فقاعة عائمة فوق اللعبة** (`BotOverlay`, TYPE_ACCESSIBILITY_OVERLAY — بدون إذن إضافي): ضغطة = تشغيل/إيقاف البوت، سحب = نقل، ضغطة مطوّلة = إخفاء، وتعرض عدّاد الضربات/الفحوصات مباشرةً. اللمسات عليها لا تصل للعبة.
+- **أزرار الصوت**: ضغطتان على Volume-Up = تشغيل البوت الحالي، ضغطتان على Volume-Down = إيقاف (FLAG_REQUEST_FILTER_KEY_EVENTS؛ الضغطة الواحدة تمر للنظام عادي).
+- **`autoStart:true`**: البوت يبدأ لوحده بعد ~2 ثانية من فتح اللعبة (مرة لكل فتح) — المستخدم يفتح اللعبة فقط. `phone.sh bot auto <name> [on|off]`، وشارة ⚡ في اللوحة.
+- **تصويب يتعلّم** (`aim_to_found` auto-tune): يقارن مقدار تحرك الهدف فعليًا بعد كل سحب بما طُلب، ويرفع/يخفض الـ gain (undershoot/overshoot). القيمة المتعلّمة تُرسل في `bot_status.learned` وتُحفظ على البوت (`learned`) وتظهر في الـ bootstrap ليثبّتها الـ AI بـ `update`. `autoTune:false` لإيقافها.
+- `startedBy` في الحالة (notification/overlay/volume/auto/relay).
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -158,6 +165,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v2.8**: `BotOverlay` فقاعة عائمة، `onKeyEvent` أزرار الصوت، `onForegroundApp` → autoStart، auto-tune لحساسية التصويب، `learned/startedBy` في `bot_status`
 - **v2.7**: `BotEngine` — كشف أجسام (`scanObjects`) مع pick/size، ألوان متعددة، `forMs`، `tap_all_found`، **`aim_to_found` aimbot** تناسبي مع deadzone، `aim.alternate`، `maxFires`، `ruleHits/avgTickMs`
 - **v2.6**: `BotEngine` — محرك قواعد على الجهاز (حلقة tick، تقييم شروط بالألوان/OCR/الأرقام، تنفيذ الأفعال بنفس محرك اللمس المتعدد)، أزرار إشعار ▶/↻/■، `bot_sync/bot_start/bot_stop/bot_status`
 - **v2.5**: محرك لمس متعدد — أصابع دائمة بـ `continueStroke` (`finger_down/move/up`)، `joystick` (يبقي العصا حية بمقاطع متواصلة)، `aim`، `fire_burst`، `combo`
@@ -420,7 +428,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v27.sh   # 839 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v28.sh   # 867 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -451,6 +459,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v2.7 — stronger bots: 8 one-call templates, shooter aimbot (object detection → aim_to_found + fire_burst, camera sweep, HP retreat), multi-colour any-of, forMs, tap_all_found, maxFires, ruleHits diagnostics, colour-strategy bootstrap; 79 tools; 839 e2e checks; Android 2.7.0)
+- **Last Updated**: 2026-09-08 (v2.8 — hands-free bots: floating overlay bubble, volume-key start/stop, autoStart on game open, self-tuning aimbot sensitivity (learned); Cloudflare 1010 UA fix; 79 tools; 867 e2e checks; Android 2.8.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
