@@ -850,6 +850,27 @@ class AutomationAccessibilityService : AccessibilityService() {
         } finally { runCatching { recognizer.close() } }
     }
 
+    // ---------------------------------------------------------------- v2.6 BotEngine hooks (public, run on Main)
+    suspend fun captureForBot(): Bitmap? = captureBitmap()
+    fun scanColorPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?): JsonObject = scanColor(bmp, hex, tol, region)
+    fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString() ?: lastPackage
+    /** OCR lines as (text, centre) for bot conditions; latin recognizer, reused across ticks. */
+    private val botRecognizer by lazy { recognizerFor(null) }
+    suspend fun readTextPublic(bmp0: Bitmap, region: Region?): List<Pair<String, Pair<Int, Int>>> {
+        var bmp = bmp0; var ox = 0; var oy = 0
+        region?.let { r ->
+            val x = r.x.coerceIn(0, bmp.width - 1); val y = r.y.coerceIn(0, bmp.height - 1)
+            val w = r.w.coerceIn(8, bmp.width - x); val h = r.h.coerceIn(8, bmp.height - y)
+            bmp = Bitmap.createBitmap(bmp, x, y, w, h); ox = x; oy = y
+        }
+        return try {
+            val result: Text = botRecognizer.process(InputImage.fromBitmap(bmp, 0)).await()
+            val out = ArrayList<Pair<String, Pair<Int, Int>>>()
+            for (block: Text.TextBlock in result.textBlocks) for (line: Text.Line in block.lines) { val b: Rect = line.boundingBox ?: continue; out.add(line.text to ((b.centerX() + ox) to (b.centerY() + oy))) }
+            out
+        } catch (e: Exception) { emptyList() }
+    }
+
     private suspend fun findColors(a: Action): Outcome {
         val colors = a.colors?.take(8) ?: return Outcome.Fail("find_colors requires colors")
         val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
