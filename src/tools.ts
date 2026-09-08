@@ -548,6 +548,35 @@ export const TOOLS: ToolDef[] = [
       required: ['enabled'],
     },
   },
+  // ---------------------------------------------------------------- v2.6 game bots (run on the phone, started from the notification, zero tokens)
+  {
+    name: 'game_bot',
+    description:
+      'BUILD A BOT that plays for the user WITHOUT you: a list of rules "WHEN <pixel/colour/text/number condition> THEN <taps/swipes/joystick/fire/combo>" that the PHONE evaluates every tickMs against the live screen, forever, with no network and no AI tokens. ' +
+      'The user starts/stops it from the Device Relay notification (▶ Bot / ■ Stop) so they never have to touch the game screen; you can also run/stop it. ' +
+      'Conditions (all AND within a rule; several rules = OR): color_present/color_absent {color,region?,minCount?,tolerance?} · pixel_is/pixel_not {x,y,color} · text_present/text_absent {text,region?} (OCR, slower) · number_below/number_above {region,value} · screen_changed {minPct} · every_ms {ms} · always. ' +
+      'Actions: tap {x,y} · tap_found {offsetX?,offsetY?} (taps the centre of the colour matched by the FIRST colour condition) · swipe · long_press · tap_sequence · repeat_tap · joystick · aim · fire_burst · combo · finger_up · back · wait {ms} · stop_bot {reason}. ' +
+      'Every x/y/color/region accepts @names from game_profile (at:"@fire", color:"@enemy", region:"@hp") — they are resolved when the bot is saved. Rule fields: cooldownMs (default 300), priority (higher first), exclusive (default true), enabled. ' +
+      'Bot fields: tickMs (default 120), maxRunMs (default 30 min, max 6 h), stopOnAppChange (default true). ' +
+      'ALWAYS add a safety rule: {name:"game over", when:[{type:"text_present",text:"GAME OVER"}], then:[{type:"stop_bot"}]} or a colour version, and a popup rule that taps Close/X. ' +
+      'Recipe: observe + sample_colors → identify the trigger colour/pixel and the button → game_profile set → game_bot action=create → game_bot action=run → observe for 20 s → fix rules → tell the user "the bot is in your notification". ' +
+      'action: create | update (id or name) | list | get | delete | run | stop | status. Requires Android app v2.6+.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'create | update | list | get | delete | run | stop | status' },
+        id: { type: 'string', description: 'Bot id (for update/get/delete/run)' },
+        name: { type: 'string', description: 'Bot name (a-z 0-9 - _), unique per app; also accepted instead of id' },
+        description: { type: 'string', description: 'What the bot does, for the user' },
+        app: { type: 'string', description: 'Package (default current app)' },
+        rules: { type: 'array', description: 'Rules [{name, when:[...], then:[...], cooldownMs?, priority?, exclusive?, enabled?}]', items: { type: 'object' } },
+        tickMs: { type: 'integer', description: 'Poll interval 50-2000 (default 120)', minimum: 50, maximum: 2000, default: 120 },
+        maxRunMs: { type: 'integer', description: 'Auto-stop after ms (default 1800000 = 30 min, max 21600000)', minimum: 10000, maximum: 21600000 },
+        stopOnAppChange: { type: 'boolean', description: 'Stop if the user leaves the game (default true)', default: true },
+      },
+      required: ['action'],
+    },
+  },
   // ---------------------------------------------------------------- v2.5 multi-touch engine (shooters / action games)
   {
     name: 'joystick',
@@ -972,9 +1001,10 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'game_bot'; error?: string } {
   switch (name) {
     case 'session_report': return { special: 'session_report' }
+    case 'game_bot': return { special: 'game_bot' }
     case 'joystick': return { action: { type: 'joystick', x: args.x, y: args.y, angle: args.angle, direction: args.direction, distance: args.distance, duration: args.duration, finger: args.finger, release: args.release } }
     case 'aim': return { action: { type: 'aim', x: args.x, y: args.y, dx: args.dx, dy: args.dy, duration: args.duration, steps: args.steps, finger: args.finger, release: args.release } }
     case 'fire_burst': return { action: { type: 'fire_burst', x: args.x, y: args.y, count: args.count, intervalMs: args.intervalMs, holdMs: args.holdMs } }
@@ -1147,7 +1177,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '2.5.0',
+      version: '2.6.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

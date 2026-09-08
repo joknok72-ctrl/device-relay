@@ -58,7 +58,7 @@ function room(env: Bindings, deviceId: string) {
   return env.DEVICE_ROOM.get(env.DEVICE_ROOM.idFromName(deviceId))
 }
 /** Input tools that must not be captured by record_macro (meta / non-replayable). */
-const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report'])
+const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report', 'game_bot'])
 
 /** Push a visual event to /monitor viewers (fire-and-forget). */
 function overlay(env: Bindings, deviceId: string, o: Record<string, unknown>) {
@@ -140,7 +140,7 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
 export async function executeTool(env: Bindings, deviceId: string, name: string, args: Record<string, unknown>, opts: ExecOptions = {}): Promise<ToolResult> {
   // v2.3: resolve @names (controls / colours / regions / settings from game_profile) anywhere in the arguments
   let usedRefs: string[] | undefined
-  if (args && hasRef(args) && name !== 'game_profile' && name !== 'remember' && name !== 'record_macro' && name !== 'save_macro') {
+  if (args && hasRef(args) && name !== 'game_profile' && name !== 'remember' && name !== 'record_macro' && name !== 'save_macro' && name !== 'game_bot') {
     const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
     if (!profile) return { ok: false, error: `arguments use @names but no game_profile exists for ${app || 'the current app'} — save one with game_profile set:{...} first` }
     const r = resolveRefs(args, profile)
@@ -188,6 +188,11 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'dismiss_popups') return dismissPopups(env, deviceId, args, opts)
   if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
   if (mapped.special === 'session_report') return sessionReport(env, deviceId, args)
+  if (mapped.special === 'game_bot') {
+    const act = String(args.action ?? 'list').toLowerCase()
+    if (opts.readOnly && !['list', 'get', 'status'].includes(act)) return { ok: false, error: `token is read-only: game_bot ${act} not allowed` }
+    return gameBot(env, deviceId, args)
+  }
   if (mapped.special === 'game_profile') {
     if (opts.readOnly && (args.set || args.unset || args.delete || args.label || args.genre)) return { ok: false, error: 'token is read-only: game_profile can only be read' }
     return gameProfile(env, deviceId, args)
@@ -638,6 +643,104 @@ async function dismissPopups(env: Bindings, deviceId: string, args: Record<strin
     await new Promise((res) => setTimeout(res, 600))
   }
   return { ok: true, dismissed: dismissed.length, actions: dismissed, durationMs: Date.now() - t0 }
+}
+
+// ---------------------------------------------------------------- v2.6 game bots
+const BOT_CONDITIONS = new Set(['color_present', 'color_absent', 'pixel_is', 'pixel_not', 'text_present', 'text_absent', 'number_below', 'number_above', 'screen_changed', 'every_ms', 'always'])
+const BOT_ACTIONS = new Set(['tap', 'tap_found', 'swipe', 'long_press', 'tap_sequence', 'repeat_tap', 'joystick', 'aim', 'fire_burst', 'combo', 'finger_up', 'back', 'home', 'wait', 'stop_bot'])
+const HEX_RE = /^#[0-9a-f]{6}$/
+const isFin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+function normColor(v: unknown): string | null { if (typeof v !== 'string') return null; const s = v.trim().toLowerCase(); const h = s.startsWith('#') ? s : '#' + s; return HEX_RE.test(h) ? h : null }
+function validRegion(v: unknown): v is { x: number; y: number; w: number; h: number } { const r = v as Record<string, unknown> | null; return !!r && typeof r === 'object' && isFin(r.x) && isFin(r.y) && isFin(r.w) && isFin(r.h) && r.w > 0 && r.h > 0 }
+/** Validate + normalise bot rules (after @name resolution). Returns error string or null. */
+function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; error?: string } {
+  if (!Array.isArray(rules) || rules.length === 0 || rules.length > 25) return { error: 'rules must be an array of 1..25' }
+  const out: import('./types').BotRule[] = []
+  for (let i = 0; i < rules.length; i++) {
+    const r = rules[i] as Record<string, unknown>
+    if (!r || typeof r !== 'object') return { error: `rules[${i}] must be an object` }
+    const name = String(r.name ?? `rule-${i + 1}`).slice(0, 40)
+    if (!Array.isArray(r.when) || r.when.length === 0 || r.when.length > 6) return { error: `rules[${i}] (${name}).when must have 1..6 conditions` }
+    if (!Array.isArray(r.then) || r.then.length === 0 || r.then.length > 10) return { error: `rules[${i}] (${name}).then must have 1..10 actions` }
+    let hasColorCond = false
+    for (let c = 0; c < r.when.length; c++) {
+      const w = r.when[c] as Record<string, unknown>
+      if (!w || typeof w.type !== 'string' || !BOT_CONDITIONS.has(w.type)) return { error: `rules[${i}].when[${c}].type must be one of ${[...BOT_CONDITIONS].join('|')}` }
+      if (['color_present', 'color_absent', 'pixel_is', 'pixel_not'].includes(w.type)) { const col = normColor(w.color); if (!col) return { error: `rules[${i}].when[${c}] needs color "#rrggbb" (or @color)` }; w.color = col; if (w.type.startsWith('color')) hasColorCond = true }
+      if (['pixel_is', 'pixel_not'].includes(w.type) && (!isFin(w.x) || !isFin(w.y))) return { error: `rules[${i}].when[${c}] (${w.type}) needs x,y` }
+      if (['text_present', 'text_absent'].includes(w.type) && (typeof w.text !== 'string' || !w.text.trim())) return { error: `rules[${i}].when[${c}] needs text` }
+      if (['number_below', 'number_above'].includes(w.type) && (!validRegion(w.region) || !isFin(w.value))) return { error: `rules[${i}].when[${c}] (${w.type}) needs region {x,y,w,h} and value` }
+      if (w.type === 'every_ms' && (!isFin(w.ms) || w.ms < 50)) return { error: `rules[${i}].when[${c}] every_ms needs ms >= 50` }
+      if (w.region !== undefined && !validRegion(w.region)) return { error: `rules[${i}].when[${c}].region must be {x,y,w,h}` }
+    }
+    for (let t = 0; t < r.then.length; t++) {
+      const a = r.then[t] as Record<string, unknown>
+      if (!a || typeof a.type !== 'string' || !BOT_ACTIONS.has(a.type)) return { error: `rules[${i}].then[${t}].type must be one of ${[...BOT_ACTIONS].join('|')}` }
+      if (a.type === 'tap_found' && !hasColorCond) return { error: `rules[${i}] (${name}) uses tap_found but has no color_present condition` }
+      if (['tap', 'long_press', 'repeat_tap', 'joystick', 'aim', 'fire_burst'].includes(a.type) && (!isFin(a.x) || !isFin(a.y))) return { error: `rules[${i}].then[${t}] (${a.type}) needs x,y (or at:"@control")` }
+      if (a.type === 'swipe' && ![a.x1, a.y1, a.x2, a.y2].every(isFin)) return { error: `rules[${i}].then[${t}] swipe needs x1,y1,x2,y2` }
+      if (a.type === 'tap_sequence' && !Array.isArray(a.points)) return { error: `rules[${i}].then[${t}] tap_sequence needs points` }
+      if (a.type === 'combo' && !Array.isArray(a.combo ?? a.steps)) return { error: `rules[${i}].then[${t}] combo needs steps` }
+      if (a.type === 'combo' && a.steps && !a.combo) { a.combo = a.steps; delete a.steps }
+      if (a.type === 'wait' && !isFin(a.ms)) return { error: `rules[${i}].then[${t}] wait needs ms` }
+      // defaults matching the phone's expectations
+      if (a.type === 'joystick') { if (!isFin(a.angle)) { const m: Record<string, number> = { right: 0, 'down-right': 45, down: 90, 'down-left': 135, left: 180, 'up-left': 225, up: 270, 'up-right': 315 }; a.angle = m[String(a.direction ?? 'up').toLowerCase()] ?? 270; delete a.direction } a.distance ??= 150; a.duration ??= 500; a.finger ??= 0; a.release ??= true }
+      if (a.type === 'aim') { a.dx ??= 0; a.dy ??= 0; a.duration ??= 120; a.finger ??= 1; a.steps ??= 4; a.release ??= true }
+      if (a.type === 'fire_burst') { a.count ??= 5; a.intervalMs ??= 90; a.holdMs ??= 0 }
+      if (a.type === 'repeat_tap') { a.count ??= 5; a.intervalMs ??= 100 }
+      if (a.type === 'finger_up') a.finger ??= -1
+    }
+    out.push({ name, when: r.when as import('./types').BotCondition[], then: r.then as import('./types').BotAction[], cooldownMs: isFin(r.cooldownMs) ? Math.min(Math.max(r.cooldownMs, 0), 60_000) : 300, priority: isFin(r.priority) ? r.priority : 0, exclusive: r.exclusive !== false, enabled: r.enabled !== false })
+  }
+  return { rules: out }
+}
+async function gameBot(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const act = String(args.action ?? 'list').toLowerCase()
+  const r = room(env, deviceId)
+  const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
+  const list = async () => ((await (await r.fetch(`https://do/bots?deviceId=${deviceId}`)).json()) as { bots: import('./types').Bot[]; status: unknown })
+  const findBot = (bots: import('./types').Bot[]) => bots.find((b) => (args.id && b.id === args.id) || (args.name && b.app === app && b.name === String(args.name).toLowerCase().replace(/[^a-z0-9_-]/g, '-')))
+  if (act === 'list') { const { bots, status } = await list(); const mine = app ? bots.filter((b) => b.app === app) : bots; return { ok: true, app, count: mine.length, bots: mine.map((b) => ({ id: b.id, name: b.name, app: b.app, description: b.description, rules: b.rules.length, runs: b.runs ?? 0, lastRun: b.lastRun })), others: bots.length - mine.length, botStatus: status } }
+  if (act === 'status') { const s = (await (await r.fetch(`https://do/bot-status?deviceId=${deviceId}`)).json()) as { status: unknown; online: boolean }; const live = await executeTool(env, deviceId, 'bot_status' as string, {}, { internal: true }).catch(() => null); return { ok: true, botStatus: live?.ok ? live.data : s.status, online: s.online, hint: live?.ok ? undefined : 'phone did not answer bot_status (needs app v2.6+); showing last known' } }
+  if (act === 'get') { const { bots } = await list(); const b = findBot(bots); return b ? { ok: true, bot: b } : { ok: false, error: 'bot not found', available: bots.map((x) => ({ id: x.id, name: x.name, app: x.app })) } }
+  if (act === 'delete') { const { bots } = await list(); const b = findBot(bots); if (!b) return { ok: false, error: 'bot not found' }; const res = (await (await r.fetch(`https://do/bots?deviceId=${deviceId}&id=${encodeURIComponent(b.id)}`, { method: 'DELETE' })).json()) as ToolResult; return { ...res, deleted: b.name } }
+  if (act === 'stop') { const res = await executeTool(env, deviceId, 'bot_stop' as string, {}, { internal: true }); return { ...res, hint: res.ok ? 'bot stopped' : 'phone did not accept bot_stop (needs app v2.6+)' } }
+  if (act === 'run') {
+    const { bots } = await list(); const b = findBot(bots); if (!b) return { ok: false, error: 'bot not found', available: bots.map((x) => ({ id: x.id, name: x.name })) }
+    const res = await executeTool(env, deviceId, 'bot_start' as string, { botId: b.id }, { internal: true })
+    return { ...res, bot: { id: b.id, name: b.name }, hint: res.ok ? `bot '${b.name}' is running on the phone; the user can stop it from the notification. Observe for ~20s and fix rules if needed.` : 'phone refused bot_start — is the Android app v2.6+ and the game in the foreground?' }
+  }
+  if (act === 'create' || act === 'update') {
+    if (!app) return { ok: false, error: 'could not determine the current app; pass app=<package>' }
+    let existing: import('./types').Bot | undefined
+    if (act === 'update') { const { bots } = await list(); existing = findBot(bots); if (!existing) return { ok: false, error: 'bot not found for update' } }
+    const nameRaw = String(args.name ?? existing?.name ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 40)
+    if (!nameRaw) return { ok: false, error: 'name required' }
+    let rulesIn: unknown = args.rules ?? existing?.rules
+    if (!rulesIn) return { ok: false, error: 'rules required' }
+    // resolve @names inside rules against the profile
+    if (hasRef(rulesIn)) {
+      if (!profile) return { ok: false, error: `rules use @names but no game_profile exists for ${app}` }
+      const rr = resolveRefs({ rules: rulesIn } as Record<string, unknown>, profile)
+      if (rr.error) return { ok: false, error: rr.error, profile: { controls: Object.keys(profile.controls), colors: Object.keys(profile.colors), regions: Object.keys(profile.regions) } }
+      rulesIn = (rr.args as { rules: unknown }).rules
+    }
+    const v = validateRules(rulesIn)
+    if (v.error) return { ok: false, error: v.error }
+    const hasStop = v.rules!.some((x) => x.then.some((a) => a.type === 'stop_bot'))
+    const bot: import('./types').Bot = {
+      id: existing?.id ?? `bot_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, app, label: profile?.label, name: nameRaw,
+      description: typeof args.description === 'string' ? args.description.slice(0, 200) : existing?.description,
+      rules: v.rules!, tickMs: isFin(args.tickMs) ? Math.min(Math.max(args.tickMs, 50), 2000) : existing?.tickMs ?? 120,
+      maxRunMs: isFin(args.maxRunMs) ? Math.min(Math.max(args.maxRunMs, 10_000), 21_600_000) : existing?.maxRunMs ?? 1_800_000,
+      stopOnAppChange: typeof args.stopOnAppChange === 'boolean' ? args.stopOnAppChange : existing?.stopOnAppChange ?? true,
+      createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(),
+    }
+    const res = (await (await r.fetch(`https://do/bots?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bot) })).json()) as ToolResult
+    if (!res.ok) return res
+    return { ok: true, action: act, bot: { id: bot.id, name: bot.name, app, rules: bot.rules.length, tickMs: bot.tickMs, maxRunMs: bot.maxRunMs }, warnings: hasStop ? [] : ['no stop_bot rule — add a GAME OVER / popup safety rule'], hint: `saved and pushed to the phone. Start: game_bot action=run name="${bot.name}" — or the user taps ▶ in the Device Relay notification. Tell the user the bot name.` }
+  }
+  return { ok: false, error: 'action must be create|update|list|get|delete|run|stop|status' }
 }
 
 // ---------------------------------------------------------------- v2.3 game profile
