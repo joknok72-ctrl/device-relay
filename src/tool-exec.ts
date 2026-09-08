@@ -646,8 +646,9 @@ async function dismissPopups(env: Bindings, deviceId: string, args: Record<strin
 }
 
 // ---------------------------------------------------------------- v2.6 game bots
-const BOT_CONDITIONS = new Set(['color_present', 'color_absent', 'pixel_is', 'pixel_not', 'text_present', 'text_absent', 'number_below', 'number_above', 'screen_changed', 'every_ms', 'always'])
-const BOT_ACTIONS = new Set(['tap', 'tap_found', 'swipe', 'long_press', 'tap_sequence', 'repeat_tap', 'joystick', 'aim', 'fire_burst', 'combo', 'finger_up', 'back', 'home', 'wait', 'stop_bot'])
+const BOT_CONDITIONS = new Set(['color_present', 'color_absent', 'object_present', 'object_absent', 'pixel_is', 'pixel_not', 'text_present', 'text_absent', 'number_below', 'number_above', 'screen_changed', 'every_ms', 'always'])
+const BOT_ACTIONS = new Set(['tap', 'tap_found', 'tap_all_found', 'aim_to_found', 'swipe', 'long_press', 'tap_sequence', 'repeat_tap', 'joystick', 'aim', 'fire_burst', 'combo', 'finger_up', 'back', 'home', 'wait', 'stop_bot'])
+const FOUND_CONDS = new Set(['color_present', 'object_present', 'pixel_is', 'text_present'])
 const HEX_RE = /^#[0-9a-f]{6}$/
 const isFin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 function normColor(v: unknown): string | null { if (typeof v !== 'string') return null; const s = v.trim().toLowerCase(); const h = s.startsWith('#') ? s : '#' + s; return HEX_RE.test(h) ? h : null }
@@ -662,11 +663,23 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
     const name = String(r.name ?? `rule-${i + 1}`).slice(0, 40)
     if (!Array.isArray(r.when) || r.when.length === 0 || r.when.length > 6) return { error: `rules[${i}] (${name}).when must have 1..6 conditions` }
     if (!Array.isArray(r.then) || r.then.length === 0 || r.then.length > 10) return { error: `rules[${i}] (${name}).then must have 1..10 actions` }
-    let hasColorCond = false
+    let hasColorCond = false, hasFoundCond = false, hasObjectCond = false
     for (let c = 0; c < r.when.length; c++) {
       const w = r.when[c] as Record<string, unknown>
       if (!w || typeof w.type !== 'string' || !BOT_CONDITIONS.has(w.type)) return { error: `rules[${i}].when[${c}].type must be one of ${[...BOT_CONDITIONS].join('|')}` }
-      if (['color_present', 'color_absent', 'pixel_is', 'pixel_not'].includes(w.type)) { const col = normColor(w.color); if (!col) return { error: `rules[${i}].when[${c}] needs color "#rrggbb" (or @color)` }; w.color = col; if (w.type.startsWith('color')) hasColorCond = true }
+      if (['color_present', 'color_absent', 'object_present', 'object_absent'].includes(w.type)) {
+        // v2.7: `colors: [...]` (any of) or single `color`
+        const list = Array.isArray(w.colors) ? w.colors : (w.color !== undefined ? [w.color] : [])
+        const norm = list.map(normColor)
+        if (!norm.length || norm.some((x) => !x)) return { error: `rules[${i}].when[${c}] needs color "#rrggbb" or colors ["#..",..] (or @color)` }
+        if (norm.length > 8) return { error: `rules[${i}].when[${c}] max 8 colors` }
+        w.color = norm[0]; if (norm.length > 1) w.colors = norm; else delete w.colors
+        if (w.type.endsWith('_present')) { hasColorCond = true; hasFoundCond = true }
+        if (w.type.startsWith('object')) { hasObjectCond = w.type === 'object_present'; w.minSize ??= 12; w.maxSize ??= 0; if (w.pick !== undefined && !['largest', 'nearest', 'topmost', 'lowest'].includes(String(w.pick))) return { error: `rules[${i}].when[${c}].pick must be largest|nearest|topmost|lowest` } }
+      }
+      if (['pixel_is', 'pixel_not'].includes(w.type)) { const col = normColor(w.color); if (!col) return { error: `rules[${i}].when[${c}] needs color "#rrggbb" (or @color)` }; w.color = col; if (w.type === 'pixel_is') hasFoundCond = true }
+      if (w.type === 'text_present') hasFoundCond = true
+      if (w.forMs !== undefined && (!isFin(w.forMs) || w.forMs < 0 || w.forMs > 60_000)) return { error: `rules[${i}].when[${c}].forMs must be 0..60000` }
       if (['pixel_is', 'pixel_not'].includes(w.type) && (!isFin(w.x) || !isFin(w.y))) return { error: `rules[${i}].when[${c}] (${w.type}) needs x,y` }
       if (['text_present', 'text_absent'].includes(w.type) && (typeof w.text !== 'string' || !w.text.trim())) return { error: `rules[${i}].when[${c}] needs text` }
       if (['number_below', 'number_above'].includes(w.type) && (!validRegion(w.region) || !isFin(w.value))) return { error: `rules[${i}].when[${c}] (${w.type}) needs region {x,y,w,h} and value` }
@@ -676,7 +689,11 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
     for (let t = 0; t < r.then.length; t++) {
       const a = r.then[t] as Record<string, unknown>
       if (!a || typeof a.type !== 'string' || !BOT_ACTIONS.has(a.type)) return { error: `rules[${i}].then[${t}].type must be one of ${[...BOT_ACTIONS].join('|')}` }
-      if (a.type === 'tap_found' && !hasColorCond) return { error: `rules[${i}] (${name}) uses tap_found but has no color_present condition` }
+      if (a.type === 'tap_found' && !hasFoundCond) return { error: `rules[${i}] (${name}) uses tap_found but has no color_present/object_present/pixel_is/text_present condition` }
+      if (a.type === 'tap_all_found' && !hasObjectCond) return { error: `rules[${i}] (${name}) uses tap_all_found but has no object_present condition` }
+      if (a.type === 'aim_to_found' && !hasFoundCond) return { error: `rules[${i}] (${name}) uses aim_to_found but has no *_present condition` }
+      if (a.type === 'aim_to_found') { if (!isFin(a.x) || !isFin(a.y)) return { error: `rules[${i}].then[${t}] aim_to_found needs x,y (start point on the look area, or at:"@look")` }; a.sensitivity ??= 1; a.maxStep ??= 300; a.deadzone ??= 12; a.duration ??= 60; a.finger ??= 1 }
+      if (a.type === 'tap_all_found') { a.max ??= 5; a.intervalMs ??= 40 }
       if (['tap', 'long_press', 'repeat_tap', 'joystick', 'aim', 'fire_burst'].includes(a.type) && (!isFin(a.x) || !isFin(a.y))) return { error: `rules[${i}].then[${t}] (${a.type}) needs x,y (or at:"@control")` }
       if (a.type === 'swipe' && ![a.x1, a.y1, a.x2, a.y2].every(isFin)) return { error: `rules[${i}].then[${t}] swipe needs x1,y1,x2,y2` }
       if (a.type === 'tap_sequence' && !Array.isArray(a.points)) return { error: `rules[${i}].then[${t}] tap_sequence needs points` }
@@ -685,12 +702,12 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
       if (a.type === 'wait' && !isFin(a.ms)) return { error: `rules[${i}].then[${t}] wait needs ms` }
       // defaults matching the phone's expectations
       if (a.type === 'joystick') { if (!isFin(a.angle)) { const m: Record<string, number> = { right: 0, 'down-right': 45, down: 90, 'down-left': 135, left: 180, 'up-left': 225, up: 270, 'up-right': 315 }; a.angle = m[String(a.direction ?? 'up').toLowerCase()] ?? 270; delete a.direction } a.distance ??= 150; a.duration ??= 500; a.finger ??= 0; a.release ??= true }
-      if (a.type === 'aim') { a.dx ??= 0; a.dy ??= 0; a.duration ??= 120; a.finger ??= 1; a.steps ??= 4; a.release ??= true }
+      if (a.type === 'aim') { a.dx ??= 0; a.dy ??= 0; a.duration ??= 120; a.finger ??= 1; a.steps ??= 4; a.release ??= true; if (a.alternate !== true) delete a.alternate }
       if (a.type === 'fire_burst') { a.count ??= 5; a.intervalMs ??= 90; a.holdMs ??= 0 }
       if (a.type === 'repeat_tap') { a.count ??= 5; a.intervalMs ??= 100 }
       if (a.type === 'finger_up') a.finger ??= -1
     }
-    out.push({ name, when: r.when as import('./types').BotCondition[], then: r.then as import('./types').BotAction[], cooldownMs: isFin(r.cooldownMs) ? Math.min(Math.max(r.cooldownMs, 0), 60_000) : 300, priority: isFin(r.priority) ? r.priority : 0, exclusive: r.exclusive !== false, enabled: r.enabled !== false })
+    out.push({ name, when: r.when as import('./types').BotCondition[], then: r.then as import('./types').BotAction[], cooldownMs: isFin(r.cooldownMs) ? Math.min(Math.max(r.cooldownMs, 0), 60_000) : 300, priority: isFin(r.priority) ? r.priority : 0, exclusive: r.exclusive !== false, enabled: r.enabled !== false, ...(isFin(r.maxFires) && r.maxFires > 0 ? { maxFires: Math.floor(r.maxFires) } : {}) })
   }
   return { rules: out }
 }

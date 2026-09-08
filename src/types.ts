@@ -110,9 +110,13 @@ export interface SessionReport { ts: number; outcome?: 'win' | 'loss' | 'progres
 export interface PlaySession { app: string; label?: string; start: number; end: number; commands: number; failed: number; screenshots: number; report?: SessionReport }
 // ---------------------------------------------------------------- v2.6 game bots (run entirely on the phone)
 /** A condition evaluated on the phone against the current frame. */
-export type BotCondition =
-  | { type: 'color_present'; color: string; tolerance?: number; region?: Region; minCount?: number }
-  | { type: 'color_absent'; color: string; tolerance?: number; region?: Region; minCount?: number }
+/** v2.7: every condition may carry forMs — it only counts as true once it has held continuously for that long. */
+export type BotCondition = ({ forMs?: number }) & (
+  | { type: 'color_present'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minCount?: number }
+  | { type: 'color_absent'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minCount?: number }
+  /** v2.7 blob detection: an object of this colour (any of colors) between minSize..maxSize px; pick which one becomes `found` */
+  | { type: 'object_present'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minSize?: number; maxSize?: number; pick?: 'largest' | 'nearest' | 'topmost' | 'lowest'; nearX?: number; nearY?: number; minCount?: number }
+  | { type: 'object_absent'; color?: string; colors?: string[]; tolerance?: number; region?: Region; minSize?: number; maxSize?: number }
   | { type: 'pixel_is'; x: number; y: number; color: string; tolerance?: number }
   | { type: 'pixel_not'; x: number; y: number; color: string; tolerance?: number }
   | { type: 'text_present'; text: string; region?: Region }
@@ -121,17 +125,21 @@ export type BotCondition =
   | { type: 'number_above'; region: Region; value: number }
   | { type: 'screen_changed'; minPct?: number }
   | { type: 'every_ms'; ms: number }
-  | { type: 'always' }
+  | { type: 'always' })
 /** An action the bot performs on the phone (a subset of Action, plus tap_found which taps the matched colour blob). */
 export type BotAction =
   | { type: 'tap'; x: number; y: number }
   | { type: 'tap_found'; offsetX?: number; offsetY?: number }
+  /** v2.7 tap every detected object (object_present), up to max, intervalMs apart */
+  | { type: 'tap_all_found'; max?: number; intervalMs?: number; offsetX?: number; offsetY?: number }
+  /** v2.7 aimbot: drag the look area so the crosshair moves onto the found object. drag = offset * sensitivity, clamped to maxStep */
+  | { type: 'aim_to_found'; x: number; y: number; crosshairX?: number; crosshairY?: number; sensitivity?: number; maxStep?: number; deadzone?: number; duration?: number; finger?: number; offsetX?: number; offsetY?: number }
   | { type: 'swipe'; x1: number; y1: number; x2: number; y2: number; duration?: number }
   | { type: 'long_press'; x: number; y: number; duration?: number }
   | { type: 'tap_sequence'; points: SeqPoint[] }
   | { type: 'repeat_tap'; x: number; y: number; count: number; intervalMs: number }
   | { type: 'joystick'; x: number; y: number; angle: number; distance: number; duration: number; finger: number; release: boolean }
-  | { type: 'aim'; x: number; y: number; dx: number; dy: number; duration: number; finger: number; steps: number; release: boolean }
+  | { type: 'aim'; x: number; y: number; dx: number; dy: number; duration: number; finger: number; steps: number; release: boolean; /** v2.7 flip dx/dy sign every time this action runs (camera sweep) */ alternate?: boolean }
   | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number }
   | { type: 'combo'; combo: ComboStep[] }
   | { type: 'finger_up'; finger: number }
@@ -151,6 +159,8 @@ export interface BotRule {
   exclusive?: boolean
   /** disable a rule without deleting it */
   enabled?: boolean
+  /** v2.7 fire at most this many times per run (e.g. 1 for "tap PLAY once") */
+  maxFires?: number
 }
 export interface Bot {
   id: string
@@ -168,10 +178,12 @@ export interface Bot {
   createdAt: number
   updatedAt: number
   runs?: number
-  lastRun?: { start: number; end?: number; ticks: number; fired: number; stoppedBy?: string }
+  lastRun?: { start: number; end?: number; ticks: number; fired: number; stoppedBy?: string; ruleHits?: Record<string, number> }
+  /** v2.7 template this bot was generated from (shooter/runner/…) */
+  template?: string
 }
 /** Live bot status reported by the phone */
-export interface BotStatusMessage { kind: 'bot_status'; botId?: string; name?: string; running: boolean; ticks?: number; fired?: number; lastRule?: string; startedAt?: number; stoppedBy?: string; error?: string; ts: number }
+export interface BotStatusMessage { kind: 'bot_status'; botId?: string; name?: string; running: boolean; ticks?: number; fired?: number; lastRule?: string; startedAt?: number; stoppedBy?: string; error?: string; ts: number; /** v2.7 */ ruleHits?: Record<string, number>; avgTickMs?: number }
 /** In-progress macro recording (record_macro). */
 export interface Recording { name?: string; description?: string; keepWaits: boolean; startedAt: number; lastAt: number; steps: { name: string; arguments?: Record<string, unknown> }[] }
 /** Named, replayable tool sequence stored per device. */
