@@ -8,6 +8,9 @@
   let shot = null            // { w, h, scale } of the screenshot vs the real screen
   let typeId = 'color_tap'
   let picking = null         // key of the thing being placed
+  let preset = null          // 'freefire' one-tap preset
+  const PRESETS = { freefire: { mode: 'assist', match: 'hue', tolerance: 24, assistRange: 360, sensitivity: 0.85, predictMs: 90, fireCount: 5, fireIntervalMs: 65, lockRadius: 240, gateErr: 50, minSize: 6, headOffsetY: 0, name: 'freefire-headshot' } }
+  function applyPreset() { const p = PRESETS[preset]; if (!p) return; for (const [k, v] of Object.entries(p)) { const el = document.querySelector(`[data-tune="${k}"]`); if (el) { el.value = v; const tv = $('#tv-' + k); if (tv) tv.textContent = v } } $('#bot-name').value = p.name }
   const marks = {}           // key → { kind, x, y, w, h, hex, tol, ok, count }
   let botStatusTimer = null
   let profileApp = ''
@@ -23,7 +26,8 @@
         { key: 'region', kind: 'region', label: 'منطقة المراقبة (اختياري)' },
       ],
       tune: [
-        { key: 'tolerance', label: 'تسامح اللون', min: 10, max: 70, step: 2, def: 32, doc: 'زوّده لو مش بيتكشف، قلّله لو بيضرب حاجات غلط' },
+        { key: 'match', label: 'طريقة مطابقة اللون', options: ['rgb', 'hue'], labels: { rgb: 'RGB دقيق — للأزرار والألعاب 2D', hue: 'درجة اللون (Hue) — للألعاب 3D والإضاءة المتغيرة' }, def: 'rgb' },
+        { key: 'tolerance', label: 'تسامح اللون', min: 8, max: 70, step: 2, def: 32, doc: 'زوّده لو مش بيتكشف، قلّله لو بيضرب حاجات غلط (في Hue: 22 مناسب)' },
         { key: 'minSize', label: 'أصغر حجم (px)', min: 4, max: 100, step: 2, def: 12 },
         { key: 'cooldownMs', label: 'الفاصل بين الضربات (ms)', min: 0, max: 1000, step: 20, def: 120 },
         { key: 'repeat', label: 'ضغطات لكل مرة', min: 1, max: 10, step: 1, def: 1 },
@@ -51,7 +55,10 @@
         { key: 'predictMs', label: 'توقّع الحركة (ms)', min: 0, max: 300, step: 20, def: 80, doc: 'يصوّب على مكان الراس بعد هذه المدة (للأعداء اللي بتجري)' },
         { key: 'fireCount', label: 'طلقات في الرشقة', min: 2, max: 15, step: 1, def: 6 },
         { key: 'fireIntervalMs', label: 'الفاصل بين الطلقات (ms)', min: 40, max: 200, step: 10, def: 70 },
-        { key: 'tolerance', label: 'تسامح اللون', min: 10, max: 70, step: 2, def: 32 },
+        { key: 'match', label: 'طريقة مطابقة اللون', options: ['hue', 'rgb'], labels: { hue: 'درجة اللون (Hue) — يتحمّل الظل والإضاءة ★ للألعاب 3D', rgb: 'RGB دقيق — للأزرار والواجهات' }, def: 'hue' },
+        { key: 'tolerance', label: 'تسامح اللون (درجات في Hue / قناة في RGB)', min: 8, max: 70, step: 2, def: 32, doc: 'في وضع Hue: 22 مناسب، 30 لو الإضاءة متغيرة كثير' },
+        { key: 'lockRadius', label: 'تثبيت الهدف (px)', min: 0, max: 500, step: 20, def: 220, doc: 'يفضل على نفس العدو بدل ما ينط بين عدوين' },
+        { key: 'gateErr', label: 'لا يضرب وهو لسه بيصحّح أكثر من (px)', min: 0, max: 200, step: 10, def: 60, doc: 'يوفّر الذخيرة ويزوّد الدقة. 0 = يضرب دائمًا' },
         { key: 'headOffsetY', label: 'ارفع نقطة الضرب عن مركز اللون (px، سالب = أعلى)', min: -80, max: 40, step: 5, def: 0, doc: 'لو اللون بيغطي الجسم كله: -25 تقريبًا يخلي الضربة على الراس' },
         { key: 'sweepDx', label: 'لفّة الكاميرا لما مافيش عدو (الوضع الكامل)', min: 80, max: 500, step: 20, def: 260 },
         { key: 'minSize', label: 'أصغر حجم عدو (px)', min: 4, max: 60, step: 2, def: 10 },
@@ -172,10 +179,16 @@
   // ---------------------------------------------------------------- type picker
   function renderTypes() {
     const el = $('#types'); el.innerHTML = ''
+    // one-tap preset: Free Fire assist headshot
+    const ff = document.createElement('div'); ff.className = 'pick' + (typeId === 'shooter' && preset === 'freefire' ? ' on' : '')
+    ff.style.borderColor = typeId === 'shooter' && preset === 'freefire' ? '#34d399' : '#f59e0b55'
+    ff.innerHTML = '<div class="font-semibold"><i class="fas fa-fire ml-1 text-amber-300"></i>🔥 Free Fire — هيدشوت مساعد (جاهز)</div><div class="text-[11px] text-slate-400 mt-1">إعدادات مضبوطة مسبقًا: مساعد + Hue + تثبيت هدف + توقّع حركة. أنت بس تعلّم لون الراس وزر الضرب ومساحة التصويب.</div>'
+    ff.onclick = () => { typeId = 'shooter'; preset = 'freefire'; renderTypes(); renderThings(); renderTune(); applyPreset(); updateSave() }
+    el.appendChild(ff)
     for (const [id, t] of Object.entries(TYPES)) {
       const d = document.createElement('div'); d.className = 'pick' + (id === typeId ? ' on' : '')
       d.innerHTML = `<div class="font-semibold"><i class="fas ${t.icon} ml-1 text-emerald-300"></i>${t.title}</div>`
-      d.onclick = () => { typeId = id; renderTypes(); renderThings(); renderTune(); updateSave() }
+      d.onclick = () => { typeId = id; preset = null; renderTypes(); renderThings(); renderTune(); updateSave() }
       el.appendChild(d)
     }
     $('#type-doc').textContent = TYPES[typeId].doc
@@ -269,8 +282,9 @@
     }
     if (!hex) { $('#probe').innerHTML = '<span class="bad">تعذّر قراءة اللون من الموبايل — الشاشة اتغيرت؟ صوّر تاني</span>'; return }
     // 2) verify: does this colour form objects on the live screen?
-    const tol = tuneVal('tolerance', 30)
-    const fo = await tool('find_objects', { color: hex, tolerance: tol, minSize: tuneVal('minSize', 8), maxResults: 12 })
+    const mode = tuneVal('match', 'rgb') === 'hue' ? 'hue' : 'rgb'
+    const tol = mode === 'hue' ? Math.min(tuneVal('tolerance', 22) === 32 ? 22 : tuneVal('tolerance', 22), 60) : tuneVal('tolerance', 30)
+    const fo = await tool('find_objects', { color: hex, tolerance: tol, minSize: tuneVal('minSize', 8), maxResults: 12, match: mode })
     const count = fo.ok && fo.data ? fo.data.count || 0 : 0
     marks[t.key] = { kind: 'color', hex, tol, ok: count > 0, count, x: p.x, y: p.y }
     const grey = isGreyish(hex)

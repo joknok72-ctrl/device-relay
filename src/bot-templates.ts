@@ -43,11 +43,12 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       { key: 'tolerance', kind: 'number', default: 32, doc: 'colour tolerance' },
       { key: 'cooldownMs', kind: 'number', default: 120, doc: 'ms between hits' },
       { key: 'repeat', kind: 'number', default: 1, doc: 'taps per hit (burst)' },
+      { key: 'match', kind: 'text', default: 'rgb', doc: 'rgb | hue (use hue for 3D games / changing lighting; tolerance then in degrees 18-30)' },
     ],
     tickMs: 80,
     build: (p) => [...safety(p), {
       name: 'hit-colour', priority: 10, cooldownMs: n(p.cooldownMs, 120),
-      when: [{ type: 'object_present', ...colors(p.color), tolerance: n(p.tolerance, 32), minSize: n(p.minSize, 12), pick: 'largest', ...(p.region ? { region: p.region } : {}) }],
+      when: [{ type: 'object_present', ...colors(p.color), tolerance: n(p.tolerance, 32), ...(s(p.match, 'rgb') === 'hue' ? { match: 'hue' } : {}), minSize: n(p.minSize, 12), pick: 'largest', ...(p.region ? { region: p.region } : {}) }],
       then: [p.button ? (n(p.repeat, 1) > 1 ? { type: 'repeat_tap', at: p.button, count: n(p.repeat, 1), intervalMs: 60 } : { type: 'tap', at: p.button }) : { type: 'tap_all_found', max: Math.max(1, n(p.repeat, 1)), intervalMs: 40 }],
     }],
   },

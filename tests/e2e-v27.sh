@@ -16,7 +16,7 @@ call '{"name":"get_current_app"}' >/dev/null
 call '{"name":"game_bot","arguments":{"action":"stop"}}' >/dev/null
 
 echo "== version"
-check version '"version":"3.0.0"' "$(curl -s $U/api/health)"
+check version '"version":"3.1.0"' "$(curl -s $U/api/health)"
 check tools-79 '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check tool-doc-aimbot 'aim_to_found' "$(curl -s "$U/api/tools/schema?format=raw" | grep -o 'aim_to_found' | head -1)"
 
