@@ -52,9 +52,10 @@ export const BOT_TEMPLATES: BotTemplate[] = [
     }],
   },
   {
-    id: 'shooter', genre: 'shooter', title: 'Shooter: aimbot + auto-fire + camera sweep + advance',
-    doc: 'Detects enemies as OBJECTS (blob of the enemy colour: head marker / name-tag / health bar — choose a colour that is unique and stable), drags the camera so the crosshair lands on the nearest one, fires a burst. When nobody is visible it sweeps the camera left/right and walks forward. Optional HP retreat.',
+    id: 'shooter', genre: 'shooter', title: 'Shooter: headshot aimbot + auto-fire (full auto, or ASSIST while the user plays)',
+    doc: 'mode=assist (DEFAULT, what Free Fire players want): the USER moves and turns the camera normally; the bot only kicks in when the head/enemy colour is near the crosshair — a tiny ≤50 ms aim nudge onto the head + a burst. mode=trigger: the user aims, the bot only fires when the head is under the crosshair (no aim help). mode=full: plays alone (aim, fire, sweep camera, advance, heal, play again). Detects enemies as OBJECTS of the head/enemy colour (choose the enemy-highlight colour from the game settings for near-perfect detection).',
     params: [
+      { key: 'mode', kind: 'text', default: 'assist', doc: 'assist | trigger | full (see doc)' },
       { key: 'enemy', kind: 'color', required: true, doc: '@color of the enemy marker (or array of colours for several teams/skins)' },
       { key: 'fire', kind: 'control', required: true, doc: '@control fire button' },
       { key: 'look', kind: 'control', required: true, doc: '@control a point in the empty look/aim area (right half of the screen)' },
@@ -70,32 +71,53 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       { key: 'minSize', kind: 'number', default: 10, doc: 'ignore blobs smaller than this (px)' },
       { key: 'tolerance', kind: 'number', default: 32, doc: 'colour tolerance' },
       { key: 'enemyRegion', kind: 'region', doc: '@region to search (default whole screen minus HUD — pass your own to exclude the minimap/HUD)' },
-      { key: 'head', kind: 'color', doc: '@color of the enemy HEAD marker (small blob) → extra headshot rule with higher priority and a tighter deadzone' },
+      { key: 'head', kind: 'color', doc: '@color of the enemy HEAD marker (small blob) → headshot rule with higher priority and a tighter deadzone. In assist/trigger mode this is the main trigger.' },
+      { key: 'assistRange', kind: 'number', default: 320, doc: 'assist/trigger: only act when the target is within this many px of the crosshair (the user does the coarse aiming)' },
+      { key: 'predictMs', kind: 'number', default: 80, doc: 'lead moving targets by this many ms (0 = off)' },
+      { key: 'headOffsetY', kind: 'number', default: 0, doc: 'if the head colour marks the whole body, aim this many px ABOVE the blob centre (negative = up), e.g. -25' },
       { key: 'evade', kind: 'control', doc: '@control crouch/jump button → pressed every ~3 s while an enemy is visible (harder to hit)' },
       { key: 'playAgain', kind: 'control', doc: '@control PLAY AGAIN / next match button → tapped when the match ends (instead of stop_bot)' },
       { key: 'matchEndText', kind: 'text', default: 'PLAY AGAIN', doc: 'text that appears at match end (with playAgain)' },
     ],
     tickMs: 70,
     build: (p) => {
+      const mode = s(p.mode, 'assist')
+      const assist = mode === 'assist' || mode === 'trigger'
       const rules: unknown[] = [...safety(p)]
-      const enemy = { type: 'object_present', ...colors(p.enemy), tolerance: n(p.tolerance, 32), minSize: n(p.minSize, 10), pick: 'nearest', ...(p.crosshair ? { nearX: p.crosshair, nearY: p.crosshair } : {}), ...(p.enemyRegion ? { region: p.enemyRegion } : {}) }
+      const near = p.crosshair ? { nearX: p.crosshair, nearY: p.crosshair } : {}
+      const cross = p.crosshair ? { crosshairX: p.crosshair, crosshairY: p.crosshair } : {}
+      const reg = p.enemyRegion ? { region: p.enemyRegion } : {}
+      const enemy = { type: 'object_present', ...colors(p.enemy), tolerance: n(p.tolerance, 32), minSize: n(p.minSize, 10), pick: 'nearest', ...near, ...reg }
+      const headCond = { type: 'object_present', ...colors(p.head ?? p.enemy), tolerance: n(p.tolerance, 32), minSize: 4, maxSize: p.head ? 90 : 0, pick: 'nearest', ...near, ...reg }
+      const fire = { type: 'fire_burst', at: p.fire, count: n(p.fireCount, 6), intervalMs: n(p.fireIntervalMs, 70) }
+      const headOff = n(p.headOffsetY, 0) ? { offsetY: n(p.headOffsetY, 0) } : {}
+      const pred = n(p.predictMs, 80) > 0 ? { predictMs: n(p.predictMs, 80) } : {}
+      if (assist) {
+        // ASSIST: the user plays. One rule: head (or enemy) within assistRange of the crosshair → micro aim nudge (assist) + burst. trigger = burst only.
+        const range = n(p.assistRange, 320)
+        rules.push({
+          name: mode === 'trigger' ? 'trigger-fire' : 'assist-headshot', priority: 11, cooldownMs: 40,
+          when: [headCond],
+          then: [
+            ...(mode === 'assist' ? [{ type: 'aim_to_found', at: p.look, ...cross, sensitivity: n(p.sensitivity, 0.9), maxStep: 180, deadzone: 6, duration: 40, maxRange: range, ...pred, ...headOff }] : []),
+            { ...fire, maxRange: range },
+          ],
+        })
+        if (p.hp && p.heal) rules.push({ name: 'auto-heal', priority: 20, cooldownMs: 6000, when: [{ type: 'number_below', region: p.hp, value: n(p.hpLow, 30) }], then: [{ type: 'tap', at: p.heal }] })
+        return rules
+      }
+      // FULL: plays alone
       if (p.head) rules.push({
         name: 'headshot', priority: 11, cooldownMs: 40,
-        when: [{ type: 'object_present', ...colors(p.head), tolerance: n(p.tolerance, 32), minSize: 4, maxSize: 90, pick: 'nearest', ...(p.crosshair ? { nearX: p.crosshair, nearY: p.crosshair } : {}), ...(p.enemyRegion ? { region: p.enemyRegion } : {}) }],
-        then: [
-          { type: 'aim_to_found', at: p.look, ...(p.crosshair ? { crosshairX: p.crosshair, crosshairY: p.crosshair } : {}), sensitivity: n(p.sensitivity, 0.9), maxStep: 260, deadzone: 8, duration: 45 },
-          { type: 'fire_burst', at: p.fire, count: n(p.fireCount, 6), intervalMs: n(p.fireIntervalMs, 70) },
-        ],
+        when: [headCond],
+        then: [{ type: 'aim_to_found', at: p.look, ...cross, sensitivity: n(p.sensitivity, 0.9), maxStep: 260, deadzone: 8, duration: 45, ...pred, ...headOff }, fire],
       })
       if (p.evade) rules.push({ name: 'evade', priority: 12, cooldownMs: 3000, exclusive: false, when: [enemy], then: [{ type: 'tap', at: p.evade }] })
       if (p.playAgain) rules.push({ name: 'play-again', priority: 95, cooldownMs: 5000, when: [{ type: 'text_present', text: s(p.matchEndText, 'PLAY AGAIN'), forMs: 800 }], then: [{ type: 'tap', at: p.playAgain }, { type: 'wait', ms: 1500 }] })
       rules.push({
         name: 'aim-and-fire', priority: 10, cooldownMs: 40,
         when: [enemy],
-        then: [
-          { type: 'aim_to_found', at: p.look, ...(p.crosshair ? { crosshairX: p.crosshair, crosshairY: p.crosshair } : {}), sensitivity: n(p.sensitivity, 0.9), maxStep: 320, deadzone: 14, duration: 50 },
-          { type: 'fire_burst', at: p.fire, count: n(p.fireCount, 6), intervalMs: n(p.fireIntervalMs, 70) },
-        ],
+        then: [{ type: 'aim_to_found', at: p.look, ...cross, sensitivity: n(p.sensitivity, 0.9), maxStep: 320, deadzone: 14, duration: 50, ...pred, ...(p.head ? {} : headOff) }, fire],
       })
       if (p.hp) rules.push({
         name: 'low-hp', priority: 20, cooldownMs: 2500,

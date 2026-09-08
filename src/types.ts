@@ -133,14 +133,14 @@ export type BotAction =
   /** v2.7 tap every detected object (object_present), up to max, intervalMs apart */
   | { type: 'tap_all_found'; max?: number; intervalMs?: number; offsetX?: number; offsetY?: number }
   /** v2.7 aimbot: drag the look area so the crosshair moves onto the found object. drag = offset * sensitivity, clamped to maxStep */
-  | { type: 'aim_to_found'; x: number; y: number; crosshairX?: number; crosshairY?: number; sensitivity?: number; maxStep?: number; deadzone?: number; duration?: number; finger?: number; offsetX?: number; offsetY?: number; /** v2.8 adapt sensitivity from overshoot/undershoot (default true) */ autoTune?: boolean }
+  | { type: 'aim_to_found'; x: number; y: number; crosshairX?: number; crosshairY?: number; sensitivity?: number; maxStep?: number; deadzone?: number; duration?: number; finger?: number; offsetX?: number; offsetY?: number; /** v2.8 adapt sensitivity from overshoot/undershoot (default true) */ autoTune?: boolean; /** v3.0 lead the target: aim at where it will be predictMs from now (velocity from the last frames, default 0 = off) */ predictMs?: number; /** v3.0 only aim when the target is within this many px of the crosshair (0 = always) — assist mode keeps corrections tiny */ maxRange?: number }
   | { type: 'swipe'; x1: number; y1: number; x2: number; y2: number; duration?: number }
   | { type: 'long_press'; x: number; y: number; duration?: number }
   | { type: 'tap_sequence'; points: SeqPoint[] }
   | { type: 'repeat_tap'; x: number; y: number; count: number; intervalMs: number }
   | { type: 'joystick'; x: number; y: number; angle: number; distance: number; duration: number; finger: number; release: boolean }
   | { type: 'aim'; x: number; y: number; dx: number; dy: number; duration: number; finger: number; steps: number; release: boolean; /** v2.7 flip dx/dy sign every time this action runs (camera sweep) */ alternate?: boolean }
-  | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number }
+  | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number; /** v3.0 only fire when the found target is within this many px of the crosshair (needs a *_present condition) */ maxRange?: number; crosshairX?: number; crosshairY?: number }
   | { type: 'combo'; combo: ComboStep[] }
   | { type: 'finger_up'; finger: number }
   | { type: 'back' } | { type: 'home' }
@@ -185,6 +185,8 @@ export interface Bot {
   autoStart?: boolean
   /** v2.8 learned parameters reported by the phone (e.g. aim_to_found sensitivity per action key) */
   learned?: Record<string, number>
+  /** v3.0 assist mode: the USER plays (moves, turns the camera); the bot only injects micro-actions (≤60 ms aim nudges + fire taps) when its trigger colour appears. No movement/sweep rules. */
+  assist?: boolean
 }
 /** Live bot status reported by the phone */
 export interface BotStatusMessage { kind: 'bot_status'; botId?: string; name?: string; running: boolean; ticks?: number; fired?: number; lastRule?: string; startedAt?: number; stoppedBy?: string; error?: string; ts: number; /** v2.7 */ ruleHits?: Record<string, number>; avgTickMs?: number; /** v2.8 self-tuned params (aim gain per action) */ learned?: Record<string, number>; /** v2.8 how the run was started: notification|overlay|volume|auto|relay */ startedBy?: string }

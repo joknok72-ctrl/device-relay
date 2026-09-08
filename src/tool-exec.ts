@@ -698,7 +698,7 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
       if (a.type === 'tap_found' && !hasFoundCond) return { error: `rules[${i}] (${name}) uses tap_found but has no color_present/object_present/pixel_is/text_present condition` }
       if (a.type === 'tap_all_found' && !hasObjectCond) return { error: `rules[${i}] (${name}) uses tap_all_found but has no object_present condition` }
       if (a.type === 'aim_to_found' && !hasFoundCond) return { error: `rules[${i}] (${name}) uses aim_to_found but has no *_present condition` }
-      if (a.type === 'aim_to_found') { if (!isFin(a.x) || !isFin(a.y)) return { error: `rules[${i}].then[${t}] aim_to_found needs x,y (start point on the look area, or at:"@look")` }; a.sensitivity ??= 1; a.maxStep ??= 300; a.deadzone ??= 12; a.duration ??= 60; a.finger ??= 1; if (a.autoTune !== false) delete a.autoTune }
+      if (a.type === 'aim_to_found') { if (!isFin(a.x) || !isFin(a.y)) return { error: `rules[${i}].then[${t}] aim_to_found needs x,y (start point on the look area, or at:"@look")` }; a.sensitivity ??= 1; a.maxStep ??= 300; a.deadzone ??= 12; a.duration ??= 60; a.finger ??= 1; if (a.autoTune !== false) delete a.autoTune; if (!isFin(a.predictMs) || a.predictMs <= 0) delete a.predictMs; else a.predictMs = Math.min(a.predictMs, 600); if (!isFin(a.maxRange) || a.maxRange <= 0) delete a.maxRange }
       if (a.type === 'tap_all_found') { a.max ??= 5; a.intervalMs ??= 40 }
       if (['tap', 'long_press', 'repeat_tap', 'joystick', 'aim', 'fire_burst'].includes(a.type) && (!isFin(a.x) || !isFin(a.y))) return { error: `rules[${i}].then[${t}] (${a.type}) needs x,y (or at:"@control")` }
       if (a.type === 'swipe' && ![a.x1, a.y1, a.x2, a.y2].every(isFin)) return { error: `rules[${i}].then[${t}] swipe needs x1,y1,x2,y2` }
@@ -709,7 +709,7 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
       // defaults matching the phone's expectations
       if (a.type === 'joystick') { if (!isFin(a.angle)) { const m: Record<string, number> = { right: 0, 'down-right': 45, down: 90, 'down-left': 135, left: 180, 'up-left': 225, up: 270, 'up-right': 315 }; a.angle = m[String(a.direction ?? 'up').toLowerCase()] ?? 270; delete a.direction } a.distance ??= 150; a.duration ??= 500; a.finger ??= 0; a.release ??= true }
       if (a.type === 'aim') { a.dx ??= 0; a.dy ??= 0; a.duration ??= 120; a.finger ??= 1; a.steps ??= 4; a.release ??= true; if (a.alternate !== true) delete a.alternate }
-      if (a.type === 'fire_burst') { a.count ??= 5; a.intervalMs ??= 90; a.holdMs ??= 0 }
+      if (a.type === 'fire_burst') { a.count ??= 5; a.intervalMs ??= 90; a.holdMs ??= 0; if (!isFin(a.maxRange) || a.maxRange <= 0) delete a.maxRange; else if (!hasFoundCond) return { error: `rules[${i}].then[${t}] fire_burst.maxRange needs a *_present condition` } }
       if (a.type === 'repeat_tap') { a.count ??= 5; a.intervalMs ??= 100 }
       if (a.type === 'finger_up') a.finger ??= -1
     }
@@ -743,6 +743,7 @@ async function gameBot(env: Bindings, deviceId: string, args: Record<string, unk
     const missing = t.params.filter((pd) => pd.required && params[pd.key] === undefined).map((pd) => `${pd.key} (${pd.kind}: ${pd.doc})`)
     if (missing.length) return { ok: false, error: `template ${t.id} needs params: ${missing.join('; ')}`, params: t.params }
     args.rules = t.build(params)
+    if (params.mode === 'assist' || params.mode === 'trigger') args.assist = true
     args.tickMs ??= t.tickMs
     args.name ??= `${t.id}-bot`
     args.description ??= t.title
@@ -774,6 +775,7 @@ async function gameBot(env: Bindings, deviceId: string, args: Record<string, unk
       maxRunMs: isFin(args.maxRunMs) ? Math.min(Math.max(args.maxRunMs, 10_000), 21_600_000) : existing?.maxRunMs ?? 1_800_000,
       stopOnAppChange: typeof args.stopOnAppChange === 'boolean' ? args.stopOnAppChange : existing?.stopOnAppChange ?? true,
       ...((typeof args.autoStart === 'boolean' ? args.autoStart : existing?.autoStart) ? { autoStart: true } : {}),
+      ...((typeof args.assist === 'boolean' ? args.assist : existing?.assist) ? { assist: true } : {}),
       ...(existing?.learned ? { learned: existing.learned } : {}),
       createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(), ...(template ? { template } : existing?.template ? { template: existing.template } : {}),
     }
