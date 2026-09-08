@@ -52,7 +52,7 @@
 set -euo pipefail
 : "${RELAY_URL:?set RELAY_URL}" "${RELAY_TOKEN:?set RELAY_TOKEN}"
 RELAY_URL="${RELAY_URL%/}"
-AUTH=(-H "Authorization: Bearer $RELAY_TOKEN" -H "Content-Type: application/json")
+AUTH=(-H "Authorization: Bearer $RELAY_TOKEN" -H "Content-Type: application/json" -H "User-Agent: device-relay-phone.sh/2.7")
 
 dev() {
   if [[ -n "${RELAY_DEVICE:-}" ]]; then echo "$RELAY_DEVICE"; return; fi

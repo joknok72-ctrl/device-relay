@@ -164,7 +164,7 @@
 
   function fillQuickStart(me) {
     $('#pair-url').textContent = me.pairUrl
-    $('#chat-prompt').textContent = me.agentUrl + '\nافتح الرابط ونفّذ ما فيه، ثم: <مهمتك هنا>'
+    $('#chat-prompt').textContent = me.agentUrl + '\nافتح الرابط ونفّذ ما فيه (استخدم curl أو requests مع هيدر User-Agent — لو ظهر 403 error 1010 فهذا حجب Cloudflare لـ Python-urllib، غيّر الـ User-Agent وليس التوكن)، ثم: <مهمتك هنا>'
     $('#mcp-cli').textContent = `claude mcp add --transport http phone ${me.mcpUrl}`
     $('#mcp-json').textContent = JSON.stringify({ mcpServers: { phone: { url: me.mcpUrl } } }, null, 2)
     $('#monitor-link').href = me.monitorUrl; $('#monitor-link2').href = me.monitorUrl

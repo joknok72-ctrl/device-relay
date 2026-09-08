@@ -44,6 +44,13 @@ from typing import Any
 
 import requests
 
+
+def _mk_session() -> requests.Session:
+    s = requests.Session()
+    # Cloudflare's Browser Integrity Check blocks Python-urllib/libwww-perl UAs with 403/1010; always identify ourselves.
+    s.headers['User-Agent'] = 'device-relay-agent-runner/2.7'
+    return s
+
 # ----------------------------------------------------------------------------- utils
 C = {"g": "\033[92m", "r": "\033[91m", "y": "\033[93m", "b": "\033[94m", "d": "\033[90m", "x": "\033[0m"}
 
@@ -60,7 +67,7 @@ class Relay:
     token: str
     device: str | None = None
     timeout: int = 40
-    session: requests.Session = field(default_factory=requests.Session)
+    session: requests.Session = field(default_factory=lambda: _mk_session())
 
     def __post_init__(self) -> None:
         self.url = self.url.rstrip("/")
@@ -147,7 +154,7 @@ class AIAgent:
         self.model = model
         self.verbose = verbose
         self.base = (base_url or "https://api.openai.com/v1").rstrip("/")
-        self.http = requests.Session()
+        self.http = _mk_session()
         self.http.headers.update({"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
         self.tools = relay.tools_schema("openai")
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]

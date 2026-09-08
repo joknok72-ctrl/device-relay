@@ -154,6 +154,8 @@ check boot-anatomy 'SHOOTER BOT ANATOMY' "$B"
 check boot-highlight-tip 'enemy highlight' "$B"
 check boot-aimbot 'aim_to_found' "$B"
 check boot-sweep 'alternate:true' "$B"
+check boot-ua-rule 'error code: 1010' "$B"
+check phone-sh-ua 'User-Agent: device-relay-phone.sh' "$(curl -s $U/phone.sh)"
 
 echo "== memory shows template"
 check mem-template '"template":"shooter"' "$(curl -s "${A[@]}" "$U/api/admin/devices/$D/memory")"

@@ -93,6 +93,7 @@ export RELAY_TOKEN="${token}"
 export RELAY_DEVICE="${target?.deviceId ?? ''}"
 ${scope}
 Human live monitor (share with the user if they want to watch): ${origin}/monitor/${token}
+⚠ HTTP CLIENT RULE: always send a User-Agent header, e.g. "User-Agent: device-relay-agent/1.0". Cloudflare's edge rejects requests whose UA is Python-urllib/* or libwww-perl/* with "403 error code: 1010" BEFORE they reach this server — that is NOT a token problem. curl / requests / httpx / fetch / axios are fine; if you use urllib.request set req.add_header("User-Agent","device-relay-agent/1.0"). A 403 whose body is JSON {"error":...} comes from this server (token/scope); a 403 HTML page with "error code: 1010" is the UA block.
 
 ## 2. Live device status (at the time of this request)
 ${deviceLine}

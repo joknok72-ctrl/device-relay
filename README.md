@@ -429,6 +429,12 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - `DeviceRoom` يحتفظ أيضًا بآخر لقطة في الذاكرة وطابور أوامر الإدخال، و**notes** (حتى 40) و**macros** (حتى 30) دائمة لكل جهاز.
 - لا توجد قاعدة بيانات خارجية؛ التخزين داخل Durable Objects (SQLite-backed).
 
+## استكشاف الأخطاء: `403 error code: 1010` من الـ AI
+هذا ليس خطأ توكن: Cloudflare (Browser Integrity Check على مستوى الحافة) يرفض الطلبات التي يكون `User-Agent` فيها `Python-urllib/*` أو `libwww-perl/*` قبل أن تصل للسيرفر. صفحة `/agent` تُفتح (المتصفح/curl) لكن `POST /api/.../tools/call` من بيئة تنفيذ الـ AI (urllib) يرجع 403 بصفحة HTML فيها "error code: 1010".
+- الحل من جهة العميل: أرسل `User-Agent` مخصّصًا (مثلًا `device-relay-agent/1.0`) — `phone.sh` و`agent_runner.py` يفعلان ذلك تلقائيًا من v2.7، والـ bootstrap يشرحها للـ AI في القسم 1.
+- الحل الدائم من جهة السيرفر (يدوي، مرة واحدة): Cloudflare Dashboard → **Security → Settings → Browser Integrity Check → Off** (أو قاعدة WAF: `http.host eq "device-relay.<acct>.workers.dev" → Skip`). الـ Worker لا يستطيع تعطيلها من الكود.
+- للتمييز: 403 بجسم JSON `{"error":...}` = من السيرفر (توكن/نطاق)؛ 403 HTML مع 1010 = حجب الـ UA.
+
 ## غير منجز بعد / خطوات مقترحة
 - [x] ~~كتابة نص، فتح تطبيق، قراءة عناصر الشاشة~~ (v1.2)
 - [x] ~~توكن مختلف لكل جهاز / صلاحيات~~ (v1.4)
