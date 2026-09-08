@@ -81,18 +81,23 @@ app.get('/agent/:token', async (c) => {
   let notes: import('./types').Note[] = []
   let macros: import('./types').Macro[] = []
   let screens: import('./types').ScreenLabel[] = []
+  const extras: import('./agent-bootstrap').BootstrapExtras = {}
   if (target) {
     const r = room(c, target.deviceId)
     try {
-      const [n, m, s] = await Promise.all([
+      const [n, m, s, mem] = await Promise.all([
         r.fetch(`https://do/notes?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ notes: import('./types').Note[] }>),
         r.fetch(`https://do/macros?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ macros: import('./types').Macro[] }>),
         r.fetch(`https://do/screens?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ screens: import('./types').ScreenLabel[] }>),
+        r.fetch(`https://do/memory?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ groups: { app: string; label?: string; profile?: import('./types').GameProfile }[]; sessions: import('./types').PlaySession[]; currentApp: string }>),
       ])
       notes = n.notes; macros = m.macros; screens = s.screens
+      extras.profiles = mem.groups.map((g) => g.profile).filter((p): p is import('./types').GameProfile => !!p)
+      extras.sessions = mem.sessions; extras.currentApp = mem.currentApp
+      extras.appLabels = Object.fromEntries(mem.groups.filter((g) => g.label).map((g) => [g.app, g.label as string]))
     } catch { /* ignore */ }
   }
-  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos, auth, notes, macros, screens), 200, { 'Cache-Control': 'no-store' })
+  return c.text(agentBootstrap(new URL(c.req.url).origin, token, infos, auth, notes, macros, screens, extras), 200, { 'Cache-Control': 'no-store' })
 })
 
 /** MCP with token in the URL (for clients that cannot set headers) */

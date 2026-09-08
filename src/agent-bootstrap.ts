@@ -1,4 +1,4 @@
-import type { AuthContext, DeviceInfo, Macro, Note, ScreenLabel } from './types'
+import type { AuthContext, DeviceInfo, GameProfile, Macro, Note, PlaySession, ScreenLabel } from './types'
 import { TOOLS } from './tools'
 
 /**
@@ -6,7 +6,38 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = [], screens: ScreenLabel[] = []): string {
+export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string> }
+
+export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = [], screens: ScreenLabel[] = [], extras: BootstrapExtras = {}): string {
+  const profiles = extras.profiles ?? []
+  const sessions = extras.sessions ?? []
+  const currentApp = extras.currentApp ?? ''
+  const fmtProfile = (p: GameProfile) => {
+    const lines: string[] = [`  ▶ ${p.label ?? extras.appLabels?.[p.app] ?? p.app}  (${p.app})`]
+    const ctl = Object.entries(p.controls); if (ctl.length) lines.push('    controls: ' + ctl.map(([k, v]) => `@${k}=(${v.x},${v.y})${v.reactMs ? `~${v.reactMs}ms` : ''}${v.note ? ` "${v.note}"` : ''}`).join('  '))
+    const col = Object.entries(p.colors); if (col.length) lines.push('    colors:   ' + col.map(([k, v]) => `@${k}=${v.hex}${v.tolerance ? `±${v.tolerance}` : ''}`).join('  '))
+    const reg = Object.entries(p.regions); if (reg.length) lines.push('    regions:  ' + reg.map(([k, v]) => `@${k}={${v.x},${v.y},${v.w}x${v.h}}`).join('  '))
+    const set = Object.entries(p.settings); if (set.length) lines.push('    settings: ' + set.map(([k, v]) => `@${k}=${JSON.stringify(v)}`).join('  '))
+    return lines.join('\n')
+  }
+  const profilesBlock = profiles.length === 0
+    ? '  (none yet — after sample_colors + calibrate, save with game_profile set:{controls:{jump:{x,y}}, colors:{enemy:{hex}}, regions:{score:{x,y,w,h}}} so the NEXT chat starts instantly)'
+    : profiles.map(fmtProfile).join('\n')
+  const sessionsBlock = sessions.length === 0
+    ? '  (no play history yet)'
+    : sessions.slice(0, 8).map((s) => `  ${new Date(s.start).toISOString().slice(0, 16).replace('T', ' ')}  ${Math.max(1, Math.round((s.end - s.start) / 60000))}min  ${s.label ?? s.app}  ${s.commands} cmds${s.failed ? ` (${s.failed} failed)` : ''}`).join('\n')
+  const cur = profiles.find((p) => p.app === currentApp)
+  const curNotes = notes.filter((n) => n.app === currentApp)
+  const curMacros = macros.filter((m) => m.app === currentApp)
+  const quickStart = currentApp
+    ? `## 0. QUICK START — the phone is currently in: ${cur?.label ?? extras.appLabels?.[currentApp] ?? currentApp}  (${currentApp})
+${cur ? `You already know this game. Use the @names below directly (tap at:"@jump", auto_react color:"@note" region:"@hitline", read_number region:"@score") — do NOT rediscover.
+${fmtProfile(cur)}` : 'No profile for this app yet → first turn: observe + sample_colors, calibrate each control, then game_profile set:{...}.'}
+${curNotes.length ? `Notes for this game: ${curNotes.map((n) => n.text).join(' | ')}` : ''}
+${curMacros.length ? `Macros for this game: ${curMacros.map((m) => `run_macro "${m.name}"`).join(', ')}` : ''}
+Suggested first call:  ${cur ? './phone.sh look' : './phone.sh look 100 && ./phone.sh palette'}
+`
+    : ''
   const screensBlock = screens.length === 0
     ? '  (none yet — label_screen "main-menu" etc. once per distinct screen; then observe/identify_screen tell you where you are)'
     : screens.map((s) => `  ${s.name}${s.app ? `  (${s.app})` : ''}${s.words.length ? `  words: ${s.words.slice(0, 5).join(' ')}` : ''}`).join('\n')
@@ -42,7 +73,7 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
   return `# DEVICE RELAY — AI AGENT BOOTSTRAP
 You (the AI) are the ONLY operator of a real Android phone. The human will not touch it.
 Everything you need is below. Do not ask the human for URLs, tokens or ids.
-
+${quickStart}
 ## 1. Credentials (already filled in)
 export RELAY_URL="${origin}"
 export RELAY_TOKEN="${token}"
@@ -104,6 +135,14 @@ ${macrosBlock}
 ## 5d. Labelled screens on this device (label_screen / identify_screen — observe returns screenName)
 ${screensBlock}
 
+## 5f. GAME PROFILES — structured knowledge you can reference by @name in ANY tool argument (game_profile)
+${profilesBlock}
+  Syntax: at:"@jump" (or x:"@jump", y:"@jump"), "@jump+20,-10" offsets, color:"@enemy", region:"@hud", colors:["@a","@b"], stopColor:"@gameover". Unknown @name → the error lists what exists.
+  Save as soon as you learn: game_profile set:{controls:{jump:{x:950,y:2100,reactMs:120}}, colors:{enemy:{hex:"#ff2020",tolerance:30}}, regions:{score:{x:0,y:60,w:500,h:120}}, settings:{lanes:4}}. game_profile history=true shows past sessions.
+
+## 5g. Play history on this device (most recent first)
+${sessionsBlock}
+
 ## 5e. Memory hygiene
 Everything above (notes, macros, screens) is grouped per app package. If the user says a game was UPDATED / looks different / your notes are wrong:
   recall forget="app" [app=<package>]   → wipe that game's notes (macros/screens: list_macros delete=..., identify_screen delete=...)
@@ -111,7 +150,7 @@ Everything above (notes, macros, screens) is grouped per app package. If the use
 The human can also review/delete/export all of it visually in the owner panel (/setup, section "ذاكرة الـ AI"). Never keep relying on notes that contradict what you observe — delete them and re-learn.
 
 ## 6. Operating rules
-0. START of every session: recall (notes for this app are in 5b) + history 10 (what the last session did) + look. Then act.
+0. START of every session: read section 0 (QUICK START) and 5f (profiles). If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
 1. Observe before acting: "ui" first (exact, cheap). Use "look" (observe) when visuals matter (games, images, WebView) or when ui is empty — it gives image + text + app + diff at once.
 2. After every action that changes the screen, observe again and verify before the next step.
 3. Coordinates are ORIGINAL screen pixels (screen.w x screen.h). Elements from "ui" are already original. Screenshot px / scale = original.
@@ -182,7 +221,7 @@ OCR (v1.7 — read text where there is no ui tree):
   find_colors ["#a","#b",...]  → several colours in one frame (enemies + gems + HP at once)
   session_stats                → your own success rate / latency; adapt if flaky
   live_preview true            → stream frames to the human's /monitor page when they want to watch
-Decision guide: new game → sample_colors, then calibrate each control, then remember. Moving target → track_object then tap the predicted point. Need a score/timer/HP value → read_number / watch_value (never eyeball digits from a screenshot). About to do a repeatable sequence → record_macro first. Rhythm/multi-column reflexes → auto_react with lanes + stopColor. Several same-colour targets → find_objects then tap_sequence. Must react in <200ms → auto_react (phone-side). Lost / "which screen is this?" → identify_screen. Named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
+Decision guide: known game (profile in 5f) → play with @names right away. New game → sample_colors, calibrate each control, then game_profile set (not just remember). Moving target → track_object then tap the predicted point. Need a score/timer/HP value → read_number / watch_value (never eyeball digits from a screenshot). About to do a repeatable sequence → record_macro first. Rhythm/multi-column reflexes → auto_react with lanes + stopColor. Several same-colour targets → find_objects then tap_sequence. Must react in <200ms → auto_react (phone-side). Lost / "which screen is this?" → identify_screen. Named button anywhere → smart_tap. Popup in the way → dismiss_popups. Text on screen → tap_text / wait_for_text. Known button position → tap/tap_sequence. Moving/coloured target → tap_color or game_loop. Unknown layout → shot with grid, then remember. Waiting for something → watch_color / wait_pixel / wait_for_screen, never sleep-polling.
 Rules for games: never spam raw "tap" in a loop over the network — use repeat_tap/tap_sequence. Prefer region crops at maxWidth 1080 over full-screen 540 when reading small text. Verify outcomes with find_color/get_pixels before claiming a win. If the game shows a permission/ad/popup, handle it, then "remember" how you dismissed it.
 `
 }
