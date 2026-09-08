@@ -169,6 +169,13 @@
 - **الصانع**: نوع "شوتر — هيدشوت" أول حاجة فيه "لون رأس العدو ★" وقائمة الوضع بالعربي (مساعد/زناد/كامل)، مدى المساعدة، توقّع الحركة، رفع نقطة الضرب.
 - Android 3.0.0: `aim_to_found` تتبّع سرعة الهدف + `predictMs` + بوابة `maxRange`؛ `fire_burst.maxRange`.
 
+**🌈 v3.1 — كشف أدقّ في الظل والإضاءة + تثبيت هدف + بوابة إطلاق + إعداد Free Fire بضغطة**
+- **مطابقة بدرجة اللون `match:"hue"`** (`ColorMatcher` على الجهاز): تقارن الـ Hue بالدرجات (تسامح 18–30°) مع شرط تشبّع/إضاءة أدنى — الإطار الأحمر يبقى أحمر في الظل وفي الشمس. متاحة في `color_present/object_present` و`find_objects` وقالب الشوتر (افتراضي hue) وقالب `color_tap`.
+- **تثبيت الهدف `lockRadius`** (افتراضي 220px): البوت يظل على نفس العدو اللي اختاره في الـ tick السابق بدل ما ينط بين عدوين.
+- **بوابة الإطلاق `fire_burst.gateErr`** (افتراضي 60px): لا يطلق وهو لسه بيصحّح التصويب مسافة كبيرة — يوفّر الذخيرة ويزوّد دقة الهيدشوت.
+- **الصانع**: كارت **"🔥 Free Fire — هيدشوت مساعد (جاهز)"** يضبط كل شيء مسبقًا (مساعد + Hue + تثبيت + توقّع حركة + بوابة) — تعلّم لون الراس وزر الضرب ومساحة التصويب وتحفظ. قائمة "طريقة مطابقة اللون" والتحقق من اللون بنفس الوضع.
+- Android 3.1.0.
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -179,6 +186,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v3.1**: `ColorMatcher` (rgb/hue)، target lock، fire gate، `find_objects.match`
 - **v3.0**: `aim_to_found` lead prediction + assist-range gate، `fire_burst.maxRange` (trigger-bot)
 - **v2.8**: `BotOverlay` فقاعة عائمة، `onKeyEvent` أزرار الصوت، `onForegroundApp` → autoStart، auto-tune لحساسية التصويب، `learned/startedBy` في `bot_status`
 - **v2.7**: `BotEngine` — كشف أجسام (`scanObjects`) مع pick/size، ألوان متعددة، `forMs`، `tap_all_found`، **`aim_to_found` aimbot** تناسبي مع deadzone، `aim.alternate`، `maxFires`، `ruleHits/avgTickMs`
@@ -443,7 +451,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v30.sh   # 930 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v31.sh   # 958 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -474,6 +482,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v3.0 — shooter assist/trigger/full modes: the user plays, the bot snaps aim to the head + fires within range, lead prediction; builder shooter wizard; 79 tools; 930 e2e checks; Android 3.0.0)
+- **Last Updated**: 2026-09-08 (v3.1 — hue colour matching, target lock, fire gate, Free Fire one-tap preset in the builder; 79 tools; 958 e2e checks; Android 3.1.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
