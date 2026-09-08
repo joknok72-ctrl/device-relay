@@ -18,6 +18,11 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
     const col = Object.entries(p.colors); if (col.length) lines.push('    colors:   ' + col.map(([k, v]) => `@${k}=${v.hex}${v.tolerance ? `±${v.tolerance}` : ''}`).join('  '))
     const reg = Object.entries(p.regions); if (reg.length) lines.push('    regions:  ' + reg.map(([k, v]) => `@${k}={${v.x},${v.y},${v.w}x${v.h}}`).join('  '))
     const set = Object.entries(p.settings); if (set.length) lines.push('    settings: ' + set.map(([k, v]) => `@${k}=${JSON.stringify(v)}`).join('  '))
+    if (p.bestScore !== undefined || p.lastReport) {
+      const r = p.lastReport
+      lines.push(`    progress: ${p.bestScore !== undefined ? `best score ${p.bestScore}` : ''}${p.reports ? ` · ${p.reports} reports` : ''}`)
+      if (r) lines.push(`    last session (${new Date(r.ts).toISOString().slice(0, 10)}${r.outcome ? `, ${r.outcome}` : ''}${r.score !== undefined ? `, score ${r.score}` : ''}${r.level ? `, ${r.level}` : ''}): ${r.summary}${r.nextTime ? `\n    NEXT TIME: ${r.nextTime}` : ''}${r.learned?.length ? `\n    learned: ${r.learned.join(' | ')}` : ''}${r.blockers?.length ? `\n    blockers: ${r.blockers.join(' | ')}` : ''}`)
+    }
     return lines.join('\n')
   }
   const profilesBlock = profiles.length === 0
@@ -25,7 +30,7 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
     : profiles.map(fmtProfile).join('\n')
   const sessionsBlock = sessions.length === 0
     ? '  (no play history yet)'
-    : sessions.slice(0, 8).map((s) => `  ${new Date(s.start).toISOString().slice(0, 16).replace('T', ' ')}  ${Math.max(1, Math.round((s.end - s.start) / 60000))}min  ${s.label ?? s.app}  ${s.commands} cmds${s.failed ? ` (${s.failed} failed)` : ''}`).join('\n')
+    : sessions.slice(0, 8).map((s) => `  ${new Date(s.start).toISOString().slice(0, 16).replace('T', ' ')}  ${Math.max(1, Math.round((s.end - s.start) / 60000))}min  ${s.label ?? s.app}  ${s.commands} cmds${s.failed ? ` (${s.failed} failed)` : ''}${s.report ? `  → ${s.report.outcome ?? 'report'}${s.report.score !== undefined ? ` ${s.report.score}` : ''}: ${s.report.summary.slice(0, 80)}` : '  (no report)'}`).join('\n')
   const cur = profiles.find((p) => p.app === currentApp)
   const curNotes = notes.filter((n) => n.app === currentApp)
   const curMacros = macros.filter((m) => m.app === currentApp)
@@ -36,6 +41,7 @@ ${fmtProfile(cur)}` : 'No profile for this app yet → first turn: observe + sam
 ${curNotes.length ? `Notes for this game: ${curNotes.map((n) => n.text).join(' | ')}` : ''}
 ${curMacros.length ? `Macros for this game: ${curMacros.map((m) => `run_macro "${m.name}"`).join(', ')}` : ''}
 Suggested first call:  ${cur ? './phone.sh look' : './phone.sh look 100 && ./phone.sh palette'}
+When you finish (or get stuck):  session_report summary="..." outcome=win|loss|progress|stuck score=N nextTime="..."  — mandatory, it is how the next chat gets smarter.
 `
     : ''
   const screensBlock = screens.length === 0
@@ -138,7 +144,10 @@ ${screensBlock}
 ## 5f. GAME PROFILES — structured knowledge you can reference by @name in ANY tool argument (game_profile)
 ${profilesBlock}
   Syntax: at:"@jump" (or x:"@jump", y:"@jump"), "@jump+20,-10" offsets, color:"@enemy", region:"@hud", colors:["@a","@b"], stopColor:"@gameover". Unknown @name → the error lists what exists.
-  Save as soon as you learn: game_profile set:{controls:{jump:{x:950,y:2100,reactMs:120}}, colors:{enemy:{hex:"#ff2020",tolerance:30}}, regions:{score:{x:0,y:60,w:500,h:120}}, settings:{lanes:4}}. game_profile history=true shows past sessions.
+  Save as soon as you learn: game_profile set:{controls:{jump:{x:950,y:2100,reactMs:120}}, colors:{enemy:{hex:"#ff2020",tolerance:30}}, regions:{score:{x:0,y:60,w:500,h:120}}, settings:{lanes:4}}. game_profile history=true shows past sessions (with their reports).
+  game_profile verify=true  → checks every @color/@region against the live screen and lists stale entries (use after a game update or when @names stop working).
+  observe is PROFILE-AWARE (v2.4): when a profile exists it also returns game.objects (each @color → count + biggest blobs) and game.values (numeric @regions like @score → number). One look = full game state.
+  session_report at the end of EVERY session (summary, outcome, score, learned[], nextTime). bestScore is tracked; the next chat sees the last report in QUICK START and 5f.
 
 ## 5g. Play history on this device (most recent first)
 ${sessionsBlock}
@@ -150,7 +159,7 @@ Everything above (notes, macros, screens) is grouped per app package. If the use
 The human can also review/delete/export all of it visually in the owner panel (/setup, section "ذاكرة الـ AI"). Never keep relying on notes that contradict what you observe — delete them and re-learn.
 
 ## 6. Operating rules
-0. START of every session: read section 0 (QUICK START) and 5f (profiles). If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
+0. START of every session: read section 0 (QUICK START, incl. the previous session's report and NEXT TIME advice) and 5f (profiles). END of every session: session_report. If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
 1. Observe before acting: "ui" first (exact, cheap). Use "look" (observe) when visuals matter (games, images, WebView) or when ui is empty — it gives image + text + app + diff at once.
 2. After every action that changes the screen, observe again and verify before the next step.
 3. Coordinates are ORIGINAL screen pixels (screen.w x screen.h). Elements from "ui" are already original. Screenshot px / scale = original.

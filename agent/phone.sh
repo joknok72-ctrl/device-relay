@@ -27,6 +27,8 @@
 #   ./phone.sh calib X Y                                # v2.1 calibrate: does this control react? how fast?
 #   ./phone.sh memory | memory wipe <package|all> | memory export   # v2.2 what the AI remembers, grouped per game (wipe needs admin token)
 #   ./phone.sh profile | profile set '<json {controls,colors,regions,settings}>' | profile unset '<json>' | profile delete | sessions [n]   # v2.3 @names
+#   ./phone.sh report "summary" [win|loss|progress|stuck] [score] ["next time advice"]   # v2.4 end-of-session handover (mandatory)
+#   ./phone.sh verify                                    # v2.4 check the profile against the live screen (stale @names)
 #   Any coordinate/colour/region arg accepts @names from the profile: tap @jump | tap @jump+20,-10 | color @enemy | objects @enemy | react @note 0,1900,1080,60
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
@@ -225,6 +227,20 @@ if r.get("hint"): print(" ", r["hint"])' ;;
              delete) call game_profile '{"delete":true}' | pretty ;;
              *) echo "profile: get | set '<json>' | unset '<json>' | label <name> | delete" >&2; exit 1 ;;
            esac ;;
+  report)  call session_report "$(python3 -c 'import json,sys
+a={"summary":sys.argv[1]}
+if len(sys.argv)>2 and sys.argv[2]: a["outcome"]=sys.argv[2]
+if len(sys.argv)>3 and sys.argv[3]: a["score"]=float(sys.argv[3])
+if len(sys.argv)>4 and sys.argv[4]: a["nextTime"]=sys.argv[4]
+print(json.dumps(a))' "${1:?summary}" "${2:-}" "${3:-}" "${4:-}")" | pretty ;;
+  verify)  call game_profile '{"verify":true}' | python3 -c '
+import json,sys; r=json.load(sys.stdin)
+if not r.get("ok"): print(r); sys.exit(1)
+v=r.get("verify") or {}
+for k,x in (v.get("colors") or {}).items(): print("  %-14s %s" % (k, ("present n=%d" % x["count"]) if x.get("present") else "NOT on screen"))
+for k,x in (v.get("regions") or {}).items(): print("  %-14s %d lines %s" % (k, x.get("lines",0), x.get("text")))
+for s in v.get("stale",[]): print("  STALE:", s)
+print(" ", v.get("verdict", r.get("hint","")))' ;;
   sessions) d=$(dev); curl -s "${AUTH[@]}" "$RELAY_URL/api/devices/$d/memory" | python3 -c '
 import json,sys,datetime; m=json.load(sys.stdin); n=int(sys.argv[1])
 for s in m.get("sessions",[])[:n]: print("  %s  %3dmin  %-28s %4d cmds  %d failed" % (datetime.datetime.fromtimestamp(s["start"]/1000).strftime("%Y-%m-%d %H:%M"), max(1,round((s["end"]-s["start"])/60000)), s.get("label") or s["app"], s["commands"], s["failed"]))
@@ -285,5 +301,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,49p' "$0" ;;
+  *) sed -n '2,51p' "$0" ;;
 esac
