@@ -122,8 +122,8 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
       const k = (key ?? '').toLowerCase()
       if (k === 'color' || k === 'stopcolor' || k === 'colors' || k === 'hex') { const c = p.colors[r.name]; if (!c) { error = `unknown color @${r.name} (known: ${Object.keys(p.colors).join(', ') || 'none'})`; return v } used.push('@' + r.name); return c.hex }
       if (k === 'region' || k === 'stopregion') { const g = p.regions[r.name]; if (!g) { error = `unknown region @${r.name} (known: ${Object.keys(p.regions).join(', ') || 'none'})`; return v } used.push('@' + r.name); return { x: g.x, y: g.y, w: g.w, h: g.h } }
-      if (/^(x|x1|x2|tapx|cx)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.x + r.dx }
-      if (/^(y|y1|y2|tapy|cy)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.y + (r.dx || 0) } // for y fields the single offset applies to y
+      if (/^(x|x1|x2|tapx|cx|crosshairx|nearx)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.x + r.dx }
+      if (/^(y|y1|y2|tapy|cy|crosshairy|neary)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.y + (r.dx || 0) } // for y fields the single offset applies to y
       // colors arrays
       const c = p.colors[r.name]; if (c) { used.push('@' + r.name); return c.hex }
       const s = p.settings[r.name]; if (s !== undefined) { used.push('@' + r.name); return s }
