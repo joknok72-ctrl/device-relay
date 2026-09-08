@@ -11,7 +11,7 @@ j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/nul
 call '{"name":"open_recents"}' >/dev/null; memdel 'kind=all' >/dev/null; call '{"name":"get_current_app"}' >/dev/null
 
 echo "== version + builder page"
-check version '"version":"3.1.0"' "$(curl -s $U/api/health)"
+check version '"version":"3.2.0"' "$(curl -s $U/api/health)"
 check me-builderUrl "/builder/$T" "$(curl -s "${A[@]}" $U/api/me)"
 check builder-page 'صانع البوتات' "$(curl -s $U/builder/$T)"
 check builder-js 'color_tap' "$(curl -s $U/builder.js)"

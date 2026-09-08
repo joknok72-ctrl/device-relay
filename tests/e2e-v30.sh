@@ -11,7 +11,7 @@ j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/nul
 call '{"name":"open_recents"}' >/dev/null; memdel 'kind=all' >/dev/null; call '{"name":"get_current_app"}' >/dev/null
 
 echo "== version"
-check version '"version":"3.1.0"' "$(curl -s $U/api/health)"
+check version '"version":"3.2.0"' "$(curl -s $U/api/health)"
 check tool-doc-modes 'SHOOTER MODES' "$(curl -s "$U/api/tools/schema?format=raw" | grep -o 'SHOOTER MODES' | head -1)"
 
 echo "== validation"

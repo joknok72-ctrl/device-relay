@@ -16,7 +16,7 @@ memdel 'kind=all' >/dev/null
 call '{"name":"get_current_app"}' >/dev/null
 
 echo "== version"
-check version '"version":"3.1.0"' "$(curl -s $U/api/health)"
+check version '"version":"3.2.0"' "$(curl -s $U/api/health)"
 check tools-79 '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== observe without profile"
