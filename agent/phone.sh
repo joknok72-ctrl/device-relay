@@ -208,7 +208,7 @@ if sys.argv[2]: a["value"]=float(sys.argv[2])
 if sys.argv[3]:
   x,y,w,h=map(int,sys.argv[3].split(",")); a["region"]={"x":x,"y":y,"w":w,"h":h}
 print(json.dumps(a))' "${1:-change}" "${2:-}" "${3:-}" "${4:-10000}")" | pretty ;;
-  profile) sub="${1:-get}"; case "$sub" in
+  profile) sub="${1:-get}"; shift || true; case "$sub" in
              get)    call game_profile '{"history":true}' | python3 -c '
 import json,sys; r=json.load(sys.stdin)
 if not r.get("ok"): print(r); sys.exit(1)
