@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, CommandMessage, DeviceInfo, LogEntry, Macro, Note, PhoneMessage, Recording, ScreenLabel } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, Recording, ScreenLabel } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
@@ -52,6 +52,11 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private recording: Recording | null = null
   /** v2.2 apps the AI has seen (package -> label, first/last seen) so memory can be grouped per game. */
   private apps: Record<string, { label?: string; first: number; last: number; n: number }> = {}
+  /** v2.3 structured per-app profiles (controls/colors/regions/settings) keyed by package. */
+  private profiles: Record<string, GameProfile> = {}
+  /** v2.3 play history: sessions (most recent first, max 100). */
+  private sessions: PlaySession[] = []
+  private currentApp = ''
 
   private inputBusy = false
   private inputQueue: Array<() => void> = []
@@ -74,6 +79,10 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (rec) this.recording = rec
       const apps = await ctx.storage.get<typeof this.apps>('apps')
       if (apps) this.apps = apps
+      const profiles = await ctx.storage.get<typeof this.profiles>('profiles')
+      if (profiles) this.profiles = profiles
+      const sessions = await ctx.storage.get<PlaySession[]>('sessions')
+      if (sessions) this.sessions = sessions
     })
   }
 
@@ -97,6 +106,19 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private updateLog(id: string, patch: Partial<LogEntry>) {
     const e = this.logs.find((l) => l.id === id)
     if (e) { Object.assign(e, patch); this.broadcastViewers({ kind: 'log', entry: e }) }
+  }
+  /** v2.3: extend the open session for this app or start a new one (gap > 10 min or app changed). */
+  private touchSession(app: string, label?: string, patch?: { commands?: number; failed?: number; screenshots?: number }) {
+    const now = Date.now()
+    const cur = this.sessions[0]
+    if (cur && cur.app === app && now - cur.end < 10 * 60_000) {
+      cur.end = now; if (label && !cur.label) cur.label = label
+      if (patch) { cur.commands += patch.commands ?? 0; cur.failed += patch.failed ?? 0; cur.screenshots += patch.screenshots ?? 0 }
+    } else {
+      this.sessions.unshift({ app, label, start: now, end: now, commands: patch?.commands ?? 0, failed: patch?.failed ?? 0, screenshots: patch?.screenshots ?? 0 })
+      if (this.sessions.length > 100) this.sessions.length = 100
+    }
+    this.ctx.waitUntil(this.ctx.storage.put('sessions', this.sessions))
   }
   private snapshotInfo(): DeviceInfo {
     this.info.online = this.phoneSockets().length > 0
@@ -207,17 +229,20 @@ export class DeviceRoom extends DurableObject<Bindings> {
     // ---------- v2.2 memory management (human-facing) ----------
     if (url.pathname.endsWith('/memory')) {
       if (request.method === 'GET') {
-        const groups: Record<string, { app: string; label?: string; lastSeen?: number; notes: (Note & { index: number })[]; macros: Macro[]; screens: ScreenLabel[] }> = {}
-        const g = (app: string) => (groups[app] ??= { app, label: this.apps[app]?.label, lastSeen: this.apps[app]?.last, notes: [], macros: [], screens: [] })
+        type Group = { app: string; label?: string; lastSeen?: number; notes: (Note & { index: number })[]; macros: Macro[]; screens: ScreenLabel[]; profile?: GameProfile; sessions: number; playedMs: number }
+        const groups: Record<string, Group> = {}
+        const g = (app: string): Group => (groups[app] ??= { app, label: this.apps[app]?.label ?? this.profiles[app]?.label, lastSeen: this.apps[app]?.last, notes: [], macros: [], screens: [], profile: this.profiles[app], sessions: 0, playedMs: 0 })
         this.notes.forEach((n, index) => g(n.app ?? '').notes.push({ ...n, index }))
         for (const m of this.macros) g(m.app ?? '').macros.push(m)
         for (const s of this.screens) g(s.app ?? '').screens.push(s)
-        for (const [app, meta] of Object.entries(this.apps)) if (!groups[app]) groups[app] = { app, label: meta.label, lastSeen: meta.last, notes: [], macros: [], screens: [] }
+        for (const app of Object.keys(this.profiles)) g(app)
+        for (const app of Object.keys(this.apps)) g(app)
+        for (const s of this.sessions) { const grp = g(s.app); grp.sessions++; grp.playedMs += s.end - s.start }
         const list = Object.values(groups).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
         return Response.json({
           deviceId: this.info.deviceId,
-          totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, recording: !!this.recording },
-          recording: this.recording, groups: list, apps: this.apps,
+          totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, profiles: Object.keys(this.profiles).length, sessions: this.sessions.length, recording: !!this.recording },
+          recording: this.recording, groups: list, apps: this.apps, sessions: this.sessions.slice(0, 20), currentApp: this.currentApp,
         })
       }
       if (request.method === 'DELETE') {
@@ -243,8 +268,11 @@ export class DeviceRoom extends DurableObject<Bindings> {
         if (kind === 'recording' || kind === 'all') { this.recording = null; await this.ctx.storage.delete('recording'); this.broadcastViewers({ kind: 'recording', active: false }) }
         if (kind === 'apps' || kind === 'all') { if (app !== null) delete this.apps[app]; else if (kind === 'apps') this.apps = {} }
         if (kind === 'all' && app === null) this.apps = {}
-        await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps)])
-        return Response.json({ ok: true, removed: { notes: before.notes - this.notes.length, macros: before.macros - this.macros.length, screens: before.screens - this.screens.length, apps: before.apps - Object.keys(this.apps).length }, totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length } })
+        const beforeProfiles = Object.keys(this.profiles).length, beforeSessions = this.sessions.length
+        if (kind === 'profiles' || kind === 'all') { if (app !== null) delete this.profiles[app]; else this.profiles = {} }
+        if (kind === 'sessions' || kind === 'all') { this.sessions = app !== null ? this.sessions.filter((s) => s.app !== app) : [] }
+        await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps), this.ctx.storage.put('profiles', this.profiles), this.ctx.storage.put('sessions', this.sessions)])
+        return Response.json({ ok: true, removed: { notes: before.notes - this.notes.length, macros: before.macros - this.macros.length, screens: before.screens - this.screens.length, apps: before.apps - Object.keys(this.apps).length, profiles: beforeProfiles - Object.keys(this.profiles).length, sessions: beforeSessions - this.sessions.length }, totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, profiles: Object.keys(this.profiles).length } })
       }
     }
     if (url.pathname.endsWith('/app-seen') && request.method === 'POST') {
@@ -258,8 +286,45 @@ export class DeviceRoom extends DurableObject<Bindings> {
         const keys = Object.keys(this.apps)
         if (keys.length > 60) { const oldest = keys.sort((a, b) => this.apps[a].last - this.apps[b].last)[0]; delete this.apps[oldest] }
         await this.ctx.storage.put('apps', this.apps)
+        this.currentApp = pkg
+        this.touchSession(pkg, label)
       }
       return Response.json({ ok: true })
+    }
+    // ---------- v2.3 profiles (structured per-app knowledge the AI references by @name) ----------
+    if (url.pathname.endsWith('/profile')) {
+      const app = url.searchParams.get('app') ?? ''
+      if (request.method === 'GET') return Response.json({ profile: app ? this.profiles[app] ?? null : null, apps: Object.keys(this.profiles), currentApp: this.currentApp })
+      if (request.method === 'POST') {
+        if (!app) return Response.json({ ok: false, error: 'app required' }, { status: 400 })
+        const patch = (await request.json()) as { label?: string; set?: Partial<Pick<GameProfile, 'controls' | 'colors' | 'regions' | 'settings'>>; unset?: { controls?: string[]; colors?: string[]; regions?: string[]; settings?: string[] }; replace?: GameProfile }
+        let p: GameProfile = this.profiles[app] ?? { app, controls: {}, colors: {}, regions: {}, settings: {}, ts: Date.now() }
+        if (patch.replace) p = { ...patch.replace, app, ts: Date.now() }
+        if (patch.label) p.label = patch.label.slice(0, 64)
+        for (const k of ['controls', 'colors', 'regions', 'settings'] as const) {
+          const s = patch.set?.[k] as Record<string, unknown> | undefined
+          if (s) for (const [name, v] of Object.entries(s)) { const key = name.toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_-]/g, '-').slice(0, 32); if (key) (p[k] as Record<string, unknown>)[key] = v }
+          for (const name of patch.unset?.[k] ?? []) delete (p[k] as Record<string, unknown>)[name.replace(/^@/, '')]
+          if (Object.keys(p[k]).length > 60) return Response.json({ ok: false, error: `too many ${k} (max 60)` }, { status: 400 })
+        }
+        p.ts = Date.now()
+        this.profiles[app] = p
+        if (Object.keys(this.profiles).length > 60) { const oldest = Object.values(this.profiles).sort((a, b) => a.ts - b.ts)[0]; delete this.profiles[oldest.app] }
+        await this.ctx.storage.put('profiles', this.profiles)
+        return Response.json({ ok: true, profile: p })
+      }
+      if (request.method === 'DELETE') {
+        const had = app ? (this.profiles[app] ? 1 : 0) : Object.keys(this.profiles).length
+        if (app) delete this.profiles[app]; else this.profiles = {}
+        await this.ctx.storage.put('profiles', this.profiles)
+        return Response.json({ ok: true, removed: had })
+      }
+    }
+    if (url.pathname.endsWith('/sessions') && request.method === 'GET') {
+      const app = url.searchParams.get('app')
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 30), 1), 100)
+      const list = (app ? this.sessions.filter((s) => s.app === app) : this.sessions).slice(0, limit)
+      return Response.json({ sessions: list, currentApp: this.currentApp })
     }
     if (url.pathname.endsWith('/recording')) {
       if (request.method === 'GET') return Response.json({ recording: this.recording })
@@ -385,7 +450,10 @@ export class DeviceRoom extends DurableObject<Bindings> {
     }
 
     try {
-      return await this.dispatch(id, action, wait, ts, queuedMs)
+      const res = await this.dispatch(id, action, wait, ts, queuedMs)
+      // v2.3 play history: attribute the command to the current app's session
+      if (this.currentApp && action.type !== 'ping' && action.type !== 'current_app' && action.type !== 'screen_hash') this.touchSession(this.currentApp, undefined, { commands: 1, failed: res.ok ? 0 : 1, screenshots: action.type === 'screenshot' ? 1 : 0 })
+      return res
     } finally {
       if (!readOnly) this.releaseInput()
     }
