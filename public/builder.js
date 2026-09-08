@@ -30,26 +30,30 @@
       ],
     },
     shooter: {
-      icon: 'fa-crosshairs', title: 'شوتر (Free Fire / PUBG / CoD)',
-      doc: 'يكشف الأعداء كأجسام باللون الذي تحدده، يجرّ الكاميرا حتى يقع التصويب عليهم ويطلق رشقات — ولو مافيش عدو يلف الكاميرا يمين/شمال ويتقدّم. يتوقف على GAME OVER.',
+      icon: 'fa-crosshairs', title: 'شوتر (Free Fire / PUBG / CoD) — هيدشوت',
+      doc: 'الوضع الافتراضي "مساعد": أنت تلعب وتلف الكاميرا عادي، ولما لون الرأس يقرب من التصويب البوت يزقّ التصويب على الراس ويضرب رشقة — ثم يسيبك تكمّل. "زناد": أنت تصوّب وهو يضرب فقط لما الراس تحت التصويب. "كامل": يلعب لوحده (يصوّب، يضرب، يلف الكاميرا، يتقدّم، يعالج).',
       things: [
-        { key: 'enemy', kind: 'color', label: 'لون العدو', req: true, hint: 'اضغط على العدو (الأفضل: إطار/اسم/شريط صحة العدو أو لون التحديد من إعدادات اللعبة)' },
+        { key: 'head', kind: 'color', label: 'لون رأس العدو ★ (الأهم)', req: true, hint: 'اضغط على رأس العدو / علامة الرأس. الأفضل: فعّل "تحديد العدو" بلون صارخ من إعدادات اللعبة واضغط عليه' },
         { key: 'fire', kind: 'control', label: 'زر الضرب', req: true },
         { key: 'look', kind: 'control', label: 'مساحة التصويب (مكان فاضي في النص الأيمن)', req: true },
-        { key: 'stick', kind: 'control', label: 'عصا الحركة (مركزها)' },
-        { key: 'crosshair', kind: 'control', label: 'مكان التصويب (النقطة) — افتراضي منتصف الشاشة' },
+        { key: 'crosshair', kind: 'control', label: 'نقطة التصويب (الافتراضي: منتصف الشاشة)' },
+        { key: 'enemy', kind: 'color', label: 'لون جسم العدو (اختياري — للوضع الكامل)' },
+        { key: 'stick', kind: 'control', label: 'عصا الحركة (للوضع الكامل)' },
         { key: 'hp', kind: 'region', label: 'منطقة رقم الصحة (اسحب مستطيل)' },
         { key: 'heal', kind: 'control', label: 'زر العلاج' },
-        { key: 'head', kind: 'color', label: 'لون رأس العدو (للهيدشوت — اختياري)', hint: 'اضغط على علامة/لون الرأس بالذات' },
-        { key: 'evade', kind: 'control', label: 'زر القرفصة/القفز (يتفاداهم — اختياري)' },
-        { key: 'playAgain', kind: 'control', label: 'زر PLAY AGAIN (ماتشات متواصلة — اختياري)' },
+        { key: 'evade', kind: 'control', label: 'زر القرفصة/القفز (الوضع الكامل)' },
+        { key: 'playAgain', kind: 'control', label: 'زر PLAY AGAIN (الوضع الكامل)' },
       ],
       tune: [
-        { key: 'sensitivity', label: 'حساسية التصويب', min: 0.3, max: 2, step: 0.1, def: 0.9, doc: 'كاميرا بطيئة → ارفعها، الكاميرا تعدّي الهدف → اخفضها. البوت يعدّلها لوحده أثناء اللعب.' },
+        { key: 'mode', label: 'الوضع', options: ['assist', 'trigger', 'full'], labels: { assist: 'مساعد — أنا ألعب وهو يزقّ التصويب على الراس ويضرب', trigger: 'زناد — أنا أصوّب وهو يضرب لما الراس تحت التصويب', full: 'كامل — يلعب لوحده' }, def: 'assist' },
+        { key: 'assistRange', label: 'مدى المساعدة (px من التصويب)', min: 80, max: 700, step: 20, def: 320, doc: 'أنت تقرّب التصويب من العدو، والبوت يكمّل لو الراس في هذا المدى. أكبر = يتدخل من بعيد.' },
+        { key: 'sensitivity', label: 'حساسية التصويب', min: 0.3, max: 2, step: 0.1, def: 0.9, doc: 'تتعلّم لوحدها أثناء اللعب' },
+        { key: 'predictMs', label: 'توقّع الحركة (ms)', min: 0, max: 300, step: 20, def: 80, doc: 'يصوّب على مكان الراس بعد هذه المدة (للأعداء اللي بتجري)' },
         { key: 'fireCount', label: 'طلقات في الرشقة', min: 2, max: 15, step: 1, def: 6 },
         { key: 'fireIntervalMs', label: 'الفاصل بين الطلقات (ms)', min: 40, max: 200, step: 10, def: 70 },
-        { key: 'sweepDx', label: 'مقدار لفّة الكاميرا لما مافيش عدو (px)', min: 80, max: 500, step: 20, def: 260 },
-        { key: 'tolerance', label: 'تسامح اللون', min: 10, max: 70, step: 2, def: 32, doc: 'زوّده لو العدو مش بيتكشف، قلّله لو بيضرب في حاجات مش أعداء' },
+        { key: 'tolerance', label: 'تسامح اللون', min: 10, max: 70, step: 2, def: 32 },
+        { key: 'headOffsetY', label: 'ارفع نقطة الضرب عن مركز اللون (px، سالب = أعلى)', min: -80, max: 40, step: 5, def: 0, doc: 'لو اللون بيغطي الجسم كله: -25 تقريبًا يخلي الضربة على الراس' },
+        { key: 'sweepDx', label: 'لفّة الكاميرا لما مافيش عدو (الوضع الكامل)', min: 80, max: 500, step: 20, def: 260 },
         { key: 'minSize', label: 'أصغر حجم عدو (px)', min: 4, max: 60, step: 2, def: 10 },
         { key: 'hpLow', label: 'يعالج لما الصحة أقل من', min: 5, max: 80, step: 5, def: 30 },
       ],
@@ -279,7 +283,7 @@
     const el = $('#tune'); el.innerHTML = ''
     for (const t of TYPES[typeId].tune) {
       const d = document.createElement('label'); d.className = 'block bg-slate-800/60 rounded-lg p-2'
-      if (t.options) d.innerHTML = `<div class="text-xs text-slate-400 mb-1">${t.label}</div><select data-tune="${t.key}" class="bg-slate-900 rounded px-2 py-1 w-full mono ltr">${t.options.map((o) => `<option ${o === t.def ? 'selected' : ''}>${o}</option>`).join('')}</select>`
+      if (t.options) d.innerHTML = `<div class="text-xs text-slate-400 mb-1">${t.label}</div><select data-tune="${t.key}" class="bg-slate-900 rounded px-2 py-1 w-full">${t.options.map((o) => `<option value="${o}" ${o === t.def ? 'selected' : ''}>${(t.labels && t.labels[o]) || o || '—'}</option>`).join('')}</select>`
       else d.innerHTML = `<div class="text-xs text-slate-400 mb-1 flex justify-between"><span>${t.label}</span><b class="mono" id="tv-${t.key}">${t.def}</b></div><input type="range" data-tune="${t.key}" min="${t.min}" max="${t.max}" step="${t.step}" value="${t.def}" class="w-full accent-emerald-400">${t.doc ? `<div class="text-[11px] text-slate-500 mt-1">${t.doc}</div>` : ''}`
       el.appendChild(d)
     }
@@ -294,6 +298,7 @@
     const p = {}
     for (const t of TYPES[typeId].tune) p[t.key] = tuneVal(t.key, t.def)
     for (const t of things()) { const m = marks[t.key]; if (!m) continue; p[t.key] = '@' + t.key }
+    if (typeId === 'shooter' && !p.enemy && p.head) p.enemy = '@head'
     if (marks.close) { p.close = true; p.closeColor = '@close' }
     return p
   }

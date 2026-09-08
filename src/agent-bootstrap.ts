@@ -6,7 +6,7 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; bots?: { id: string; app: string; name: string; description?: string; rules: unknown[]; runs?: number; lastRun?: { start: number; end?: number; fired: number; stoppedBy?: string }; autoStart?: boolean; template?: string; learned?: Record<string, number> }[]; botStatus?: { running: boolean; name?: string; fired?: number } | null }
+export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; bots?: { id: string; app: string; name: string; description?: string; rules: unknown[]; runs?: number; lastRun?: { start: number; end?: number; fired: number; stoppedBy?: string }; autoStart?: boolean; assist?: boolean; template?: string; learned?: Record<string, number> }[]; botStatus?: { running: boolean; name?: string; fired?: number } | null }
 
 export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = [], screens: ScreenLabel[] = [], extras: BootstrapExtras = {}): string {
   const profiles = extras.profiles ?? []
@@ -33,7 +33,7 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
     : sessions.slice(0, 8).map((s) => `  ${new Date(s.start).toISOString().slice(0, 16).replace('T', ' ')}  ${Math.max(1, Math.round((s.end - s.start) / 60000))}min  ${s.label ?? s.app}  ${s.commands} cmds${s.failed ? ` (${s.failed} failed)` : ''}${s.report ? `  → ${s.report.outcome ?? 'report'}${s.report.score !== undefined ? ` ${s.report.score}` : ''}: ${s.report.summary.slice(0, 80)}` : '  (no report)'}`).join('\n')
   const bots = extras.bots ?? []
   const botsFor = (app: string) => bots.filter((b) => b.app === app)
-  const fmtBots = (list: typeof bots) => list.map((b) => `  🤖 ${b.name}  (${b.app})  ${b.rules.length} rules, ran ${b.runs ?? 0}x${b.lastRun ? `, last: ${b.lastRun.fired} fired${b.lastRun.stoppedBy ? `, stopped by ${b.lastRun.stoppedBy}` : ''}` : ''}${b.autoStart ? '  [autoStart]' : ''}${b.template ? `  [template:${b.template}]` : ''}${b.learned && Object.keys(b.learned).length ? `  learned: ${Object.entries(b.learned).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}${b.description ? `  — ${b.description}` : ''}`).join('\n')
+  const fmtBots = (list: typeof bots) => list.map((b) => `  🤖 ${b.name}  (${b.app})  ${b.rules.length} rules, ran ${b.runs ?? 0}x${b.lastRun ? `, last: ${b.lastRun.fired} fired${b.lastRun.stoppedBy ? `, stopped by ${b.lastRun.stoppedBy}` : ''}` : ''}${b.autoStart ? '  [autoStart]' : ''}${b.assist ? '  [assist: user plays, bot helps]' : ''}${b.template ? `  [template:${b.template}]` : ''}${b.learned && Object.keys(b.learned).length ? `  learned: ${Object.entries(b.learned).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}${b.description ? `  — ${b.description}` : ''}`).join('\n')
   const botsBlock = bots.length ? fmtBots(bots) : '  (no bots yet — see section 8; the user wants bots they can start from the notification)'
   const botLive = extras.botStatus?.running ? `⚠ A BOT IS RUNNING RIGHT NOW on the phone: ${extras.botStatus.name} (${extras.botStatus.fired ?? 0} fired). Do not send input while it runs unless asked; game_bot action=stop to take over.` : ''
   const cur = profiles.find((p) => p.app === currentApp)
@@ -200,7 +200,12 @@ COLOUR STRATEGY — this decides whether the bot works (most important part of t
   • Several variants of one thing (teams, skins, note colours): colors:["@enemyRed","@enemyBlue"] in ONE condition (any-of), up to 8.
   • tolerance 24-40 for solid UI colours, 40-60 for shaded 3D objects. minSize (object_present) filters noise; maxSize separates head from body. forMs 100-300 kills single-frame flicker.
 
-SHOOTER BOT ANATOMY (what a strong Free Fire / PUBG / CoD bot looks like — the template builds exactly this):
+SHOOTER — THREE MODES (template=shooter, params.mode). Ask the user which one, default assist:
+  • assist (most wanted by Free Fire players): THE USER PLAYS — moves, turns the camera, picks fights. The bot watches for the HEAD colour; when a head is within assistRange (default 320 px) of the crosshair it injects a ≤40 ms aim nudge that puts the crosshair on the head (predictMs leads running targets) and fires a burst, then gives control back. Feels like a strong aim-assist + headshot trigger. Needs: head (colour), fire, look. Optional crosshair, hp+heal (auto-heal).
+  • trigger: the user aims; the bot only fires when the head is under the crosshair (maxRange). Zero aim interference.
+  • full: plays alone (below). Needs enemy, fire, look, stick.
+  Head colour: in Free Fire/PUBG/CoD settings turn on enemy highlight/outline with a vivid colour → @head = that colour (small blobs, maxSize 90 separates heads from bodies). If only the body is highlighted, use headOffsetY:-25 so shots land above the blob centre.
+SHOOTER BOT ANATOMY — full mode (what a strong Free Fire / PUBG / CoD bot looks like — the template builds exactly this):
   1. aim-and-fire (priority 10, cooldown 40): when object_present @enemy pick:nearest (nearest to the crosshair) → aim_to_found at:@look (drags the camera so the crosshair lands on the target; sensitivity = px dragged per px of error — calibrate: aim dx 200 and measure how far the world moved; too high = overshoot/jitter, too low = slow) → fire_burst at:@fire count 6 intervalMs 70. Because tick is 70 ms, this re-aims and re-fires continuously = tracking + spray.
   2. sweep-and-advance (priority 1): when object_absent @enemy forMs 600 → aim alternate:true dx 260 (camera turns right, next time left — LOOKS AROUND, so it never stares at a wall) + joystick @stick up 450 (advances). Add dy sweeps too if enemies come from above/below (rooftops).
   3. low-hp (priority 20): number_below @hp 30 → tap @heal + joystick down 900 (retreat). Or color_present @lowHpRed.

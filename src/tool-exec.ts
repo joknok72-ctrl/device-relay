@@ -742,7 +742,7 @@ async function gameBot(env: Bindings, deviceId: string, args: Record<string, unk
     for (const pd of t.params) if (pd.default !== undefined && params[pd.key] === undefined) params[pd.key] = pd.default
     const missing = t.params.filter((pd) => pd.required && params[pd.key] === undefined).map((pd) => `${pd.key} (${pd.kind}: ${pd.doc})`)
     if (missing.length) return { ok: false, error: `template ${t.id} needs params: ${missing.join('; ')}`, params: t.params }
-    args.rules = t.build(params)
+    try { args.rules = t.build(params) } catch (e) { return { ok: false, error: `template ${t.id}: ${(e as Error).message}`, params: t.params } }
     if (params.mode === 'assist' || params.mode === 'trigger') args.assist = true
     args.tickMs ??= t.tickMs
     args.name ??= `${t.id}-bot`

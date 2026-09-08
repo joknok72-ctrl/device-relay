@@ -56,7 +56,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
     doc: 'mode=assist (DEFAULT, what Free Fire players want): the USER moves and turns the camera normally; the bot only kicks in when the head/enemy colour is near the crosshair — a tiny ≤50 ms aim nudge onto the head + a burst. mode=trigger: the user aims, the bot only fires when the head is under the crosshair (no aim help). mode=full: plays alone (aim, fire, sweep camera, advance, heal, play again). Detects enemies as OBJECTS of the head/enemy colour (choose the enemy-highlight colour from the game settings for near-perfect detection).',
     params: [
       { key: 'mode', kind: 'text', default: 'assist', doc: 'assist | trigger | full (see doc)' },
-      { key: 'enemy', kind: 'color', required: true, doc: '@color of the enemy marker (or array of colours for several teams/skins)' },
+      { key: 'enemy', kind: 'color', doc: '@color of the enemy body/marker (or array). Required in mode=full; in assist/trigger `head` alone is enough (enemy defaults to head)' },
       { key: 'fire', kind: 'control', required: true, doc: '@control fire button' },
       { key: 'look', kind: 'control', required: true, doc: '@control a point in the empty look/aim area (right half of the screen)' },
       { key: 'stick', kind: 'control', doc: '@control movement joystick centre (omit = no walking)' },
@@ -81,6 +81,8 @@ export const BOT_TEMPLATES: BotTemplate[] = [
     ],
     tickMs: 70,
     build: (p) => {
+      if (!p.enemy && p.head) p.enemy = p.head
+      if (!p.enemy) throw new Error('shooter needs enemy (or head) colour')
       const mode = s(p.mode, 'assist')
       const assist = mode === 'assist' || mode === 'trigger'
       const rules: unknown[] = [...safety(p)]
