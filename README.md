@@ -420,7 +420,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v27.sh   # 837 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v27.sh   # 839 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -451,6 +451,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v2.7 — stronger bots: 8 one-call templates, shooter aimbot (object detection → aim_to_found + fire_burst, camera sweep, HP retreat), multi-colour any-of, forMs, tap_all_found, maxFires, ruleHits diagnostics, colour-strategy bootstrap; 79 tools; 837 e2e checks; Android 2.7.0)
+- **Last Updated**: 2026-09-08 (v2.7 — stronger bots: 8 one-call templates, shooter aimbot (object detection → aim_to_found + fire_burst, camera sweep, HP retreat), multi-colour any-of, forMs, tap_all_found, maxFires, ruleHits diagnostics, colour-strategy bootstrap; 79 tools; 839 e2e checks; Android 2.7.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
