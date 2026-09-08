@@ -91,16 +91,20 @@ function hasRef(v: unknown): boolean {
   return false
 }
 /** "@jump" | "@jump+20,-10" -> {name, dx, dy} */
-function parseRef(s: string): { name: string; dx: number; dy: number } | null {
-  // name may contain '-', so try the offset form first with a name that stops before a signed number ("@stick-500" → stick, -500)
-  const m = s.match(/^@([a-z0-9_]+(?:-[a-z_][a-z0-9_]*)*)([+-]\d+)(?:,([+-]?\d+))?$/i) ?? s.match(/^@([a-z0-9_-]+)$/i)
+function parseRef(s: string, known?: (name: string) => boolean): { name: string; dx: number; dy: number } | null {
+  // "@name", "@name+20,-10", "@name-500". Names may contain '-', so "@stick-500" is ambiguous: prefer whatever exists in the profile.
+  const plain = s.match(/^@([a-z0-9_-]+)$/i)
+  const off = s.match(/^@([a-z0-9_]+(?:-[a-z_][a-z0-9_]*)*)([+-]\d+)(?:,([+-]?\d+))?$/i)
+  if (plain && (!off || (known ? known(plain[1].toLowerCase()) : false))) return { name: plain[1].toLowerCase(), dx: 0, dy: 0 }
+  const m = off ?? plain
   return m ? { name: m[1].toLowerCase(), dx: Number(m[2] ?? 0), dy: Number(m[3] ?? 0) } : null
 }
 /** Replace @refs in tool args using the profile. Returns error if an @ref is unknown. */
 function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Record<string, unknown>; error?: string; used: string[] } {
   const used: string[] = []
   let error: string | undefined
-  const look = (ref: string) => { const r = parseRef(ref); if (!r) { error = `bad reference ${ref}`; return null } return r }
+  const known = (n: string) => n in p.controls || n in p.colors || n in p.regions || n in p.settings
+  const look = (ref: string) => { const r = parseRef(ref, known); if (!r) { error = `bad reference ${ref}`; return null } return r }
   const walk = (v: unknown, key?: string): unknown => {
     if (Array.isArray(v)) return v.map((x) => walk(x))
     if (v && typeof v === 'object') {
