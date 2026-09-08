@@ -55,6 +55,14 @@
 - سجل آخر 100 أمر لكل جهاز + إحصائيات
 - صفحة حالة فقط (لا تحكم يدوي) — التشغيل عبر AI حصريًا
 
+**🧠 إدارة ذاكرة الـ AI لكل لعبة (v2.2)**
+- قسم **"ذاكرة الـ AI"** في لوحة `/setup`: كل ما تعلّمه الـ AI مجمّع **لكل لعبة/تطبيق** (اسم اللعبة + package + آخر لعب): 📝 ملاحظات · ⏯️ ماكروهات · 🖼️ شاشات مسمّاة · ⏺ تسجيل جارٍ
+- مسح بضغطة: **لعبة واحدة بكاملها** (لما اللعبة تتحدّث وملاحظاتها تبقى قديمة) · ملاحظة واحدة · ماكرو واحد · شاشة واحدة · أو كل الذاكرة. لا يمسّ الأجهزة أو التوكنات
+- **تصدير / استيراد** JSON (نسخة احتياطية قبل المسح أو نقل لجهاز آخر)
+- الماكروهات بقت موسومة باللعبة مثل الملاحظات؛ الريلاي يتذكر التطبيقات التي فتحها الـ AI (حتى بدون ملاحظات)
+- للـ AI: `recall forget="app"` يمسح ملاحظات اللعبة الحالية لما المستخدم يقول "اللعبة اتحدّثت"؛ قسم 5e في الـ bootstrap يشرح النظافة؛ `./phone.sh memory | memory wipe <pkg> | memory export`
+- API: `GET/DELETE /api/admin/devices/:id/memory` (`?kind=all|notes|macros|screens|recording|apps&app=&index=&name=`), `?format=export`, `POST .../memory/import`
+
 **🔬 اكتشاف + حركة + أرقام + معايرة (v2.1)**
 - 🎨 **`sample_colors`**: الألوان المسيطرة غير الرمادية على الشاشة (hex + نسبة + مركز) — الـ AI ما بيخمّنش قيم hex تاني؛ أول خطوة في أي لعبة جديدة
 - 🎯 **`track_object`**: يعيّن مركز جسم N مرات ويحسب السرعة (px/s) والاتجاه و**الموقع المتوقع** بعد `predictMs` (least squares) — اضغط حيث سيكون العدو، لا حيث هو؛ يعمل كشرط في `game_loop` مع `$cx/$cy` = النقطة المتوقعة
@@ -360,7 +368,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh   # 381 checks green
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh   # 428 checks green
 ```
 
 ## Data Architecture
@@ -385,6 +393,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-07 (v2.1 — sample_colors, track_object velocity/prediction, read_number, watch_value, calibrate; 71 tools; 381 e2e checks; Android 2.1.0)
+- **Last Updated**: 2026-09-08 (v2.2 — per-game AI memory management in /setup: view, delete one game / one item / all, export/import; macros app-tagged; recall forget=app; 71 tools; 428 e2e checks; Android 2.1.0 unchanged)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
