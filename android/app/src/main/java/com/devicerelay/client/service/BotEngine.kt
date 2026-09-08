@@ -62,8 +62,12 @@ object BotEngine {
     /** What a condition "found": a single point plus (for object_present) every detected object. */
     private class Found(val x: Int, val y: Int, val all: List<Pair<Int, Int>> = listOf(x to y))
 
+    /** v3.1 per-condition last picked target (x, y, at) for target lock */
+    private val lockTargets = HashMap<String, Triple<Int, Int, Long>>()
     private val scope = CoroutineScope(Dispatchers.Default)
     private var job: Job? = null
+    /** v3.1 error (px) of the most recent aim_to_found correction in this tick — consumed by fire_burst.gateErr */
+    @Volatile private var lastAimErr = 0
     @Volatile var status = Status(running = false); private set
     /** callback → RelayConnectionService forwards to the relay + updates the notification */
     var onStatus: ((Status) -> Unit)? = null
@@ -93,6 +97,7 @@ object BotEngine {
         val app = bot.str("app")
         val t0 = SystemClock.elapsedRealtime()
         val startedAt = System.currentTimeMillis()
+        lockTargets.clear()
         emit(Status(true, id, name, startedAt = startedAt))
         job = scope.launch {
             var ticks = 0; var fired = 0; var lastRule: String? = null; var stoppedBy = "stopped"
@@ -209,7 +214,7 @@ object BotEngine {
                 val tol = (c.int("tolerance") ?: 24).coerceIn(0, 128); val region = c.region(); val minCount = c.int("minCount") ?: 20
                 var best: Found? = null; var bestCount = 0L
                 for (hex in colorsOf(c)) {
-                    val r = svc.scanColorPublic(bmp, hex, tol, region)
+                    val r = svc.scanColorPublic(bmp, hex, tol, region, c.str("match") ?: "rgb")
                     val count = r["count"]?.jsonPrimitive?.longOrNull ?: 0L
                     if (count >= minCount && count > bestCount) { bestCount = count; best = Found(r["cx"]?.jsonPrimitive?.intOrNull ?: 0, r["cy"]?.jsonPrimitive?.intOrNull ?: 0) }
                 }
@@ -221,7 +226,7 @@ object BotEngine {
                 val minSize = (c.int("minSize") ?: 12).coerceIn(1, 2000); val maxSize = c.int("maxSize") ?: 0
                 val objs = ArrayList<Triple<Int, Int, Int>>() // cx, cy, area
                 for (hex in colorsOf(c)) {
-                    val r = svc.scanObjectsPublic(bmp, hex, tol, region, minSize, 12)
+                    val r = svc.scanObjectsPublic(bmp, hex, tol, region, minSize, 12, c.str("match") ?: "rgb")
                     r["objects"]?.jsonArray?.forEach { o ->
                         val ob = o.jsonObject; val b = ob["bounds"]?.jsonObject
                         val w = b?.get("w")?.jsonPrimitive?.intOrNull ?: 0; val h = b?.get("h")?.jsonPrimitive?.intOrNull ?: 0
@@ -234,12 +239,21 @@ object BotEngine {
                 if (c.str("type") == "object_absent") return (!present) to null
                 if (!present) return false to null
                 val nearX = c.int("nearX") ?: bmp.width / 2; val nearY = c.int("nearY") ?: bmp.height / 2
-                val sorted = when (c.str("pick") ?: "largest") {
+                var sorted = when (c.str("pick") ?: "largest") {
                     "nearest" -> objs.sortedBy { (it.first - nearX).toLong() * (it.first - nearX) + (it.second - nearY).toLong() * (it.second - nearY) }
                     "topmost" -> objs.sortedBy { it.second }
                     "lowest" -> objs.sortedByDescending { it.second }
                     else -> objs.sortedByDescending { it.third }
                 }
+                // v3.1 target lock: keep tracking the object we picked last tick (if it is still within lockRadius px) instead of hopping between enemies
+                val lockR = c.int("lockRadius") ?: 220
+                val lockKey = "$rule/${c.hashCode()}"
+                val prev = lockTargets[lockKey]
+                if (lockR > 0 && prev != null && now - prev.third < 700) {
+                    val same = sorted.minByOrNull { (it.first - prev.first).toLong() * (it.first - prev.first) + (it.second - prev.second).toLong() * (it.second - prev.second) }
+                    if (same != null && Math.abs(same.first - prev.first) <= lockR && Math.abs(same.second - prev.second) <= lockR) sorted = listOf(same) + sorted.filter { it !== same }
+                }
+                lockTargets[lockKey] = Triple(sorted[0].first, sorted[0].second, now)
                 true to Found(sorted[0].first, sorted[0].second, sorted.map { it.first to it.second })
             }
             "pixel_is", "pixel_not" -> {
@@ -339,6 +353,7 @@ object BotEngine {
                 val sens = tune.gain; val maxStep = (a.int("maxStep") ?: 300).coerceIn(5, 1500).toFloat()
                 val dx = (ex * sens).coerceIn(-maxStep, maxStep); val dy = (ey * sens).coerceIn(-maxStep, maxStep)
                 tune.lastEx = ex; tune.lastEy = ey; tune.lastDx = dx; tune.lastDy = dy; tune.pending = true
+                lastAimErr = Math.max(Math.abs(ex), Math.abs(ey))
                 Action(type = "aim", x = a.float("x"), y = a.float("y"), dx = dx, dy = dy, duration = (a.long("duration") ?: 60L), finger = a.int("finger") ?: 1, steps = 3, release = true)
             }
             "tap" -> Action(type = "tap", x = a.float("x"), y = a.float("y"))
@@ -361,6 +376,10 @@ object BotEngine {
                     val cx = a.int("crosshairX") ?: bmp.width / 2; val cy = a.int("crosshairY") ?: bmp.height / 2
                     if (Math.abs(f.x - cx) > maxRange || Math.abs(f.y - cy) > maxRange) return null
                 }
+                // v3.1 fire gate: if the aim action just before us had to correct more than gateErr px, the crosshair is still travelling — wait for the next tick instead of wasting the burst
+                val gate = a.int("gateErr") ?: 0
+                if (gate > 0 && lastAimErr > gate) { lastAimErr = 0; return null }
+                lastAimErr = 0
                 Action(type = "fire_burst", x = a.float("x"), y = a.float("y"), count = a.int("count"), intervalMs = a.long("intervalMs"), holdMs = a.long("holdMs"))
             }
             "combo" -> Action(type = "combo", steps2 = a["combo"]?.let { runCatching { RelayJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(ComboStep.serializer()), it) }.getOrNull() })

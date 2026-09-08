@@ -480,9 +480,31 @@ class AutomationAccessibilityService : AccessibilityService() {
     // ---------------------------------------------------------------- v1.6 reflexes (phone waits/reacts; agent does not poll)
 
     /** Shared colour-match scan. Returns (count, cx, cy, bounds) for pixels within tol of target in region. */
-    private fun scanColor(bmp: Bitmap, hex: String, tol: Int, region: Region?): JsonObject {
-        val target = hex.removePrefix("#").toIntOrNull(16) ?: 0
-        val tr = (target shr 16) and 0xFF; val tg = (target shr 8) and 0xFF; val tb = target and 0xFF
+    /**
+     * v3.1 colour matcher. mode "rgb" = per-channel tolerance (default). mode "hue" = compare hue (0-360) within tol degrees
+     * and require saturation/value above minSat/minVal — robust to lighting/shading changes on 3D objects (enemy outlines, name tags).
+     */
+    class ColorMatcher(hex: String, private val tol: Int, private val mode: String = "rgb") {
+        private val target = hex.removePrefix("#").toIntOrNull(16) ?: 0
+        private val tr = (target shr 16) and 0xFF; private val tg = (target shr 8) and 0xFF; private val tb = target and 0xFF
+        private val th: Float; private val ts: Float
+        init { val hsv = FloatArray(3); android.graphics.Color.RGBToHSV(tr, tg, tb, hsv); th = hsv[0]; ts = hsv[1] }
+        private val hsvTmp = FloatArray(3)
+        fun matches(c: Int): Boolean {
+            val r = (c shr 16) and 0xFF; val g = (c shr 8) and 0xFF; val b = c and 0xFF
+            if (mode != "hue") return Math.abs(r - tr) <= tol && Math.abs(g - tg) <= tol && Math.abs(b - tb) <= tol
+            val mx = maxOf(r, g, b); val mn = minOf(r, g, b)
+            if (mx < 60) return false                                  // too dark to have a hue
+            val sat = (mx - mn).toFloat() / mx
+            if (sat < Math.max(0.25f, ts * 0.45f)) return false         // washed-out pixels don't count
+            android.graphics.Color.RGBToHSV(r, g, b, hsvTmp)
+            var dh = Math.abs(hsvTmp[0] - th); if (dh > 180f) dh = 360f - dh
+            return dh <= tol
+        }
+    }
+
+    private fun scanColor(bmp: Bitmap, hex: String, tol: Int, region: Region?, mode: String = "rgb"): JsonObject {
+        val m = ColorMatcher(hex, tol, mode)
         val rx = region?.x?.coerceIn(0, bmp.width - 1) ?: 0; val ry = region?.y?.coerceIn(0, bmp.height - 1) ?: 0
         val rw = region?.w?.coerceIn(1, bmp.width - rx) ?: (bmp.width - rx); val rh = region?.h?.coerceIn(1, bmp.height - ry) ?: (bmp.height - ry)
         val stepPx = if (rw * rh > 1_500_000) 3 else if (rw * rh > 400_000) 2 else 1
@@ -494,7 +516,7 @@ class AutomationAccessibilityService : AccessibilityService() {
             var i = 0
             while (i < rw) {
                 val c = row[i]
-                if (Math.abs(((c shr 16) and 0xFF) - tr) <= tol && Math.abs(((c shr 8) and 0xFF) - tg) <= tol && Math.abs((c and 0xFF) - tb) <= tol) {
+                if (m.matches(c)) {
                     val x = rx + i; count++; sumX += x; sumY += y
                     if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y
                 }
@@ -514,9 +536,8 @@ class AutomationAccessibilityService : AccessibilityService() {
      * Connected-component labelling of colour matches on a downsampled grid (cell = stepPx).
      * Returns blobs sorted by area desc: {i, cx, cy, area, bounds}. Area is in original px (approx).
      */
-    private fun scanObjects(bmp: Bitmap, hex: String, tol: Int, region: Region?, minSize: Int, maxResults: Int): JsonObject {
-        val target = hex.removePrefix("#").toIntOrNull(16) ?: 0
-        val tr = (target shr 16) and 0xFF; val tg = (target shr 8) and 0xFF; val tb = target and 0xFF
+    private fun scanObjects(bmp: Bitmap, hex: String, tol: Int, region: Region?, minSize: Int, maxResults: Int, mode: String = "rgb"): JsonObject {
+        val m = ColorMatcher(hex, tol, mode)
         val rx = region?.x?.coerceIn(0, bmp.width - 1) ?: 0; val ry = region?.y?.coerceIn(0, bmp.height - 1) ?: 0
         val rw = region?.w?.coerceIn(1, bmp.width - rx) ?: (bmp.width - rx); val rh = region?.h?.coerceIn(1, bmp.height - ry) ?: (bmp.height - ry)
         val step = if (rw * rh > 1_500_000) 4 else if (rw * rh > 400_000) 3 else 2
@@ -530,7 +551,7 @@ class AutomationAccessibilityService : AccessibilityService() {
             var gx = 0
             while (gx < gw) {
                 val c = row[gx * step]
-                if (Math.abs(((c shr 16) and 0xFF) - tr) <= tol && Math.abs(((c shr 8) and 0xFF) - tg) <= tol && Math.abs((c and 0xFF) - tb) <= tol) mask[gy * gw + gx] = true
+                if (m.matches(c)) mask[gy * gw + gx] = true
                 gx++
             }
             gy++
@@ -890,8 +911,8 @@ class AutomationAccessibilityService : AccessibilityService() {
 
     // ---------------------------------------------------------------- v2.6 BotEngine hooks (public, run on Main)
     suspend fun captureForBot(): Bitmap? = captureBitmap()
-    fun scanColorPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?): JsonObject = scanColor(bmp, hex, tol, region)
-    fun scanObjectsPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?, minSize: Int, maxResults: Int): JsonObject = scanObjects(bmp, hex, tol, region, minSize, maxResults)
+    fun scanColorPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?, mode: String = "rgb"): JsonObject = scanColor(bmp, hex, tol, region, mode)
+    fun scanObjectsPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?, minSize: Int, maxResults: Int, mode: String = "rgb"): JsonObject = scanObjects(bmp, hex, tol, region, minSize, maxResults, mode)
     fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString() ?: lastPackage
     /** OCR lines as (text, centre) for bot conditions; latin recognizer, reused across ticks. */
     private val botRecognizer by lazy { recognizerFor(null) }
