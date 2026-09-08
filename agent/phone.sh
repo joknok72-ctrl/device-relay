@@ -32,6 +32,7 @@
 #   ./phone.sh stick <X Y|@stick> <up|down|left|right|up-left|...|angle> [ms] [dist] [hold]   # v2.5 joystick (hold = keep finger down)
 #   ./phone.sh aim <X Y|@look> DX DY [ms] | fire <X Y|@fire> [count] [ms] | fireh <X Y|@fire> HOLDMS | fingers up   # v2.5 shooter controls
 #   ./phone.sh combo '<json steps>' | fdown N X Y | fmove N X Y [ms] | fup [N|-1]   # v2.5 multi-touch script / raw fingers
+#   ./phone.sh bot [list] | bot get <name> | bot run <name> | bot stop | bot status | bot delete <name> | bot create '<json {name,rules,...}>'   # v2.6 on-phone bots (0 tokens; ▶/■ from the notification)
 #   Any coordinate/colour/region arg accepts @names from the profile: tap @jump | tap @jump+20,-10 | color @enemy | objects @enemy | react @note 0,1900,1080,60
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
@@ -247,6 +248,25 @@ if len(sys.argv)>2 and sys.argv[2]: a["outcome"]=sys.argv[2]
 if len(sys.argv)>3 and sys.argv[3]: a["score"]=float(sys.argv[3])
 if len(sys.argv)>4 and sys.argv[4]: a["nextTime"]=sys.argv[4]
 print(json.dumps(a))' "${1:?summary}" "${2:-}" "${3:-}" "${4:-}")" | pretty ;;
+  bot)     sub="${1:-list}"; shift || true; case "$sub" in
+             list)   call game_bot '{"action":"list"}' | python3 -c '
+import json,sys,datetime; r=json.load(sys.stdin)
+if not r.get("ok"): print(r); sys.exit(1)
+print("app: %s  bots: %d  (other games: %d)" % (r.get("app") or "?", r["count"], r.get("others",0)))
+for b in r["bots"]:
+  lr=b.get("lastRun") or {}
+  when=datetime.datetime.fromtimestamp(lr["start"]/1000).strftime("%m-%d %H:%M") if lr.get("start") else "never"
+  print("  %-18s %2d rules  runs=%-3d last=%s%s  %s" % (b["name"], b["rules"], b.get("runs",0), when, (" fired=%d" % lr["fired"]) if lr.get("fired") is not None else "", b.get("description") or ""))
+st=r.get("botStatus") or {}
+print("  live: %s" % ("RUNNING %s (ticks %s, fired %s)" % (st.get("name"), st.get("ticks"), st.get("fired")) if st.get("running") else "idle"))' ;;
+             get)    call game_bot "$(python3 -c 'import json,sys; print(json.dumps({"action":"get","name":sys.argv[1]}))' "${1:?name}")" | pretty ;;
+             run)    call game_bot "$(python3 -c 'import json,sys; print(json.dumps({"action":"run","name":sys.argv[1]}))' "${1:?name}")" | pretty ;;
+             stop)   call game_bot '{"action":"stop"}' | pretty ;;
+             status) call game_bot '{"action":"status"}' | pretty ;;
+             delete) call game_bot "$(python3 -c 'import json,sys; print(json.dumps({"action":"delete","name":sys.argv[1]}))' "${1:?name}")" | pretty ;;
+             create|update) call game_bot "$(python3 -c 'import json,sys; a=json.loads(sys.argv[2]); a["action"]=sys.argv[1]; print(json.dumps(a))' "$sub" "${1:?json}")" | pretty ;;
+             *) echo "bot: list | get <name> | run <name> | stop | status | delete <name> | create '<json>' | update '<json>'" >&2; exit 1 ;;
+           esac ;;
   verify)  call game_profile '{"verify":true}' | python3 -c '
 import json,sys; r=json.load(sys.stdin)
 if not r.get("ok"): print(r); sys.exit(1)
@@ -315,5 +335,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,54p' "$0" ;;
+  *) sed -n '2,55p' "$0" ;;
 esac

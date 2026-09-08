@@ -9,6 +9,8 @@ let hashCounter = 0, diffCounter = 0, streaming = false
 // v1.9: two fake 'screens' — 'menu' (default) and 'home' (after home action); recents switches back
 let screen = 'menu'
 const fingersDown = new Map()
+let botStore = []
+let botRunning = null
 const HASHES = { menu: 'ffff0000ffff0000ffff0000ffff', home: '0f0f0f0f0f0f0f0f0f0f0f0f0f0f' }
 const FAKE_SCREEN = readFileSync(join(here, 'fake-screen.b64'), 'utf8').trim()
 const ws = new WebSocket(`${base}/api/ws/phone/${deviceId}`, { headers: { Authorization: `Bearer ${token}` } })
@@ -100,6 +102,17 @@ ws.onmessage = (ev) => {
       }
       res.data = { triggers: taps.length, taps, polls: taps.length + 5, stoppedBy, lanes: lanes.length, elapsedMs: taps.length ? 80 + taps.length * 120 : Math.min(a.timeoutMs ?? 10000, 600) }
     }
+    // v2.6 bots (fake: store synced bots, emit bot_status on start/stop)
+    if (a.type === 'bot_sync') { botStore = Array.isArray(a.bots) ? a.bots : []; res.data = { synced: botStore.length } }
+    if (a.type === 'bot_start') {
+      const b = botStore.find(x => x.id === a.botId)
+      if (!b) { res.ok = false; res.error = `bot ${a.botId} not on device` }
+      else { botRunning = { botId: b.id, name: b.name, app: b.app, startedAt: Date.now(), ticks: 0, fired: 0 }; res.data = { started: true, botId: b.id, name: b.name, rules: (b.rules || []).length }
+        ws.send(JSON.stringify({ kind: 'bot_status', running: true, botId: b.id, name: b.name, startedAt: botRunning.startedAt, ticks: 0, fired: 0, ts: Date.now() })) }
+    }
+    if (a.type === 'bot_stop') { const was = botRunning; botRunning = null; res.data = { stopped: !!was, botId: was?.botId ?? null }
+      if (was) ws.send(JSON.stringify({ kind: 'bot_status', running: false, botId: was.botId, name: was.name, startedAt: was.startedAt, ticks: 12, fired: 3, stoppedBy: 'user', ts: Date.now() })) }
+    if (a.type === 'bot_status') res.data = botRunning ? { running: true, ...botRunning, ticks: 12, fired: 3 } : { running: false, bots: botStore.length }
     ws.send(JSON.stringify(res))
   }, delay)
 }
