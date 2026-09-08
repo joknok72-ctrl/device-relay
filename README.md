@@ -155,6 +155,12 @@
 - **تصويب يتعلّم** (`aim_to_found` auto-tune): يقارن مقدار تحرك الهدف فعليًا بعد كل سحب بما طُلب، ويرفع/يخفض الـ gain (undershoot/overshoot). القيمة المتعلّمة تُرسل في `bot_status.learned` وتُحفظ على البوت (`learned`) وتظهر في الـ bootstrap ليثبّتها الـ AI بـ `update`. `autoTune:false` لإيقافها.
 - `startedBy` في الحالة (notification/overlay/volume/auto/relay).
 
+**🧑‍🔧 v2.9 — صانع البوتات: المستخدم يعمل البوت بنفسه بدون AI**
+- صفحة **`/builder/<token>`** (رابطها في لوحة الإعداد و`/api/me.builderUrl`): 3 خطوات — (1) نوع اللعبة: **الأبسط "شفت اللون → اضرب"**، شوتر، اضغط-على-كل-حاجة، راننر، إيقاع، Idle، صيد، سباقات، Match-3. (2) **صوّر الشاشة** واضغط على العدو/الشيء (نلتقط اللون من 9 بكسلات على الموبايل ونتحقق فورًا بـ `find_objects` إنه يظهر كأجسام، مع تحذير لو رمادي أو منتشر)، اضغط على الأزرار، اسحب مستطيلًا للمناطق — كل شيء يُحوَّل لإحداثيات الشاشة الحقيقية. (3) منزلقات ضبط (حساسية التصويب، طلقات الرشقة، التسامح، الحجم…) → **احفظ** (يكتب `game_profile` + `game_bot template`) → **جرّب 20 ثانية** مع حكم تلقائي (لم يضرب → ارفع التسامح / يضرب كثيرًا → قلّله).
+- قالب جديد **`color_tap`**: قاعدة واحدة لأي لعبة — لون → اضغط عليه أو اضغط زرًا معيّنًا (`button`, `repeat`, `region`).
+- قالب الشوتر أقوى: **`head`** (قاعدة هيدشوت بأولوية أعلى وdeadzone أضيق)، **`evade`** (قرفصة/قفزة كل 3 ث أثناء الاشتباك)، **`playAgain`** (ماتشات متواصلة).
+- `?selftest=1` يشغّل التدفق كاملًا آليًا على الهاتف الوهمي (مستخدم في الاختبار).
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -428,7 +434,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v28.sh   # 867 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v29.sh   # 895 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -459,6 +465,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v2.8 — hands-free bots: floating overlay bubble, volume-key start/stop, autoStart on game open, self-tuning aimbot sensitivity (learned); Cloudflare 1010 UA fix; 79 tools; 867 e2e checks; Android 2.8.0)
+- **Last Updated**: 2026-09-08 (v2.9 — visual Bot Builder for humans (/builder), color_tap template, shooter headshot/evade/play-again; 79 tools; 895 e2e checks; Android 2.8.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.

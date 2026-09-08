@@ -19,6 +19,8 @@ check builder-unauth 'unauthorized' "$(curl -s $U/builder/not-a-token)"
 RO=$(curl -s "${A[@]}" -d '{"deviceId":"test-phone","label":"ro29","readOnly":true}' $U/api/admin/tokens | j 'd["token"]')
 check builder-readonly-denied 'unauthorized' "$(curl -s $U/builder/$RO)"
 check setup-builder-card 'builder-link' "$(curl -s $U/setup/$T)"
+check boot-builder '/builder/<token>' "$(curl -s $U/agent/$T)"
+check builder-selftest-hook 'selftest' "$(curl -s $U/builder.js)"
 
 echo "== color_tap template"
 check templates-9 '9' "$(call '{"name":"game_bot","arguments":{"action":"templates"}}' | j 'len(d["templates"])')"

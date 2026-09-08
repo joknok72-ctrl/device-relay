@@ -201,7 +201,15 @@
     $('#shot-btn').disabled = false; $('#shot-btn').innerHTML = '<i class="fas fa-camera"></i> صوّر الشاشة'
     if (!r.ok || !r.image) return toast('فشل التصوير: ' + (r.error || '?'), 'bad')
     shot = { w: r.image.w, h: r.image.h, scale: r.image.scale || 1, screen: r.screen }
-    $('#shot').src = `data:${r.image.mime};base64,${r.image.base64}`
+    const im = $('#shot')
+    im.onload = () => {
+      // robust scale: decoded image width vs the phone's real screen width (server-side size parsing can fail on some encoders)
+      const sw = (r.screen && r.screen.w) || (shot.screen && shot.screen.w)
+      if (im.naturalWidth && sw) shot.scale = im.naturalWidth / sw
+      shot.w = im.naturalWidth; shot.h = im.naturalHeight
+      drawMarks()
+    }
+    im.src = `data:${r.image.mime};base64,${r.image.base64}`
     const app = await tool('get_current_app'); if (app.ok && app.data && app.data.package) { profileApp = app.data.package; toast('اللعبة الحالية: ' + (app.data.label || app.data.package), 'ok') }
     drawMarks()
   }
@@ -353,7 +361,7 @@
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       try {
         $('#shot-btn').click(); await wait(2500)
-        log('shot', !!shot, shot && shot.w + 'x' + shot.h)
+        log('shot', !!shot, shot && shot.w + 'x' + shot.h, 'scale', shot && shot.scale)
         const im = $('#shot'); await new Promise((r) => (im.complete && im.naturalWidth ? r() : (im.onload = r)))
         const t = things()[0]; picking = t.key
         const bb = im.getBoundingClientRect()
