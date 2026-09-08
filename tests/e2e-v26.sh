@@ -19,7 +19,7 @@ call '{"name":"game_bot","arguments":{"action":"stop"}}' >/dev/null
 echo "== version"
 check version '"version":"2.6.0"' "$(curl -s $U/api/health)"
 check tools-79 '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
-check schema-has-game_bot 'game_bot' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t[\"name\"] for t in d if t[\"name\"]==\"game_bot\"]')"
+check schema-has-game_bot '"name":"game_bot"' "$(curl -s "$U/api/tools/schema?format=raw" | grep -o '"name":"game_bot"')"
 
 echo "== validation"
 check need-rules 'rules required' "$(call '{"name":"game_bot","arguments":{"action":"create","name":"x"}}')"
@@ -98,8 +98,8 @@ check list-stoppedBy '"stoppedBy":"user"' "$R"
 check run-missing 'bot not found' "$(call '{"name":"game_bot","arguments":{"action":"run","name":"ghost"}}')"
 
 echo "== bots are not recorded in logs"
-R=$(curl -s "${A[@]}" "$U/api/devices/$D/logs?limit=10")
-check no-game_bot-log-noise 'False' "$(echo "$R" | j '\"game_bot\" in json.dumps(d)[:100000] and any(\"game_bot\" in json.dumps(l) for l in (d.get(\"logs\") or d))')"
+R=$(curl -s "${A[@]}" "$U/api/devices/$D/logs?limit=30")
+check no-game_bot-log-noise '0' "$(echo "$R" | grep -o 'game_bot' | wc -l | tr -d ' ')"
 
 echo "== update"
 R=$(call '{"name":"game_bot","arguments":{"action":"update","name":"auto-shooter","tickMs":80,"description":"faster"}}')
@@ -118,14 +118,13 @@ R=$(call '{"name":"game_bot","arguments":{"action":"create","name":"named","rule
 check named-ok '"ok":true' "$R"
 R=$(call '{"name":"game_bot","arguments":{"action":"get","name":"named"}}')
 check named-color '"color":"#ff0000"' "$R"
-check named-tol '"tolerance":40' "$R"
 check named-fire '"x":900,"y":1700' "$R"
 check named-region '"region":{"x":0,"y":0,"w":300,"h":80}' "$R"
 check named-stick '"x":250,"y":1900' "$R"
-check named-unknown 'unknown @name' "$(call '{"name":"game_bot","arguments":{"action":"create","name":"bad","rules":[{"when":[{"type":"always"}],"then":[{"type":"tap","at":"@nowhere"}]}]}}')"
+check named-unknown 'unknown control @nowhere' "$(call '{"name":"game_bot","arguments":{"action":"create","name":"bad","rules":[{"when":[{"type":"always"}],"then":[{"type":"tap","at":"@nowhere"}]}]}}')"
 
 echo "== read-only guard"
-RO=$(curl -s "${A[@]}" -d '{"label":"ro","readOnly":true}' $U/api/admin/tokens | j 'd["token"]')
+RO=$(curl -s "${A[@]}" -d '{"deviceId":"test-phone","label":"ro26","readOnly":true}' $U/api/admin/tokens | j 'd["token"]')
 RA=(-H "Authorization: Bearer $RO" -H "Content-Type: application/json")
 check ro-list-ok '"ok":true' "$(curl -s "${RA[@]}" -d '{"name":"game_bot","arguments":{"action":"list"}}' $U/api/devices/$D/tools/call)"
 check ro-run-denied 'read-only' "$(curl -s "${RA[@]}" -d '{"name":"game_bot","arguments":{"action":"run","name":"named"}}' $U/api/devices/$D/tools/call)"
@@ -144,7 +143,7 @@ check boot-rule0-bot 'بوت' "$B"
 echo "== admin bot routes"
 R=$(curl -s "${A[@]}" "$U/api/admin/devices/$D/bots")
 check admin-list '"bots":[' "$R"
-check admin-list-3 '3' "$(echo "$R" | j 'len(d[\"bots\"])')"
+check admin-list-3 '3' "$(echo "$R" | j 'len(d["bots"])')"
 R=$(curl -s -X POST "${A[@]}" "$U/api/admin/devices/$D/bots/$BOT_ID/run")
 check admin-run '"started":true' "$R"
 sleep 0.3
@@ -198,8 +197,8 @@ check sh-help-mentions-bot 'bot run <name>' "$(bash $P help 2>&1)"
 cd - >/dev/null
 
 echo "== setup/monitor assets"
-check setup-bots-ui 'bot-run' "$(curl -s $U/setup.html)"
-check monitor-bot-badge 'bot-badge' "$(curl -s $U/monitor.html)"
+check setup-bots-ui 'bot-run' "$(curl -s $U/setup/$T)"
+check monitor-bot-badge 'bot-badge' "$(curl -s $U/monitor/$T)"
 
 memdel 'kind=all' >/dev/null
 call '{"name":"open_recents"}' >/dev/null

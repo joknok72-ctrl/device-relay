@@ -1005,6 +1005,10 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
   switch (name) {
     case 'session_report': return { special: 'session_report' }
     case 'game_bot': return { special: 'game_bot' }
+    // v2.6 raw bot actions (internal: used by game_bot run/stop/status — not in the catalogue)
+    case 'bot_start': return { action: { type: 'bot_start', botId: args.botId } }
+    case 'bot_stop': return { action: { type: 'bot_stop' } }
+    case 'bot_status': return { action: { type: 'bot_status' } }
     case 'joystick': return { action: { type: 'joystick', x: args.x, y: args.y, angle: args.angle, direction: args.direction, distance: args.distance, duration: args.duration, finger: args.finger, release: args.release } }
     case 'aim': return { action: { type: 'aim', x: args.x, y: args.y, dx: args.dx, dy: args.dy, duration: args.duration, steps: args.steps, finger: args.finger, release: args.release } }
     case 'fire_burst': return { action: { type: 'fire_burst', x: args.x, y: args.y, count: args.count, intervalMs: args.intervalMs, holdMs: args.holdMs } }
@@ -1195,6 +1199,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
   'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile',
+  'game_bot', // list/get/status only — write actions are refused inside gameBot() for read-only tokens
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */
