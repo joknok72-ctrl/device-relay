@@ -76,9 +76,13 @@ interface ProfileRec { app: string; label?: string; controls: Record<string, { x
 async function loadProfile(env: Bindings, deviceId: string, app?: string): Promise<{ app: string; profile: ProfileRec | null }> {
   let pkg = app?.trim() ?? ''
   if (!pkg || pkg === 'current') {
-    // cheap: the DO remembers the last app it saw; only ask the phone when it knows nothing
-    const r = (await (await room(env, deviceId).fetch(`https://do/profile?deviceId=${deviceId}`)).json()) as { currentApp?: string }
-    pkg = r.currentApp || (await currentPackage(env, deviceId))
+    // v3.3: ask the phone first (the DO's remembered currentApp can be stale — e.g. the human glanced at another app
+    // while the game stayed open); fall back to the DO's memory only when the phone cannot answer.
+    pkg = await currentPackage(env, deviceId)
+    if (!pkg) {
+      const r = (await (await room(env, deviceId).fetch(`https://do/profile?deviceId=${deviceId}`)).json()) as { currentApp?: string }
+      pkg = r.currentApp || ''
+    }
   }
   if (!pkg) return { app: '', profile: null }
   const r = (await (await room(env, deviceId).fetch(`https://do/profile?deviceId=${deviceId}&app=${encodeURIComponent(pkg)}`)).json()) as { profile: ProfileRec | null }
