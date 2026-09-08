@@ -161,6 +161,14 @@
 - قالب الشوتر أقوى: **`head`** (قاعدة هيدشوت بأولوية أعلى وdeadzone أضيق)، **`evade`** (قرفصة/قفزة كل 3 ث أثناء الاشتباك)، **`playAgain`** (ماتشات متواصلة).
 - `?selftest=1` يشغّل التدفق كاملًا آليًا على الهاتف الوهمي (مستخدم في الاختبار).
 
+**🎯 v3.0 — العب أنت والبوت يضرب على الراس: أوضاع الشوتر (مساعد / زناد / كامل)**
+- **مساعد (الافتراضي)**: المستخدم يلعب ويلف الكاميرا عادي. البوت يراقب **لون الرأس**؛ لما رأس يقرب من التصويب (داخل `assistRange` = 320px) يحقن سحبة تصويب قصيرة (≤40ms، `maxStep 180`, `deadzone 6`) تحط التصويب على الراس ويطلق رشقة، ثم يرجّع التحكم. **توقّع الحركة** `predictMs` (سرعة الهدف من الإطارات المتتالية → يصوّب على مكانه بعد 80ms). قواعد الحركة/الكنس غير موجودة في هذا الوضع.
+- **زناد**: المستخدم يصوّب، البوت يضرب فقط لما الراس تحت التصويب (`fire_burst.maxRange`).
+- **كامل**: يلعب لوحده (كما في v2.7 + هيدشوت/تفادي/PLAY AGAIN).
+- `head` وحده يكفي في مساعد/زناد (`enemy` يتساوى معه). `headOffsetY:-25` لو اللون يغطي الجسم كله. علامة `assist` على البوت (🎯 مساعد في اللوحة، `[assist]` في الـ bootstrap).
+- **الصانع**: نوع "شوتر — هيدشوت" أول حاجة فيه "لون رأس العدو ★" وقائمة الوضع بالعربي (مساعد/زناد/كامل)، مدى المساعدة، توقّع الحركة، رفع نقطة الضرب.
+- Android 3.0.0: `aim_to_found` تتبّع سرعة الهدف + `predictMs` + بوابة `maxRange`؛ `fire_burst.maxRange`.
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -171,6 +179,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v3.0**: `aim_to_found` lead prediction + assist-range gate، `fire_burst.maxRange` (trigger-bot)
 - **v2.8**: `BotOverlay` فقاعة عائمة، `onKeyEvent` أزرار الصوت، `onForegroundApp` → autoStart، auto-tune لحساسية التصويب، `learned/startedBy` في `bot_status`
 - **v2.7**: `BotEngine` — كشف أجسام (`scanObjects`) مع pick/size، ألوان متعددة، `forMs`، `tap_all_found`، **`aim_to_found` aimbot** تناسبي مع deadzone، `aim.alternate`، `maxFires`، `ruleHits/avgTickMs`
 - **v2.6**: `BotEngine` — محرك قواعد على الجهاز (حلقة tick، تقييم شروط بالألوان/OCR/الأرقام، تنفيذ الأفعال بنفس محرك اللمس المتعدد)، أزرار إشعار ▶/↻/■، `bot_sync/bot_start/bot_stop/bot_status`
@@ -434,7 +443,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v29.sh   # 895 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v30.sh   # 930 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -465,6 +474,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v2.9 — visual Bot Builder for humans (/builder), color_tap template, shooter headshot/evade/play-again; 79 tools; 895 e2e checks; Android 2.8.0)
+- **Last Updated**: 2026-09-08 (v3.0 — shooter assist/trigger/full modes: the user plays, the bot snaps aim to the head + fires within range, lead prediction; builder shooter wizard; 79 tools; 930 e2e checks; Android 3.0.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
