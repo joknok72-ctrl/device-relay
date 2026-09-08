@@ -3,6 +3,7 @@ import { parseAction } from './validate'
 import { toolToAction, TOOLS, READ_ONLY_TOOLS, OBSERVATION_TOOLS } from './tools'
 import type { DeviceRegistry } from './registry'
 import type { CommandResult } from './device-room'
+import { BOT_TEMPLATES, templateSummary } from './bot-templates'
 
 export interface ToolResult {
   ok: boolean
@@ -190,7 +191,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'session_report') return sessionReport(env, deviceId, args)
   if (mapped.special === 'game_bot') {
     const act = String(args.action ?? 'list').toLowerCase()
-    if (opts.readOnly && !['list', 'get', 'status'].includes(act)) return { ok: false, error: `token is read-only: game_bot ${act} not allowed` }
+    if (opts.readOnly && !['list', 'get', 'status', 'templates'].includes(act)) return { ok: false, error: `token is read-only: game_bot ${act} not allowed` }
     return gameBot(env, deviceId, args)
   }
   if (mapped.special === 'game_profile') {
@@ -727,9 +728,25 @@ async function gameBot(env: Bindings, deviceId: string, args: Record<string, unk
     const res = await executeTool(env, deviceId, 'bot_start' as string, { botId: b.id }, { internal: true })
     return { ...res, bot: { id: b.id, name: b.name }, hint: res.ok ? `bot '${b.name}' is running on the phone; the user can stop it from the notification. Observe for ~20s and fix rules if needed.` : 'phone refused bot_start — is the Android app v2.6+ and the game in the foreground?' }
   }
-  if (act === 'create' || act === 'update') {
+  if (act === 'templates') return { ok: true, templates: templateSummary(), hint: 'game_bot action=template template=<id> params={...@names...}. Set the @names with game_profile first (sample_colors/find_objects to pick a UNIQUE stable colour).' }
+  let template: string | undefined
+  if (act === 'template') {
+    const t = BOT_TEMPLATES.find((x) => x.id === String(args.template ?? '').toLowerCase())
+    if (!t) return { ok: false, error: `unknown template ${args.template}`, available: BOT_TEMPLATES.map((x) => x.id) }
+    const params = (args.params && typeof args.params === 'object' ? args.params : {}) as Record<string, unknown>
+    for (const pd of t.params) if (pd.default !== undefined && params[pd.key] === undefined) params[pd.key] = pd.default
+    const missing = t.params.filter((pd) => pd.required && params[pd.key] === undefined).map((pd) => `${pd.key} (${pd.kind}: ${pd.doc})`)
+    if (missing.length) return { ok: false, error: `template ${t.id} needs params: ${missing.join('; ')}`, params: t.params }
+    args.rules = t.build(params)
+    args.tickMs ??= t.tickMs
+    args.name ??= `${t.id}-bot`
+    args.description ??= t.title
+    template = t.id
+  }
+  if (act === 'create' || act === 'update' || act === 'template') {
     if (!app) return { ok: false, error: 'could not determine the current app; pass app=<package>' }
     let existing: import('./types').Bot | undefined
+    if (act === 'template') { const { bots } = await list(); existing = findBot(bots) } // template re-run with the same name = overwrite
     if (act === 'update') { const { bots } = await list(); existing = findBot(bots); if (!existing) return { ok: false, error: 'bot not found for update' } }
     const nameRaw = String(args.name ?? existing?.name ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 40)
     if (!nameRaw) return { ok: false, error: 'name required' }
@@ -751,13 +768,14 @@ async function gameBot(env: Bindings, deviceId: string, args: Record<string, unk
       rules: v.rules!, tickMs: isFin(args.tickMs) ? Math.min(Math.max(args.tickMs, 50), 2000) : existing?.tickMs ?? 120,
       maxRunMs: isFin(args.maxRunMs) ? Math.min(Math.max(args.maxRunMs, 10_000), 21_600_000) : existing?.maxRunMs ?? 1_800_000,
       stopOnAppChange: typeof args.stopOnAppChange === 'boolean' ? args.stopOnAppChange : existing?.stopOnAppChange ?? true,
-      createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(),
+      createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(), ...(template ? { template } : existing?.template ? { template: existing.template } : {}),
     }
     const res = (await (await r.fetch(`https://do/bots?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bot) })).json()) as ToolResult
     if (!res.ok) return res
-    return { ok: true, action: act, bot: { id: bot.id, name: bot.name, app, rules: bot.rules.length, tickMs: bot.tickMs, maxRunMs: bot.maxRunMs }, warnings: hasStop ? [] : ['no stop_bot rule — add a GAME OVER / popup safety rule'], hint: `saved and pushed to the phone. Start: game_bot action=run name="${bot.name}" — or the user taps ▶ in the Device Relay notification. Tell the user the bot name.` }
+    const ruleNames = bot.rules.map((x) => x.name)
+    return { ok: true, action: act, bot: { id: bot.id, name: bot.name, app, rules: bot.rules.length, ruleNames, tickMs: bot.tickMs, maxRunMs: bot.maxRunMs, ...(template ? { template } : {}) }, warnings: hasStop ? [] : ['no stop_bot rule — add a GAME OVER / popup safety rule'], hint: `saved and pushed to the phone. Start: game_bot action=run name="${bot.name}" — or the user taps ▶ in the Device Relay notification. Tell the user the bot name.` }
   }
-  return { ok: false, error: 'action must be create|update|list|get|delete|run|stop|status' }
+  return { ok: false, error: 'action must be create|update|list|get|delete|run|stop|status|template|templates' }
 }
 
 // ---------------------------------------------------------------- v2.3 game profile
