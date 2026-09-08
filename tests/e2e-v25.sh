@@ -63,7 +63,7 @@ R=$(call '{"name":"combo","arguments":{"steps":[{"op":"joystick","x":250,"y":190
 check combo-ok '"ok":true' "$R"
 check combo-steps '"steps":4' "$R"
 check combo-fingers-clean '"fingersDown":0' "$R"
-check combo-direction-map '"angle":315' "$(curl -s "${A[@]}" $U/api/devices/$D/logs | j '[l["action"] for l in d if l["action"]["type"]=="combo"][0]["combo"][0]' | sed 's/ //g')"
+check combo-direction-map "'angle':315" "$(curl -s "${A[@]}" $U/api/devices/$D/logs | j '[l["action"] for l in d if l["action"]["type"]=="combo"][0]["combo"][0]' | sed 's/ //g')"
 check combo-empty 'requires steps' "$(call '{"name":"combo","arguments":{"steps":[]}}')"
 check combo-bad-op 'op must be one of' "$(call '{"name":"combo","arguments":{"steps":[{"op":"dance"}]}}')"
 check combo-needs-xy 'requires x, y' "$(call '{"name":"combo","arguments":{"steps":[{"op":"tap"}]}}')"
