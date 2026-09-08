@@ -17,6 +17,7 @@
     .phone-frame{position:relative}
     #overlay-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
     #screen-badge{position:absolute;top:8px;left:8px;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(14,165,233,.85);color:#fff}
+    #bot-badge{position:absolute;top:8px;left:8px;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,.9);color:#022c22;font-weight:600}
     #rec-badge{position:absolute;top:8px;right:8px;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(225,29,72,.9);color:#fff;animation:blink 1s steps(2) infinite}
     @keyframes blink{50%{opacity:.4}}
     ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
@@ -48,6 +49,7 @@
         <canvas id="overlay-canvas" width="1080" height="2340"></canvas>
         <span id="screen-badge" class="hidden"></span>
         <span id="rec-badge" class="hidden"><i class="fas fa-circle text-[8px]"></i> REC</span>
+        <span id="bot-badge" class="hidden"><i class="fas fa-robot text-[10px]"></i> BOT</span>
         <p id="shot-empty" class="text-slate-600 text-sm px-6 text-center">لم تُلتقط أي صورة بعد. عندما ينفّذ الـ AI أمر capture_screen ستظهر هنا مباشرة.</p>
       </div>
     </section>
@@ -238,6 +240,7 @@
       else if (m.kind === 'screenshot') showShot(m)
       else if (m.kind === 'frame') showFrame(m)
       else if (m.kind === 'overlay') pushOverlay(m)
+      else if (m.kind === 'bot_status') { const b = $('bot-badge'); b.classList.toggle('hidden', !m.running); if (m.running) b.innerHTML = `<i class="fas fa-robot text-[10px]"></i> BOT ${m.name || ''} · ${m.fired ?? 0}` }
       else if (m.kind === 'recording') { const b = $('rec-badge'); b.classList.toggle('hidden', !m.active); if (m.active) b.innerHTML = `<i class="fas fa-circle text-[8px]"></i> REC ${m.name || ''}` }
     }
   }
