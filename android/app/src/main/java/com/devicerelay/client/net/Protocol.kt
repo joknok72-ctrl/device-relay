@@ -105,6 +105,7 @@ data class BotStatusMessage(
     val ticks: Int? = null, val fired: Int? = null, val lastRule: String? = null,
     val startedAt: Long? = null, val stoppedBy: String? = null, val error: String? = null,
     val ruleHits: Map<String, Int>? = null, val avgTickMs: Int? = null,
+    val learned: Map<String, Float>? = null, val startedBy: String? = null,
     val ts: Long,
 )
 

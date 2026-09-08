@@ -60,19 +60,57 @@ class AutomationAccessibilityService : AccessibilityService() {
         data class Fail(val error: String) : Outcome()
     }
 
+    // ------------------------------------------------------------ v2.8 hands-free bot controls
+    /** floating ▶/■ bubble over the game (TYPE_ACCESSIBILITY_OVERLAY, no extra permission) */
+    val overlay: BotOverlay by lazy { BotOverlay(this) }
+    /** RelayConnectionService registers these so the bubble / volume keys / auto-start can drive BotEngine */
+    var onBotToggle: (() -> Unit)? = null
+    var onBotStartRequest: ((reason: String) -> Unit)? = null
+    var onForegroundApp: ((pkg: String) -> Unit)? = null
+    private var overlayHiddenFor: String? = null
+    private var lastVolDownAt = 0L; private var lastVolUpAt = 0L
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // ask for hardware key events (volume double-press = start/stop bot) — flag is added at runtime so older configs keep working
+        runCatching { serviceInfo = serviceInfo.apply { flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS } }
+        overlay.onTap = { onBotToggle?.invoke() }
+        overlay.onLongPress = { overlayHiddenFor = lastPackage; overlay.hide() }
         Log.i(TAG, "AccessibilityService connected")
     }
 
     override fun onDestroy() {
+        runCatching { overlay.hide() }
         if (instance === this) instance = null
         super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        event?.packageName?.let { lastPackage = it.toString() }
+        val pkg = event?.packageName?.toString() ?: return
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != lastPackage && pkg != packageName && !pkg.startsWith("com.android.systemui")) {
+            lastPackage = pkg
+            if (overlayHiddenFor != null && overlayHiddenFor != pkg) overlayHiddenFor = null
+            onForegroundApp?.invoke(pkg)
+        } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) lastPackage = pkg
+    }
+
+    /** volume keys: double-press Vol-Down within 500 ms = stop bot, double-press Vol-Up = start current bot. Single presses pass through. */
+    override fun onKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action != android.view.KeyEvent.ACTION_DOWN) return false
+        val now = android.os.SystemClock.elapsedRealtime()
+        when (event.keyCode) {
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> { if (now - lastVolDownAt < 500 && BotEngine.status.running) { lastVolDownAt = 0; BotEngine.stop("volume"); return true }; lastVolDownAt = now }
+            android.view.KeyEvent.KEYCODE_VOLUME_UP -> { if (now - lastVolUpAt < 500 && !BotEngine.status.running) { lastVolUpAt = 0; onBotStartRequest?.invoke("volume"); return true }; lastVolUpAt = now }
+        }
+        return false
+    }
+
+    /** show/refresh the bubble for the current foreground app (called by RelayConnectionService) */
+    fun updateOverlay(text: String, sub: String, running: Boolean, hasBots: Boolean) {
+        if (!hasBots && !running) { overlay.hide(); return }
+        if (overlayHiddenFor != null && overlayHiddenFor == lastPackage && !running) { overlay.hide(); return }
+        overlay.show(text, sub, running)
     }
 
     override fun onInterrupt() { /* not used */ }

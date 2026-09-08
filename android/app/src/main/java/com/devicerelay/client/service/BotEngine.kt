@@ -50,7 +50,12 @@ object BotEngine {
         val ticks: Int = 0, val fired: Int = 0, val lastRule: String? = null,
         val startedAt: Long? = null, val stoppedBy: String? = null, val error: String? = null,
         val ruleHits: Map<String, Int> = emptyMap(), val avgTickMs: Int = 0,
+        /** v2.8 self-tuned params: "<rule>/<actionIdx>/sensitivity" → value */
+        val learned: Map<String, Float> = emptyMap(),
     )
+
+    /** v2.8 aim auto-tune state per action key */
+    private class AimTune(var gain: Float, var lastEx: Int = 0, var lastEy: Int = 0, var lastDx: Float = 0f, var lastDy: Float = 0f, var pending: Boolean = false, var samples: Int = 0)
 
     /** What a condition "found": a single point plus (for object_present) every detected object. */
     private class Found(val x: Int, val y: Int, val all: List<Pair<Int, Int>> = listOf(x to y))
@@ -94,9 +99,10 @@ object BotEngine {
             val everyLast = HashMap<String, Long>()
             val holdSince = HashMap<String, Long>()      // v2.7 forMs: when a condition first became true
             val altState = HashMap<String, Boolean>()    // v2.7 aim.alternate flip state
+            val aimTune = HashMap<String, AimTune>()      // v2.8 aim_to_found gain learning
             var lastHash: String? = null
             var tickTimeSum = 0L
-            val st = { Status(true, id, name, ticks, fired, lastRule, startedAt, ruleHits = fires.toMap(), avgTickMs = if (ticks > 0) (tickTimeSum / ticks).toInt() else 0) }
+            val st = { Status(true, id, name, ticks, fired, lastRule, startedAt, ruleHits = fires.toMap(), avgTickMs = if (ticks > 0) (tickTimeSum / ticks).toInt() else 0, learned = aimTune.filter { it.value.samples >= 3 }.mapValues { Math.round(it.value.gain * 100f) / 100f }.mapKeys { it.key + "/sensitivity" }) }
             try {
                 while (true) {
                     val now = SystemClock.elapsedRealtime()
@@ -138,7 +144,7 @@ object BotEngine {
                         val actions = rule["then"]?.jsonArray?.map { it.jsonObject } ?: emptyList()
                         var stop = false
                         for ((ai, a) in actions.withIndex()) {
-                            val r = runAction(svc, a, found, bmp, "$rname/$ai", altState)
+                            val r = runAction(svc, a, found, bmp, "$rname/$ai", altState, aimTune)
                             if (r == "stop") { stop = true; stoppedBy = "rule:$rname"; break }
                         }
                         if (ticks % 5 == 0 || fired % 5 == 0) emit(st())
@@ -183,6 +189,7 @@ object BotEngine {
         put("ticks", status.ticks); put("fired", status.fired); status.lastRule?.let { put("lastRule", it) }
         status.startedAt?.let { put("startedAt", it) }; status.stoppedBy?.let { put("stoppedBy", it) }; status.error?.let { put("error", it) }
         if (status.ruleHits.isNotEmpty()) put("ruleHits", buildJsonObject { status.ruleHits.forEach { (k, v) -> put(k, v) } })
+        if (status.learned.isNotEmpty()) put("learned", buildJsonObject { status.learned.forEach { (k, v) -> put(k, v) } })
         put("avgTickMs", status.avgTickMs)
         put("ts", System.currentTimeMillis())
     }
@@ -277,7 +284,7 @@ object BotEngine {
 
     // ------------------------------------------------------------ actions
     /** returns "stop" to end the bot, else null */
-    private suspend fun runAction(svc: AutomationAccessibilityService, a: JsonObject, found: Found?, bmp: Bitmap, key: String, altState: HashMap<String, Boolean>): String? {
+    private suspend fun runAction(svc: AutomationAccessibilityService, a: JsonObject, found: Found?, bmp: Bitmap, key: String, altState: HashMap<String, Boolean>, aimTune: HashMap<String, AimTune> = HashMap()): String? {
         val type = a.str("type") ?: return null
         val action: Action? = when (type) {
             "stop_bot" -> return "stop"
@@ -300,9 +307,21 @@ object BotEngine {
                 val cx = a.int("crosshairX") ?: bmp.width / 2; val cy = a.int("crosshairY") ?: bmp.height / 2
                 val ex = (f.x + (a.int("offsetX") ?: 0)) - cx; val ey = (f.y + (a.int("offsetY") ?: 0)) - cy
                 val dz = a.int("deadzone") ?: 12
-                if (Math.abs(ex) <= dz && Math.abs(ey) <= dz) return null
-                val sens = (a.float("sensitivity") ?: 1f).coerceIn(0.05f, 5f); val maxStep = (a.int("maxStep") ?: 300).coerceIn(5, 1500).toFloat()
+                val tune = aimTune.getOrPut(key) { AimTune((a.float("sensitivity") ?: 1f).coerceIn(0.05f, 5f)) }
+                // v2.8 auto-tune: compare how far the target actually moved after the previous drag with what we asked for.
+                // ratio = observed movement / requested drag → if the crosshair moved less than the error we corrected (undershoot) raise gain, if it overshot lower it.
+                if (a["autoTune"]?.jsonPrimitive?.booleanOrNull != false && tune.pending && Math.abs(tune.lastDx) > 20) {
+                    val moved = (tune.lastEx - ex).toFloat()          // px the target shifted on screen (positive = we reduced the error)
+                    val want = tune.lastEx.toFloat()                  // we wanted to remove the whole error
+                    if (Math.abs(want) > dz) {
+                        val ratio = (moved / want).coerceIn(-1f, 3f)  // 1 = perfect, <1 undershoot, >1 overshoot
+                        if (ratio > 0.05f) { tune.gain = (tune.gain * (1f + 0.35f * (1f - ratio))).coerceIn(0.05f, 5f); tune.samples++ }
+                    }
+                }
+                if (Math.abs(ex) <= dz && Math.abs(ey) <= dz) { tune.pending = false; return null }
+                val sens = tune.gain; val maxStep = (a.int("maxStep") ?: 300).coerceIn(5, 1500).toFloat()
                 val dx = (ex * sens).coerceIn(-maxStep, maxStep); val dy = (ey * sens).coerceIn(-maxStep, maxStep)
+                tune.lastEx = ex; tune.lastEy = ey; tune.lastDx = dx; tune.lastDy = dy; tune.pending = true
                 Action(type = "aim", x = a.float("x"), y = a.float("y"), dx = dx, dy = dy, duration = (a.long("duration") ?: 60L), finger = a.int("finger") ?: 1, steps = 3, release = true)
             }
             "tap" -> Action(type = "tap", x = a.float("x"), y = a.float("y"))
