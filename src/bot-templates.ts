@@ -33,6 +33,25 @@ function safety(p: Record<string, unknown>): unknown[] {
 
 export const BOT_TEMPLATES: BotTemplate[] = [
   {
+    id: 'color_tap', genre: 'casual', title: 'Simplest: anything of this colour appears → tap it (optionally tap a button instead)',
+    doc: 'The one-rule bot the user asked for: "make it red, then hit red whenever you see it". Detects objects of the colour and taps them (or taps a fixed button such as FIRE when the colour is visible). Works for any game.',
+    params: [
+      { key: 'color', kind: 'color', required: true, doc: '@color to watch (or array)' },
+      { key: 'button', kind: 'control', doc: '@control to tap when the colour is seen (default: tap the colour itself)' },
+      { key: 'region', kind: 'region', doc: '@region to watch (default whole screen)' },
+      { key: 'minSize', kind: 'number', default: 12, doc: 'ignore blobs smaller than this' },
+      { key: 'tolerance', kind: 'number', default: 32, doc: 'colour tolerance' },
+      { key: 'cooldownMs', kind: 'number', default: 120, doc: 'ms between hits' },
+      { key: 'repeat', kind: 'number', default: 1, doc: 'taps per hit (burst)' },
+    ],
+    tickMs: 80,
+    build: (p) => [...safety(p), {
+      name: 'hit-colour', priority: 10, cooldownMs: n(p.cooldownMs, 120),
+      when: [{ type: 'object_present', ...colors(p.color), tolerance: n(p.tolerance, 32), minSize: n(p.minSize, 12), pick: 'largest', ...(p.region ? { region: p.region } : {}) }],
+      then: [p.button ? (n(p.repeat, 1) > 1 ? { type: 'repeat_tap', at: p.button, count: n(p.repeat, 1), intervalMs: 60 } : { type: 'tap', at: p.button }) : { type: 'tap_all_found', max: Math.max(1, n(p.repeat, 1)), intervalMs: 40 }],
+    }],
+  },
+  {
     id: 'shooter', genre: 'shooter', title: 'Shooter: aimbot + auto-fire + camera sweep + advance',
     doc: 'Detects enemies as OBJECTS (blob of the enemy colour: head marker / name-tag / health bar — choose a colour that is unique and stable), drags the camera so the crosshair lands on the nearest one, fires a burst. When nobody is visible it sweeps the camera left/right and walks forward. Optional HP retreat.',
     params: [
@@ -51,11 +70,25 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       { key: 'minSize', kind: 'number', default: 10, doc: 'ignore blobs smaller than this (px)' },
       { key: 'tolerance', kind: 'number', default: 32, doc: 'colour tolerance' },
       { key: 'enemyRegion', kind: 'region', doc: '@region to search (default whole screen minus HUD — pass your own to exclude the minimap/HUD)' },
+      { key: 'head', kind: 'color', doc: '@color of the enemy HEAD marker (small blob) → extra headshot rule with higher priority and a tighter deadzone' },
+      { key: 'evade', kind: 'control', doc: '@control crouch/jump button → pressed every ~3 s while an enemy is visible (harder to hit)' },
+      { key: 'playAgain', kind: 'control', doc: '@control PLAY AGAIN / next match button → tapped when the match ends (instead of stop_bot)' },
+      { key: 'matchEndText', kind: 'text', default: 'PLAY AGAIN', doc: 'text that appears at match end (with playAgain)' },
     ],
     tickMs: 70,
     build: (p) => {
       const rules: unknown[] = [...safety(p)]
       const enemy = { type: 'object_present', ...colors(p.enemy), tolerance: n(p.tolerance, 32), minSize: n(p.minSize, 10), pick: 'nearest', ...(p.crosshair ? { nearX: p.crosshair, nearY: p.crosshair } : {}), ...(p.enemyRegion ? { region: p.enemyRegion } : {}) }
+      if (p.head) rules.push({
+        name: 'headshot', priority: 11, cooldownMs: 40,
+        when: [{ type: 'object_present', ...colors(p.head), tolerance: n(p.tolerance, 32), minSize: 4, maxSize: 90, pick: 'nearest', ...(p.crosshair ? { nearX: p.crosshair, nearY: p.crosshair } : {}), ...(p.enemyRegion ? { region: p.enemyRegion } : {}) }],
+        then: [
+          { type: 'aim_to_found', at: p.look, ...(p.crosshair ? { crosshairX: p.crosshair, crosshairY: p.crosshair } : {}), sensitivity: n(p.sensitivity, 0.9), maxStep: 260, deadzone: 8, duration: 45 },
+          { type: 'fire_burst', at: p.fire, count: n(p.fireCount, 6), intervalMs: n(p.fireIntervalMs, 70) },
+        ],
+      })
+      if (p.evade) rules.push({ name: 'evade', priority: 12, cooldownMs: 3000, exclusive: false, when: [enemy], then: [{ type: 'tap', at: p.evade }] })
+      if (p.playAgain) rules.push({ name: 'play-again', priority: 95, cooldownMs: 5000, when: [{ type: 'text_present', text: s(p.matchEndText, 'PLAY AGAIN'), forMs: 800 }], then: [{ type: 'tap', at: p.playAgain }, { type: 'wait', ms: 1500 }] })
       rules.push({
         name: 'aim-and-fire', priority: 10, cooldownMs: 40,
         when: [enemy],

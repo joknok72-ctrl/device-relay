@@ -6,7 +6,7 @@
   const H = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'X-Requested-With': 'builder' }
   let device = ''
   let shot = null            // { w, h, scale } of the screenshot vs the real screen
-  let typeId = 'shooter'
+  let typeId = 'color_tap'
   let picking = null         // key of the thing being placed
   const marks = {}           // key → { kind, x, y, w, h, hex, tol, ok, count }
   let botStatusTimer = null
@@ -14,6 +14,21 @@
 
   // ---------------------------------------------------------------- catalogue: what each game type needs (mirrors the server templates)
   const TYPES = {
+    color_tap: {
+      icon: 'fa-bullseye', title: 'الأبسط: شفت اللون ده → اضرب',
+      doc: 'قاعدة واحدة لأي لعبة: حدّد لونًا (مثلًا الأحمر) وكل ما يظهر شيء بهذا اللون البوت يضغط عليه — أو يضغط زرًا معيّنًا (مثل زر الضرب) طول ما اللون ظاهر.',
+      things: [
+        { key: 'color', kind: 'color', label: 'اللون المستهدف', req: true, hint: 'اضغط على الشيء اللي عايز البوت يتفاعل معاه' },
+        { key: 'button', kind: 'control', label: 'زر يضغطه بدل الضغط على اللون نفسه (اختياري)' },
+        { key: 'region', kind: 'region', label: 'منطقة المراقبة (اختياري)' },
+      ],
+      tune: [
+        { key: 'tolerance', label: 'تسامح اللون', min: 10, max: 70, step: 2, def: 32, doc: 'زوّده لو مش بيتكشف، قلّله لو بيضرب حاجات غلط' },
+        { key: 'minSize', label: 'أصغر حجم (px)', min: 4, max: 100, step: 2, def: 12 },
+        { key: 'cooldownMs', label: 'الفاصل بين الضربات (ms)', min: 0, max: 1000, step: 20, def: 120 },
+        { key: 'repeat', label: 'ضغطات لكل مرة', min: 1, max: 10, step: 1, def: 1 },
+      ],
+    },
     shooter: {
       icon: 'fa-crosshairs', title: 'شوتر (Free Fire / PUBG / CoD)',
       doc: 'يكشف الأعداء كأجسام باللون الذي تحدده، يجرّ الكاميرا حتى يقع التصويب عليهم ويطلق رشقات — ولو مافيش عدو يلف الكاميرا يمين/شمال ويتقدّم. يتوقف على GAME OVER.',
@@ -25,6 +40,9 @@
         { key: 'crosshair', kind: 'control', label: 'مكان التصويب (النقطة) — افتراضي منتصف الشاشة' },
         { key: 'hp', kind: 'region', label: 'منطقة رقم الصحة (اسحب مستطيل)' },
         { key: 'heal', kind: 'control', label: 'زر العلاج' },
+        { key: 'head', kind: 'color', label: 'لون رأس العدو (للهيدشوت — اختياري)', hint: 'اضغط على علامة/لون الرأس بالذات' },
+        { key: 'evade', kind: 'control', label: 'زر القرفصة/القفز (يتفاداهم — اختياري)' },
+        { key: 'playAgain', kind: 'control', label: 'زر PLAY AGAIN (ماتشات متواصلة — اختياري)' },
       ],
       tune: [
         { key: 'sensitivity', label: 'حساسية التصويب', min: 0.3, max: 2, step: 0.1, def: 0.9, doc: 'كاميرا بطيئة → ارفعها، الكاميرا تعدّي الهدف → اخفضها. البوت يعدّلها لوحده أثناء اللعب.' },

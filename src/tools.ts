@@ -554,7 +554,7 @@ export const TOOLS: ToolDef[] = [
     description:
       'BUILD A BOT that plays for the user WITHOUT you: a list of rules "WHEN <colour/object/pixel/text/number condition> THEN <taps/swipes/joystick/aim/fire/combo>" that the PHONE evaluates every tickMs against the live screen, forever, with no network and no AI tokens. ' +
       'The user starts/stops it from the Device Relay notification (▶ Bot / ↻ next / ■ Stop) so they never touch the game screen; you can also run/stop it. ' +
-      'FASTEST PATH: action=template template=<shooter|runner|rhythm|idle_tapper|puzzle_match|fishing|racing|clicker> with the @names it lists (game_profile first) → a complete, tuned bot is created in ONE call; then run it and watch. ' +
+      'FASTEST PATH: action=template template=<color_tap|shooter|runner|rhythm|idle_tapper|puzzle_match|fishing|racing|clicker> (color_tap = "see this colour → hit it/press this button", one call, any game) with the @names it lists (game_profile first) → a complete, tuned bot is created in ONE call; then run it and watch. ' +
       'Conditions (AND within a rule; several rules = OR): color_present/color_absent {color|colors[],region?,minCount?,tolerance?} · object_present/object_absent {color|colors[],region?,minSize?,maxSize?,pick:largest|nearest|topmost|lowest,nearX?,nearY?,minCount?} (blob detection: real objects, not just pixels — use it for enemies/heads/notes) · pixel_is/pixel_not {x,y,color} · text_present/text_absent {text,region?} (OCR, slower) · number_below/number_above {region,value} · screen_changed · every_ms {ms} · always. ' +
       'Any condition takes forMs (must hold that long — avoids flicker). colors:[..] = ANY of several colours (skins/teams/variants). ' +
       'Actions: tap {x,y} · tap_found {offsetX?,offsetY?} (centre of what the first *_present condition found) · tap_all_found {max?,intervalMs?} (every detected object, for match/whack games) · aim_to_found {x,y (look area), crosshairX?,crosshairY?, sensitivity?, maxStep?, deadzone?} (AIMBOT: drags the camera so the crosshair lands on the found object; run it with fire_burst in the same rule) · swipe · long_press · tap_sequence · repeat_tap · joystick · aim {…,alternate:true} (camera SWEEP: flips direction each fire — use with color_absent enemy to look around) · fire_burst · combo · finger_up · back · home · wait {ms} · stop_bot. ' +
@@ -578,7 +578,7 @@ export const TOOLS: ToolDef[] = [
         maxRunMs: { type: 'integer', description: 'Auto-stop after ms (default 1800000 = 30 min, max 21600000)', minimum: 10000, maximum: 21600000 },
         stopOnAppChange: { type: 'boolean', description: 'Stop if the user leaves the game (default true)', default: true },
         autoStart: { type: 'boolean', description: 'v2.8: start this bot automatically ~2 s after the user opens the game (hands-free). Only one autoStart bot per app is sensible.', default: false },
-        template: { type: 'string', description: 'action=template: shooter | runner | rhythm | idle_tapper | puzzle_match | fishing | racing | clicker (action=templates lists them with required @names)' },
+        template: { type: 'string', description: 'action=template: color_tap | shooter | runner | rhythm | idle_tapper | puzzle_match | fishing | racing | clicker (action=templates lists them with required @names)' },
         params: { type: 'object', description: 'action=template: overrides for the template, e.g. {enemy:"@enemy", fire:"@fire", stick:"@stick", look:"@look", hp:"@hp", sensitivity:0.8, fireCount:6}' },
       },
       required: ['action'],

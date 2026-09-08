@@ -16,7 +16,7 @@ call '{"name":"get_current_app"}' >/dev/null
 call '{"name":"game_bot","arguments":{"action":"stop"}}' >/dev/null
 
 echo "== version"
-check version '"version":"2.8.0"' "$(curl -s $U/api/health)"
+check version '"version":"2.9.0"' "$(curl -s $U/api/health)"
 check tools-79 '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check tool-doc-aimbot 'aim_to_found' "$(curl -s "$U/api/tools/schema?format=raw" | grep -o 'aim_to_found' | head -1)"
 
@@ -78,8 +78,8 @@ check named-look '"x":800,"y":1200' "$G"
 echo "== templates"
 TL=$(call '{"name":"game_bot","arguments":{"action":"templates"}}')
 check templates-ok '"ok":true' "$TL"
-check templates-8 '8' "$(echo "$TL" | j 'len(d["templates"])')"
-check templates-ids 'shooter,runner,rhythm,idle_tapper,clicker,puzzle_match,fishing,racing' "$(echo "$TL" | j '",".join(t["id"] for t in d["templates"])')"
+check templates-9 '9' "$(echo "$TL" | j 'len(d["templates"])')"
+check templates-ids 'color_tap,shooter,runner,rhythm,idle_tapper,clicker,puzzle_match,fishing,racing' "$(echo "$TL" | j '",".join(t["id"] for t in d["templates"])')"
 check templates-params 'enemy*:color' "$TL"
 check template-unknown 'unknown template' "$(call '{"name":"game_bot","arguments":{"action":"template","template":"chess"}}')"
 check template-missing 'needs params: enemy' "$(call '{"name":"game_bot","arguments":{"action":"template","template":"shooter","params":{"fire":"@fire"}}}')"
