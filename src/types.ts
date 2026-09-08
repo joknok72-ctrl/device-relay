@@ -65,6 +65,11 @@ export type Action =
   | { type: 'aim'; x: number; y: number; dx: number; dy: number; duration: number; finger: number; steps: number; release: boolean }
   | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number }
   | { type: 'combo'; combo: ComboStep[] }
+  // v2.6 bots (definitions are pushed to the phone; the phone runs them locally and exposes them in its notification)
+  | { type: 'bot_sync'; bots: Bot[] }
+  | { type: 'bot_start'; botId: string }
+  | { type: 'bot_stop' }
+  | { type: 'bot_status' }
   // v2.1
   | { type: 'sample_colors'; region?: Region; maxColors?: number; quant?: number; ignoreGrey?: boolean }
   | { type: 'track_object'; color: string; tolerance?: number; region?: Region; minCount?: number; samples?: number; intervalMs?: number; predictMs?: number }
@@ -103,6 +108,70 @@ export interface GameProfile {
 export interface SessionReport { ts: number; outcome?: 'win' | 'loss' | 'progress' | 'stuck' | 'other'; score?: number; level?: string; summary: string; learned?: string[]; nextTime?: string; blockers?: string[]; durationMs?: number }
 /** v2.3 one play session (from first to last command within the same app, gaps < 10 min). */
 export interface PlaySession { app: string; label?: string; start: number; end: number; commands: number; failed: number; screenshots: number; report?: SessionReport }
+// ---------------------------------------------------------------- v2.6 game bots (run entirely on the phone)
+/** A condition evaluated on the phone against the current frame. */
+export type BotCondition =
+  | { type: 'color_present'; color: string; tolerance?: number; region?: Region; minCount?: number }
+  | { type: 'color_absent'; color: string; tolerance?: number; region?: Region; minCount?: number }
+  | { type: 'pixel_is'; x: number; y: number; color: string; tolerance?: number }
+  | { type: 'pixel_not'; x: number; y: number; color: string; tolerance?: number }
+  | { type: 'text_present'; text: string; region?: Region }
+  | { type: 'text_absent'; text: string; region?: Region }
+  | { type: 'number_below'; region: Region; value: number }
+  | { type: 'number_above'; region: Region; value: number }
+  | { type: 'screen_changed'; minPct?: number }
+  | { type: 'every_ms'; ms: number }
+  | { type: 'always' }
+/** An action the bot performs on the phone (a subset of Action, plus tap_found which taps the matched colour blob). */
+export type BotAction =
+  | { type: 'tap'; x: number; y: number }
+  | { type: 'tap_found'; offsetX?: number; offsetY?: number }
+  | { type: 'swipe'; x1: number; y1: number; x2: number; y2: number; duration?: number }
+  | { type: 'long_press'; x: number; y: number; duration?: number }
+  | { type: 'tap_sequence'; points: SeqPoint[] }
+  | { type: 'repeat_tap'; x: number; y: number; count: number; intervalMs: number }
+  | { type: 'joystick'; x: number; y: number; angle: number; distance: number; duration: number; finger: number; release: boolean }
+  | { type: 'aim'; x: number; y: number; dx: number; dy: number; duration: number; finger: number; steps: number; release: boolean }
+  | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number }
+  | { type: 'combo'; combo: ComboStep[] }
+  | { type: 'finger_up'; finger: number }
+  | { type: 'back' } | { type: 'home' }
+  | { type: 'wait'; ms: number }
+  | { type: 'stop_bot'; reason?: string }
+export interface BotRule {
+  name: string
+  /** all conditions must hold (AND). Use several rules for OR. */
+  when: BotCondition[]
+  then: BotAction[]
+  /** ms to wait after firing before this rule may fire again (default 300) */
+  cooldownMs?: number
+  /** higher runs first when several rules match in one tick (default 0) */
+  priority?: number
+  /** stop evaluating lower-priority rules this tick when this fires (default true) */
+  exclusive?: boolean
+  /** disable a rule without deleting it */
+  enabled?: boolean
+}
+export interface Bot {
+  id: string
+  app: string
+  label?: string
+  name: string
+  description?: string
+  rules: BotRule[]
+  /** frame poll interval ms (default 120) */
+  tickMs?: number
+  /** auto-stop after this many ms (default 30 min, max 6 h) */
+  maxRunMs?: number
+  /** stop when the foreground app is not `app` (default true) */
+  stopOnAppChange?: boolean
+  createdAt: number
+  updatedAt: number
+  runs?: number
+  lastRun?: { start: number; end?: number; ticks: number; fired: number; stoppedBy?: string }
+}
+/** Live bot status reported by the phone */
+export interface BotStatusMessage { kind: 'bot_status'; botId?: string; name?: string; running: boolean; ticks?: number; fired?: number; lastRule?: string; startedAt?: number; stoppedBy?: string; error?: string; ts: number }
 /** In-progress macro recording (record_macro). */
 export interface Recording { name?: string; description?: string; keepWaits: boolean; startedAt: number; lastAt: number; steps: { name: string; arguments?: Record<string, unknown> }[] }
 /** Named, replayable tool sequence stored per device. */
@@ -138,13 +207,14 @@ export const ACTION_TYPES = [
   'read_text', 'find_colors', 'stream',
   'find_objects', 'auto_react', 'sample_colors', 'track_object',
   'finger_down', 'finger_move', 'finger_up', 'joystick', 'aim', 'fire_burst', 'combo',
+  'bot_sync', 'bot_start', 'bot_stop', 'bot_status',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */
 export const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'screenshot', 'ping', 'ui_dump', 'list_apps', 'current_app', 'get_notifications', 'device_info',
   'pixel', 'find_color', 'screen_hash', 'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
-  'read_text', 'find_colors', 'stream', 'find_objects', 'sample_colors', 'track_object',
+  'read_text', 'find_colors', 'stream', 'find_objects', 'sample_colors', 'track_object', 'bot_status',
 ])
 
 /** Message sent server -> phone */
@@ -185,7 +255,7 @@ export interface HelloMessage {
 /** Live preview frame pushed by the phone while streaming is enabled (monitor page only). */
 export interface FrameMessage { kind: 'frame'; data: string; mime: string; ts: number }
 
-export type PhoneMessage = ResultMessage | HelloMessage | FrameMessage | { kind: 'pong' }
+export type PhoneMessage = ResultMessage | HelloMessage | FrameMessage | BotStatusMessage | { kind: 'pong' }
 
 export interface DeviceInfo {
   deviceId: string
