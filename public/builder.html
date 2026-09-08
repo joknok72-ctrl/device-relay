@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Device Relay — صانع البوتات</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    body{background:#0b1220;color:#e2e8f0;font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace}.ltr{direction:ltr}
+    .btn{display:inline-flex;align-items:center;gap:.4rem;border-radius:.6rem;padding:.45rem .9rem;font-weight:600;font-size:.9rem;transition:.15s;cursor:pointer;border:0}
+    .btn-p{background:#34d399;color:#0f172a}.btn-p:hover{background:#6ee7b7}
+    .btn-s{background:#1e293b;color:#e2e8f0}.btn-s:hover{background:#334155}
+    .btn-d{background:#7f1d1d;color:#fecaca}.btn-d:hover{background:#991b1b}
+    .btn-a{background:#f59e0b;color:#0f172a}.btn-a:hover{background:#fbbf24}
+    .btn:disabled{opacity:.45;cursor:not-allowed}
+    .card{background:#0f172a;border:1px solid #1e293b;border-radius:1rem;padding:1rem}
+    #shot-wrap{position:relative;display:inline-block;max-width:100%;line-height:0;border-radius:.75rem;overflow:hidden;border:1px solid #334155;background:#000}
+    #shot{max-width:100%;max-height:70vh;display:block;cursor:crosshair;user-select:none;-webkit-user-drag:none}
+    #marks{position:absolute;inset:0;pointer-events:none}
+    .mark{position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:999px;border:3px solid #fff;box-shadow:0 0 0 2px #000,0 0 12px #000;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#000;background:#fff}
+    .box{position:absolute;border:2px dashed #fbbf24;background:rgba(251,191,36,.12)}
+    .pick{border:2px solid transparent;border-radius:.75rem;padding:.65rem;background:#111c33;cursor:pointer;transition:.15s}
+    .pick:hover{border-color:#334155}.pick.on{border-color:#34d399;background:#0c2a22}
+    .thing{display:flex;align-items:center;gap:.6rem;background:#111c33;border-radius:.6rem;padding:.5rem .7rem}
+    .thing.on{outline:2px solid #34d399}
+    .sw{width:22px;height:22px;border-radius:6px;border:2px solid #fff3;flex:none}
+    .tag{font-size:.7rem;padding:.1rem .45rem;border-radius:999px;background:#1e293b}
+    .ok{color:#6ee7b7}.bad{color:#fca5a5}.warn{color:#fcd34d}
+    details summary{cursor:pointer}
+    .pulse{animation:p 1s infinite}@keyframes p{50%{opacity:.4}}
+  </style>
+</head>
+<body class="p-3 md:p-6">
+<div class="max-w-6xl mx-auto space-y-4">
+  <header class="flex items-center justify-between flex-wrap gap-2">
+    <h1 class="text-2xl font-bold"><i class="fas fa-robot text-emerald-400 ml-2"></i>صانع البوتات <span class="text-slate-500 text-base font-normal">— اعمل بوت بنفسك في 3 خطوات، بدون AI</span></h1>
+    <div class="flex items-center gap-2 text-sm">
+      <select id="dev" class="bg-slate-800 rounded-lg px-3 py-1.5"></select>
+      <span id="dev-state" class="tag">…</span>
+      <a id="setup-link" class="btn btn-s !py-1" href="#"><i class="fas fa-sliders"></i> اللوحة</a>
+    </div>
+  </header>
+
+  <!-- 1) type -->
+  <section class="card">
+    <h2 class="font-bold mb-2"><span class="tag">1</span> نوع اللعبة</h2>
+    <div id="types" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"></div>
+    <p id="type-doc" class="text-xs text-slate-400 mt-2"></p>
+  </section>
+
+  <!-- 2) screenshot + things -->
+  <section class="card">
+    <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+      <h2 class="font-bold"><span class="tag">2</span> علّم الأشياء على الشاشة <span class="text-slate-500 text-sm font-normal">— افتح اللعبة على الموبايل في لحظة فيها عدو/عقبة ظاهر، ثم صوّر</span></h2>
+      <div class="flex gap-2">
+        <button id="shot-btn" class="btn btn-p"><i class="fas fa-camera"></i> صوّر الشاشة</button>
+        <button id="clear-btn" class="btn btn-s"><i class="fas fa-eraser"></i> مسح العلامات</button>
+      </div>
+    </div>
+    <div class="grid md:grid-cols-[1fr_320px] gap-4">
+      <div>
+        <div id="shot-wrap"><img id="shot" alt="" ><div id="marks"></div></div>
+        <p id="shot-hint" class="text-xs text-slate-400 mt-2">اختر عنصرًا من القائمة (يمين) ثم اضغط على مكانه في الصورة. للمناطق: اسحب مستطيلًا.</p>
+        <div id="probe" class="text-xs mt-1"></div>
+      </div>
+      <div class="space-y-2">
+        <div id="things" class="space-y-2 text-sm"></div>
+        <div class="text-xs text-slate-500 border-t border-slate-800 pt-2">
+          <div class="mb-1">🎨 <b>اللون</b>: اضغط على العدو/الشيء نفسه — نلتقط لونه من الصورة ونتحقق فورًا إنه يظهر كأجسام مستقلة على الشاشة. لنتيجة ممتازة في فري فاير/PUBG/CoD: غيّر <b>لون تحديد العدو</b> من إعدادات اللعبة إلى لون صارخ (مثل البنفسجي الفاقع) ثم اضغط عليه.</div>
+          <div>📍 <b>الأزرار</b>: اضغط على زر الضرب/العصا/مساحة التصويب. ⬚ <b>المناطق</b>: اسحب مستطيلًا.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3) tune + save -->
+  <section class="card">
+    <h2 class="font-bold mb-2"><span class="tag">3</span> الضبط والحفظ</h2>
+    <div class="grid md:grid-cols-3 gap-3 text-sm" id="tune"></div>
+    <div class="flex flex-wrap items-center gap-2 mt-3">
+      <input id="bot-name" class="bg-slate-800 rounded-lg px-3 py-2 mono ltr w-48" placeholder="bot name (a-z 0-9 -)">
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="auto-start" class="accent-emerald-400"> ⚡ يبدأ لوحده عند فتح اللعبة</label>
+      <button id="save-btn" class="btn btn-p" disabled><i class="fas fa-save"></i> احفظ البوت على الموبايل</button>
+      <button id="run-btn" class="btn btn-a" disabled><i class="fas fa-play"></i> جرّب الآن 20 ثانية</button>
+      <button id="stop-btn" class="btn btn-d hidden"><i class="fas fa-stop"></i> أوقف</button>
+    </div>
+    <div id="status" class="text-sm mt-3 space-y-1"></div>
+    <details class="mt-3 text-xs"><summary class="text-slate-400">عرض القواعد (JSON) — للمتقدمين / لتعطيها للـ AI</summary><pre id="rules-json" class="mono ltr bg-slate-950 rounded p-2 mt-2 whitespace-pre-wrap break-all text-slate-300"></pre></details>
+  </section>
+
+  <section class="card text-sm text-slate-400">
+    <h2 class="font-bold text-slate-200 mb-1"><i class="fas fa-hand-pointer ml-1"></i> بعد الحفظ — تشغيل بدون لمس اللعبة</h2>
+    <ul class="list-disc pr-5 space-y-1">
+      <li>افتح اللعبة → <b>الفقاعة الخضراء</b> فوق الشاشة: ضغطة = تشغيل/إيقاف، سحب = نقل، مطوّلة = إخفاء.</li>
+      <li><b>ضغطتان على زر الصوت +</b> = تشغيل · <b>ضغطتان على زر الصوت −</b> = إيقاف.</li>
+      <li>الإشعار: ▶ / ↻ / ■ · أو علّم ⚡ فيبدأ لوحده لما تفتح اللعبة.</li>
+      <li>مش راضي عن النتيجة؟ ارجع هنا وعدّل الحساسية/التسامح وأعد الحفظ (نفس الاسم = تحديث)، أو اطلب من الـ AI يضبطه: "حسّن البوت <الاسم>".</li>
+    </ul>
+  </section>
+</div>
+<script src="/builder.js"></script>
+</body>
+</html>

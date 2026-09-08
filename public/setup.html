@@ -117,6 +117,16 @@
       </div>
     </section>
 
+    <section id="builder-section" class="bg-gradient-to-l from-emerald-950/60 to-slate-900 rounded-2xl p-5 border border-emerald-800/50">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 class="font-bold text-lg"><i class="fas fa-robot text-emerald-400 ml-1"></i> صانع البوتات — اعمل بوت بنفسك بدون AI</h2>
+          <p class="text-sm text-slate-400 mt-1">اختار نوع اللعبة (شوتر، راننر، اضغط-على-اللون…) → صوّر الشاشة → اضغط على العدو وزر الضرب → احفظ. البوت يظهر في الفقاعة فوق اللعبة فورًا. مثال: "أي حاجة حمرا → اضربها".</p>
+        </div>
+        <a id="builder-link" class="btn btn-p" href="#" target="_blank"><i class="fas fa-wand-magic-sparkles"></i> افتح صانع البوتات</a>
+      </div>
+    </section>
+
     <section id="memory-section" class="bg-slate-900 rounded-2xl p-5 border border-slate-800">
       <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
         <h2 class="font-bold"><i class="fas fa-brain text-fuchsia-400 ml-1"></i> ذاكرة الـ AI — ما تعلّمه عن كل لعبة / تطبيق</h2>
@@ -164,6 +174,7 @@
 
   function fillQuickStart(me) {
     $('#pair-url').textContent = me.pairUrl
+    if (me.builderUrl) $('#builder-link').href = me.builderUrl
     $('#chat-prompt').textContent = me.agentUrl + '\nافتح الرابط ونفّذ ما فيه (استخدم curl أو requests مع هيدر User-Agent — لو ظهر 403 error 1010 فهذا حجب Cloudflare لـ Python-urllib، غيّر الـ User-Agent وليس التوكن)، ثم: <مهمتك هنا>'
     $('#mcp-cli').textContent = `claude mcp add --transport http phone ${me.mcpUrl}`
     $('#mcp-json').textContent = JSON.stringify({ mcpServers: { phone: { url: me.mcpUrl } } }, null, 2)

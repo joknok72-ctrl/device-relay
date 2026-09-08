@@ -14,7 +14,7 @@ import { authenticate, canAccess, extractToken, randomToken, rateLimit, registry
 
 export { DeviceRoom, DeviceRegistry }
 
-const VERSION = '2.8.0'
+const VERSION = '2.9.0'
 
 type Auth = AuthContext & { readOnly?: boolean }
 type Env = { Bindings: AuthEnv; Variables: { auth: Auth } }
@@ -116,6 +116,14 @@ app.get('/setup/:token', async (c) => {
   return new Response(res.body, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
 })
 
+/** v2.9 visual Bot Builder for the human owner (any non-read-only token): /builder/<token> */
+app.get('/builder/:token', async (c) => {
+  const auth = await authenticate(c.env, c.req.param('token'))
+  if (!auth || auth.readOnly) return c.text('unauthorized — a device or admin token is required', 401)
+  const res = await c.env.ASSETS.fetch(new Request(new URL('/builder.html', c.req.url).toString()))
+  return new Response(res.body, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
+})
+
 /** Human monitor page with token in the URL: /monitor/<token> */
 app.get('/monitor/:token', async (c) => {
   const auth = await authenticate(c.env, c.req.param('token'))
@@ -175,6 +183,7 @@ function tokenUrls(origin: string, token: string, deviceId: string, isAdmin: boo
     agentUrl: `${origin}/agent/${token}`,
     mcpUrl: `${origin}/mcp/${token}`,
     monitorUrl: `${origin}/monitor/${token}`,
+    builderUrl: `${origin}/builder/${token}`,
     ...(isAdmin ? { setupUrl: `${origin}/setup/${token}` } : {}),
     pairUrl: pair,
     newChatPrompt: `${origin}/agent/${token}\nافتح الرابط ونفّذ ما فيه، ثم: <مهمتك هنا>`,
