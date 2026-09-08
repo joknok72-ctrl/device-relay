@@ -345,5 +345,27 @@
   }
 
   // ---------------------------------------------------------------- boot
-  loadDevices().then(() => { renderTypes(); renderThings(); renderTune(); updateSave() })
+  loadDevices().then(async () => {
+    renderTypes(); renderThings(); renderTune(); updateSave()
+    // ?selftest=1 — automated smoke run (used by the e2e suite with the fake phone): shot → pick colour → pick button → save
+    if (new URLSearchParams(location.search).get('selftest') === '1') {
+      const log = (...a) => console.log('[selftest]', ...a)
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      try {
+        $('#shot-btn').click(); await wait(2500)
+        log('shot', !!shot, shot && shot.w + 'x' + shot.h)
+        const im = $('#shot'); await new Promise((r) => (im.complete && im.naturalWidth ? r() : (im.onload = r)))
+        const t = things()[0]; picking = t.key
+        const bb = im.getBoundingClientRect()
+        const fire = (type, x, y) => im.dispatchEvent(new PointerEvent(type, { clientX: bb.left + x, clientY: bb.top + y, bubbles: true, pointerId: 1 }))
+        fire('pointerdown', bb.width / 2, bb.height * 0.62); fire('pointerup', bb.width / 2, bb.height * 0.62)
+        await wait(2500)
+        log('color', JSON.stringify(marks[t.key]))
+        if (typeId === 'color_tap') { picking = 'button'; fire('pointerdown', bb.width * 0.8, bb.height * 0.7); fire('pointerup', bb.width * 0.8, bb.height * 0.7); await wait(300); log('button', JSON.stringify(marks.button)) }
+        log('missing', JSON.stringify(missing()), 'saveDisabled', $('#save-btn').disabled)
+        if (!$('#save-btn').disabled) { $('#save-btn').click(); await wait(4000); log('saved', JSON.stringify(savedBot)) }
+        log('done')
+      } catch (e) { log('error', String(e)) }
+    }
+  })
 })()
