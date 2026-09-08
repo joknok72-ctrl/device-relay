@@ -4,6 +4,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -92,6 +93,18 @@ data class Action(
     val dy: Float? = null,               // aim
     val steps: Int? = null,              // aim: intermediate points
     @SerialName("combo") val steps2: List<ComboStep>? = null, // combo steps
+    // v2.6 bots
+    val bots: JsonArray? = null,         // bot_sync: raw bot definitions (interpreted by BotEngine)
+    val botId: String? = null,           // bot_start
+)
+
+@Serializable
+data class BotStatusMessage(
+    val kind: String = "bot_status",
+    val botId: String? = null, val name: String? = null, val running: Boolean,
+    val ticks: Int? = null, val fired: Int? = null, val lastRule: String? = null,
+    val startedAt: Long? = null, val stoppedBy: String? = null, val error: String? = null,
+    val ts: Long,
 )
 
 @Serializable

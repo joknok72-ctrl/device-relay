@@ -132,11 +132,14 @@ object BotEngine {
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 stoppedBy = status.stoppedBy ?: "stopped"
+                emit(Status(false, id, name, ticks, fired, lastRule, startedAt, stoppedBy))
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "bot crashed", e); stoppedBy = "error"
                 emit(Status(false, id, name, ticks, fired, lastRule, startedAt, stoppedBy, e.message)); return@launch
             } finally {
-                runCatching { withContext(Dispatchers.Main) { svc.execute(Action(type = "finger_up", finger = -1)) } }
+                // lift any held fingers even when cancelled
+                runCatching { withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { svc.execute(Action(type = "finger_up", finger = -1)) } }
             }
             emit(Status(false, id, name, ticks, fired, lastRule, startedAt, stoppedBy))
         }
