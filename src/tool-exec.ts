@@ -242,7 +242,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (res.data !== undefined) out.data = res.data
   if (res.ok) emitOverlay(env, deviceId, action as unknown as Record<string, unknown>, res.data)
   if (res.ok && (action.type === 'current_app' || action.type === 'ui_dump')) noteAppSeen(env, deviceId, res.data)
-  if (name === 'capture_screen') {
+  if (name === 'capture_screen' || name === '_play_frame') {
     const info = await deviceInfo(env, deviceId)
     out.screen = info.screen
     if (res.screenshot) {
@@ -395,10 +395,10 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   if (Array.isArray(args.ocr)) frame.ocr = args.ocr
   else if (profile) { const regs = Object.entries(profile.regions).filter(([n]) => NUMERIC_REGION.test(n)).slice(0, 4); if (regs.length) frame.ocr = regs.map(([name, g]) => ({ name, region: { x: g.x, y: g.y, w: g.w, h: g.h }, number: true })) }
   if (Array.isArray(args.pixels)) frame.pixels = args.pixels
-  const shot = await executeTool(env, deviceId, 'play_frame' as string, { frame }, { ...opts, internal: true })
+  const shot = await executeTool(env, deviceId, '_play_frame', { frame }, { ...opts, internal: true, depth: (opts.depth ?? 0) + 1 })
   if (!shot.ok) return { ok: false, error: shot.error ?? 'play_frame failed (needs app v4.1+)', action: action ? { ...action, image: undefined } : undefined }
   const d = (shot.data ?? {}) as Record<string, unknown>
-  const image = shot.image
+  const image = Number(args.maxWidth) === 0 ? undefined : shot.image
   // compact summary line the model can read without the image
   const objs = d.objects as Record<string, { count: number; objects: { cx: number; cy: number; area: number; w?: number; h?: number }[] }> | undefined
   const summary: string[] = []

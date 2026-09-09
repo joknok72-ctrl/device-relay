@@ -81,6 +81,47 @@ ws.onmessage = (ev) => {
     if (a.type === 'combo') { let bad = a.combo.findIndex(s => s.op === 'move' && !fingersDown.has(s.finger ?? 0) && !a.combo.slice(0, a.combo.indexOf(s)).some(p => p.op === 'down' && (p.finger ?? 0) === (s.finger ?? 0))); if (bad >= 0) { fingersDown.clear(); res.ok = false; res.error = `combo step ${bad + 1} (move) failed: finger ${a.combo[bad].finger ?? 0} is not down; finger_down first` } else { for (const s of a.combo) { if (s.op === 'down') fingersDown.set(s.finger ?? 0, { x: s.x, y: s.y }); if (s.op === 'up') { if ((s.finger ?? 0) === -1) fingersDown.clear(); else fingersDown.delete(s.finger ?? 0) } if (s.op === 'joystick' && s.release === false) fingersDown.set(s.finger ?? 0, { x: s.x, y: s.y }) } res.data = { steps: a.combo.length, elapsedMs: a.combo.reduce((t, s) => t + (s.delayMs ?? 0) + (s.duration ?? 0), 0), fingersDown: fingersDown.size } } }
     if (a.type === 'sample_colors') { const all = [ { hex: '#ff0000', share: 41.2, count: 8000, cx: 540, cy: 1500 }, { hex: '#00ff00', share: 22.5, count: 4400, cx: 300, cy: 700 }, { hex: '#3366ff', share: 9.1, count: 1800, cx: 900, cy: 400 }, { hex: '#ffcc00', share: 3.3, count: 650, cx: 120, cy: 2200 } ]; res.data = { colors: all.slice(0, a.maxColors ?? 8), analysedPx: 19400, quant: a.quant ?? 32, ...(a.region ? { region: a.region } : {}) } }
     if (a.type === 'track_object') { if (a.color !== '#ff0000') res.data = { found: false, samples: [], visible: 0 }; else { const n = a.samples ?? 5, iv = a.intervalMs ?? 120; const samples = []; for (let i = 0; i < n; i++) samples.push({ t: i * iv, x: 540 + i * 24, y: 1500, count: 1200 }); const vx = 24 * 1000 / iv; res.data = { found: true, visible: n, samples, cx: samples[n-1].x, cy: 1500, vx: Math.round(vx), vy: 0, speed: Math.round(vx), direction: 'right', angle: 0, predicted: { x: Math.round(samples[n-1].x + vx * (a.predictMs ?? 300) / 1000), y: 1500, inMs: a.predictMs ?? 300 } } } }
+    // v4.1 AI-direct play primitives
+    if (a.type === 'play_frame') {
+      const f = a.frame || {}
+      const present = (c) => c === '#ff0000' || c === '#00ff00'
+      const objects = {}
+      for (const [i, o] of (f.objects || []).entries()) {
+        const name = o.name || `c${i}`
+        const list = o.color === '#ff0000'
+          ? [ { cx: 540, cy: 1500, area: 8000, w: 80, h: 100, top: 1450 }, { cx: 200, cy: 1200, area: 2500, w: 50, h: 50, top: 1175 }, { cx: 900, cy: 800, area: 900, w: 30, h: 30, top: 785 } ]
+          : (o.color === '#00ff00' ? [ { cx: 300, cy: 700, area: 4400, w: 70, h: 70, top: 665 } ] : [])
+        const filtered = list.filter(x => x.w >= (o.minSize ?? 6) && (o.maxSize == null || x.w <= o.maxSize)).slice(0, o.max ?? 6)
+        objects[name] = { count: filtered.length, objects: filtered, present: present(o.color) }
+      }
+      const ocr = {}
+      for (const [i, r] of (f.ocr || []).entries()) {
+        const name = r.name || `r${i}`
+        ocr[name] = r.number ? { value: 1250, text: 'SCORE 1250' } : [ { text: 'SCORE 1250', cx: 190, cy: 90 } ]
+      }
+      const pixels = (f.pixels || []).map(p => ({ x: p.x, y: p.y, hex: p.y > 1200 ? '#ff0000' : '#000000' }))
+      res.screenshot = FAKE_SCREEN; res.screenshotMime = 'image/jpeg'
+      res.data = { w: 1080, h: 2400, objects, ocr, pixels, ...(f.diff === true ? { changedPct: 7.5 } : {}), scale: 0.59, ms: 80 }
+    }
+    if (a.type === 'react_script') {
+      const present = (w) => (w.type === 'always') || (w.type === 'color_present' && (w.color === '#ff0000' || w.color === '#00ff00')) || (w.type === 'color_absent' && !(w.color === '#ff0000' || w.color === '#00ff00')) || (w.type === 'text_present' && /score|play|continue/i.test(w.text || '')) || (w.type === 'text_absent' && !/score|play|continue/i.test(w.text || '')) || (w.type === 'pixel_is' && w.color === '#ff0000' && w.y > 1200) || (w.type === 'pixel_not' && !(w.color === '#ff0000' && w.y > 1200))
+      const fires = {}; const log = []; let triggers = 0; let stoppedBy = 'timeout'
+      const stop = (a.stopRules || []).find(present)
+      if (stop) stoppedBy = 'stopRule'
+      else {
+        outer: for (let round = 0; round < 3; round++) for (const [i, r] of a.rules.entries()) {
+          if (!r.when.every(present)) continue
+          const name = r.name || `rule${i}`
+          if (r.maxFires != null && (fires[name] || 0) >= r.maxFires) continue
+          fires[name] = (fires[name] || 0) + 1; triggers++
+          log.push({ t: 60 + triggers * 90, rule: name, steps: r.then.length })
+          if (a.maxTriggers && triggers >= a.maxTriggers) { stoppedBy = 'maxTriggers'; break outer }
+          if (r.exclusive) break
+        }
+      }
+      fingersDown.clear()
+      res.data = { triggers, frames: 40, elapsedMs: stop ? 90 : Math.min(a.timeoutMs ?? 10000, 3000), stoppedBy, fires, log }
+    }
     if (a.type === 'auto_react') {
       // lane 0 = top-level; extra lanes fire in order. Only '#ff0000' and '#00ff00' are 'present' on the fake screen.
       const lanes = [{ name: 'lane0', color: a.color, tapX: a.tapX, tapY: a.tapY, tapOffsetX: a.tapOffsetX, tapOffsetY: a.tapOffsetY, cooldownMs: a.cooldownMs }, ...(a.lanes || [])]

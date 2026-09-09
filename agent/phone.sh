@@ -32,6 +32,9 @@
 #   ./phone.sh stick <X Y|@stick> <up|down|left|right|up-left|...|angle> [ms] [dist] [hold]   # v2.5 joystick (hold = keep finger down)
 #   ./phone.sh aim <X Y|@look> DX DY [ms] | fire <X Y|@fire> [count] [ms] | fireh <X Y|@fire> HOLDMS | fingers up   # v2.5 shooter controls
 #   ./phone.sh combo '<json steps>' | fdown N X Y | fmove N X Y [ms] | fup [N|-1]   # v2.5 multi-touch script / raw fingers
+#   ./phone.sh play ['<json combo steps>'] [waitMs] ['<json extra: {objects,ocr,pixels,maxWidth}>']   # v4.1 ACT+WAIT+SEE in one call → play.jpg + summary
+#   ./phone.sh frame ['<json {objects,ocr,pixels}>']                                # v4.1 perception only (play_frame)
+#   ./phone.sh rules '<json rules[]>' [timeoutMs] ['<json stopRules[]>']              # v4.1 react_script: on-device reflex engine (~50 ms reaction)
 #   Any coordinate/colour/region arg accepts @names from the profile: tap @jump | tap @jump+20,-10 | color @enemy | objects @enemy | react @note 0,1900,1080,60
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
@@ -241,6 +244,25 @@ if r.get("hint"): print(" ", r["hint"])' ;;
   fmove)   call finger "{\"op\":\"move\",\"finger\":$1,\"x\":$2,\"y\":$3,\"duration\":${4:-150}}" | pretty ;;
   fup)     call finger "{\"op\":\"up\",\"finger\":${1:-0}}" | pretty ;;
   combo)   call combo "$(python3 -c 'import json,sys; print(json.dumps({"steps":json.loads(sys.argv[1])}))' "$1")" | pretty ;;
+  # v4.1 AI-direct play
+  play)    call play "$(python3 -c 'import json,sys
+a=json.loads(sys.argv[3]) if sys.argv[3] else {}
+if sys.argv[1]: a["act"]=json.loads(sys.argv[1])
+if sys.argv[2]: a["waitMs"]=int(sys.argv[2])
+a.setdefault("maxWidth", int(sys.argv[4]))
+print(json.dumps(a))' "${1:-}" "${2:-}" "${3:-}" "${PLAY_WIDTH:-640}")" | python3 -c '
+import json,sys,base64; d=json.load(sys.stdin); img=d.pop("image",None)
+if img and img.get("base64"): open("play.jpg","wb").write(base64.b64decode(img["base64"])); print("saved play.jpg (%dx%d scale=%s)" % (img["w"],img["h"],img["scale"]))
+print(json.dumps(d,ensure_ascii=False,indent=1))' ;;
+  frame)   call play_frame "$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]) if sys.argv[1] else {}; a.setdefault("maxWidth", int(sys.argv[2])); print(json.dumps(a))' "${1:-}" "${PLAY_WIDTH:-640}")" | python3 -c '
+import json,sys,base64; d=json.load(sys.stdin); img=d.pop("image",None)
+if img and img.get("base64"): open("play.jpg","wb").write(base64.b64decode(img["base64"])); print("saved play.jpg (%dx%d scale=%s)" % (img["w"],img["h"],img["scale"]))
+print(json.dumps(d,ensure_ascii=False,indent=1))' ;;
+  rules)   call react_script "$(python3 -c 'import json,sys
+a={"rules":json.loads(sys.argv[1])}
+if sys.argv[2]: a["timeoutMs"]=int(sys.argv[2])
+if sys.argv[3]: a["stopRules"]=json.loads(sys.argv[3])
+print(json.dumps(a))' "$1" "${2:-}" "${3:-}")" | pretty ;;
   report)  call session_report "$(python3 -c 'import json,sys
 a={"summary":sys.argv[1]}
 if len(sys.argv)>2 and sys.argv[2]: a["outcome"]=sys.argv[2]
@@ -315,5 +337,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,51p' "$0" ;;
+  *) sed -n '2,54p' "$0" ;;
 esac

@@ -1040,6 +1040,7 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'react_script': return { action: { type: 'react_script', rules: args.rules, stopRules: args.stopRules, timeoutMs: args.timeoutMs, maxTriggers: args.maxTriggers, intervalMs: args.intervalMs, release: args.release } }
     case 'play': return { special: 'play' }
     case 'play_frame': return { special: 'play_frame' }
+    case '_play_frame': return { action: { type: 'play_frame', frame: args.frame } } // internal raw action (used by play)
     case 'game_profile': return { special: 'game_profile' }
     case 'sample_colors': return { action: { type: 'sample_colors', region: args.region, maxColors: args.maxColors, quant: args.quant, ignoreGrey: args.ignoreGrey } }
     case 'track_object': return { action: { type: 'track_object', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, samples: args.samples, intervalMs: args.intervalMs, predictMs: args.predictMs } }
@@ -1218,7 +1219,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
-  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile', 'play_frame',
+  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile', 'play_frame', '_play_frame', 'screen_hash',
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */

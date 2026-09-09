@@ -9,8 +9,8 @@ call() { curl -s "${A[@]}" -d "$1" $U/api/devices/$D/tools/call; }
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "== version / catalogue"
-check version '"version":"4.0.0"' "$(curl -s $U/api/health)"
-check tools-78 '78' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"4.1.0"' "$(curl -s $U/api/health)"
+check tools-81 '81' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== precision input"
 check tap_sequence '"taps":2' "$(call '{"name":"tap_sequence","arguments":{"points":[{"x":100,"y":100,"delayMs":50},{"x":200,"y":200,"durationMs":80}]}}')"
