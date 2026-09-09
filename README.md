@@ -129,73 +129,10 @@
 - 📖 **GAME PLAYBOOK** داخل bootstrap: متى يستخدم كل أداة + دليل قرار + دليل OCR
 - Timeouts ديناميكية لكل أمر (سلاسل طويلة لا تنقطع، OCR حتى 25 ثانية)
 
-**🤖 v2.6 — بوتات لأي لعبة (0 توكنات، تشغيل من الإشعار)**
-- أداة **`game_bot`** (create/update/list/get/delete/run/stop/status): الـ AI يكتب **قواعد** (`when` → `then`) والموبايل ينفّذها وحده في حلقة سريعة (tick 50–2000ms) — بدون أي استدعاء للـ AI أثناء التشغيل.
-- **شروط**: `color_present/absent` (+minCount/region/tolerance)، `pixel_is/not`، `text_present/absent` (OCR)، `number_below/above` (OCR رقم في منطقة)، `screen_changed`، `every_ms`، `always`.
-- **أفعال**: `tap`، `tap_found` (يضغط مكان اللون)، `swipe`، `long_press`، `tap_sequence`، `repeat_tap`، `joystick`، `aim`، `fire_burst`، `combo`، `finger_up`، `back`، `home`، `wait`، `stop_bot`.
-- لكل قاعدة `cooldownMs` / `priority` / `exclusive`؛ للبوت `tickMs` / `maxRunMs` (افتراضي 30 دقيقة) / `stopOnAppChange` (يتوقف لو خرجت من اللعبة).
-- **@names** من `game_profile` تعمل داخل القواعد (`"color":"@enemy"`, `"at":"@fire"`, `"region":"@hp"`).
-- **من الإشعار**: ▶ يشغّل بوت اللعبة الحالية، ↻ يبدّل بين بوتات اللعبة، ■ يوقف — المستخدم لا يلمس شاشة اللعبة أبدًا.
-- البوتات تُحفظ في الـ Durable Object وتُدفع للهاتف تلقائيًا (`bot_sync`) عند كل اتصال/تعديل؛ الهاتف يرسل `bot_status` (ticks/fired/stoppedBy) → المونيتور يعرض شارة **BOT**، ولوحة الإعداد تعرض البوتات لكل لعبة مع تشغيل/إيقاف/عرض القواعد/حذف.
-- bootstrap فيه قسم **8. BOT BUILDER**: الإجراء (استكشف → profile → قواعد → run → راقب 20 ثانية → عدّل)، كتالوج قواعد لكل نوع (shooter/runner/rhythm/idle/puzzle)، قواعد أمان (دائمًا قاعدة `stop_bot` على GAME OVER/popup).
-- `phone.sh bot list|get|run|stop|status|delete|create|update` · مسارات admin `GET/DELETE /api/admin/devices/:id/bots[/:botId]`, `POST .../bots/:botId/run`, `POST .../bots/stop` · تصدير/استيراد الذاكرة يشمل البوتات.
-
-**🎯 v2.7 — بوتات أقوى من اللاعب: aimbot، كشف أجسام، قوالب جاهزة، استراتيجية ألوان**
-- **قوالب بوتات بنداء واحد** `game_bot action=template template=shooter|runner|rhythm|idle_tapper|clicker|puzzle_match|fishing|racing params={...@names}` — بوت كامل مضبوط مع قواعد الأمان. `action=templates` يعرض القوالب والمعاملات المطلوبة.
-- **قالب الشوتر** (Free Fire/PUBG/CoD): `object_present @enemy pick:nearest` → **`aim_to_found`** (يجرّ الكاميرا حتى يقع التصويب على العدو، بحساسية وdeadzone وmaxStep) + `fire_burst` كل 70ms = تتبع + رشّ مستمر · **`aim alternate:true`** يكنس الكاميرا يمين/شمال + `joystick` يتقدّم لما مفيش عدو (يبص حواليه بدل ما يزّق في حيطة) · قاعدة HP منخفض → علاج/انسحاب · إيقاف على GAME OVER.
-- **كشف أجسام** `object_present/object_absent` (blobs حقيقية بدل بكسلات: `minSize/maxSize` تفصل الرأس عن الجسم، `pick: largest|nearest|topmost|lowest`, `nearX/nearY`) · **`colors:[..]`** أي-من حتى 8 ألوان (فرق/سكنات/نوتات) · **`forMs`** الشرط لازم يستمر مدة (يقتل الفليكر) · **`tap_all_found`** يضغط كل الأجسام المكتشفة (Whack/Pop/Match) · **`maxFires`** (مثلاً PLAY مرة واحدة).
-- **استراتيجية الألوان في الـ bootstrap**: لون مستقل لكل شيء (@enemy, @enemyHead, @coin, @bomb…)، اختيار ألوان فريدة ومستقرة (name-tag/health bar/outline مش الجسم)، التحقق بـ `find_objects`، ونصيحة للمستخدم: غيّر لون تحديد العدو في إعدادات اللعبة (Free Fire/PUBG/CoD) للون صارخ يبقى @enemy.
-- **تشخيص**: `bot_status` يرجّع `ruleHits` (كل قاعدة ضربت كام مرة) و`avgTickMs` → الـ AI يعرف فورًا القاعدة اللي ألوانها غلط أو الtick البطيء. اللوحة تعرض القالب و ruleHits.
-- `@stick-500` (اسم فيه شرطة + إزاحة سالبة) يُحلَّل حسب البروفايل · `phone.sh bot templates | bot template <id> '<params>' [name]`.
-
-**🖐️ v2.8 — بدون أي لمس: فقاعة فوق اللعبة، أزرار الصوت، تشغيل تلقائي، تصويب يتعلّم**
-- **فقاعة عائمة فوق اللعبة** (`BotOverlay`, TYPE_ACCESSIBILITY_OVERLAY — بدون إذن إضافي): ضغطة = تشغيل/إيقاف البوت، سحب = نقل، ضغطة مطوّلة = إخفاء، وتعرض عدّاد الضربات/الفحوصات مباشرةً. اللمسات عليها لا تصل للعبة.
-- **أزرار الصوت**: ضغطتان على Volume-Up = تشغيل البوت الحالي، ضغطتان على Volume-Down = إيقاف (FLAG_REQUEST_FILTER_KEY_EVENTS؛ الضغطة الواحدة تمر للنظام عادي).
-- **`autoStart:true`**: البوت يبدأ لوحده بعد ~2 ثانية من فتح اللعبة (مرة لكل فتح) — المستخدم يفتح اللعبة فقط. `phone.sh bot auto <name> [on|off]`، وشارة ⚡ في اللوحة.
-- **تصويب يتعلّم** (`aim_to_found` auto-tune): يقارن مقدار تحرك الهدف فعليًا بعد كل سحب بما طُلب، ويرفع/يخفض الـ gain (undershoot/overshoot). القيمة المتعلّمة تُرسل في `bot_status.learned` وتُحفظ على البوت (`learned`) وتظهر في الـ bootstrap ليثبّتها الـ AI بـ `update`. `autoTune:false` لإيقافها.
-- `startedBy` في الحالة (notification/overlay/volume/auto/relay).
-
-**🧑‍🔧 v2.9 — صانع البوتات: المستخدم يعمل البوت بنفسه بدون AI**
-- صفحة **`/builder/<token>`** (رابطها في لوحة الإعداد و`/api/me.builderUrl`): 3 خطوات — (1) نوع اللعبة: **الأبسط "شفت اللون → اضرب"**، شوتر، اضغط-على-كل-حاجة، راننر، إيقاع، Idle، صيد، سباقات، Match-3. (2) **صوّر الشاشة** واضغط على العدو/الشيء (نلتقط اللون من 9 بكسلات على الموبايل ونتحقق فورًا بـ `find_objects` إنه يظهر كأجسام، مع تحذير لو رمادي أو منتشر)، اضغط على الأزرار، اسحب مستطيلًا للمناطق — كل شيء يُحوَّل لإحداثيات الشاشة الحقيقية. (3) منزلقات ضبط (حساسية التصويب، طلقات الرشقة، التسامح، الحجم…) → **احفظ** (يكتب `game_profile` + `game_bot template`) → **جرّب 20 ثانية** مع حكم تلقائي (لم يضرب → ارفع التسامح / يضرب كثيرًا → قلّله).
-- قالب جديد **`color_tap`**: قاعدة واحدة لأي لعبة — لون → اضغط عليه أو اضغط زرًا معيّنًا (`button`, `repeat`, `region`).
-- قالب الشوتر أقوى: **`head`** (قاعدة هيدشوت بأولوية أعلى وdeadzone أضيق)، **`evade`** (قرفصة/قفزة كل 3 ث أثناء الاشتباك)، **`playAgain`** (ماتشات متواصلة).
-- `?selftest=1` يشغّل التدفق كاملًا آليًا على الهاتف الوهمي (مستخدم في الاختبار).
-
-**🎯 v3.0 — العب أنت والبوت يضرب على الراس: أوضاع الشوتر (مساعد / زناد / كامل)**
-- **مساعد (الافتراضي)**: المستخدم يلعب ويلف الكاميرا عادي. البوت يراقب **لون الرأس**؛ لما رأس يقرب من التصويب (داخل `assistRange` = 320px) يحقن سحبة تصويب قصيرة (≤40ms، `maxStep 180`, `deadzone 6`) تحط التصويب على الراس ويطلق رشقة، ثم يرجّع التحكم. **توقّع الحركة** `predictMs` (سرعة الهدف من الإطارات المتتالية → يصوّب على مكانه بعد 80ms). قواعد الحركة/الكنس غير موجودة في هذا الوضع.
-- **زناد**: المستخدم يصوّب، البوت يضرب فقط لما الراس تحت التصويب (`fire_burst.maxRange`).
-- **كامل**: يلعب لوحده (كما في v2.7 + هيدشوت/تفادي/PLAY AGAIN).
-- `head` وحده يكفي في مساعد/زناد (`enemy` يتساوى معه). `headOffsetY:-25` لو اللون يغطي الجسم كله. علامة `assist` على البوت (🎯 مساعد في اللوحة، `[assist]` في الـ bootstrap).
-- **الصانع**: نوع "شوتر — هيدشوت" أول حاجة فيه "لون رأس العدو ★" وقائمة الوضع بالعربي (مساعد/زناد/كامل)، مدى المساعدة، توقّع الحركة، رفع نقطة الضرب.
-- Android 3.0.0: `aim_to_found` تتبّع سرعة الهدف + `predictMs` + بوابة `maxRange`؛ `fire_burst.maxRange`.
-
-**🌈 v3.1 — كشف أدقّ في الظل والإضاءة + تثبيت هدف + بوابة إطلاق + إعداد Free Fire بضغطة**
-- **مطابقة بدرجة اللون `match:"hue"`** (`ColorMatcher` على الجهاز): تقارن الـ Hue بالدرجات (تسامح 18–30°) مع شرط تشبّع/إضاءة أدنى — الإطار الأحمر يبقى أحمر في الظل وفي الشمس. متاحة في `color_present/object_present` و`find_objects` وقالب الشوتر (افتراضي hue) وقالب `color_tap`.
-- **تثبيت الهدف `lockRadius`** (افتراضي 220px): البوت يظل على نفس العدو اللي اختاره في الـ tick السابق بدل ما ينط بين عدوين.
-- **بوابة الإطلاق `fire_burst.gateErr`** (افتراضي 60px): لا يطلق وهو لسه بيصحّح التصويب مسافة كبيرة — يوفّر الذخيرة ويزوّد دقة الهيدشوت.
-- **الصانع**: كارت **"🔥 Free Fire — هيدشوت مساعد (جاهز)"** يضبط كل شيء مسبقًا (مساعد + Hue + تثبيت + توقّع حركة + بوابة) — تعلّم لون الراس وزر الضرب ومساحة التصويب وتحفظ. قائمة "طريقة مطابقة اللون" والتحقق من اللون بنفس الوضع.
-- Android 3.1.0.
-
-**🧠 v3.2 — التعلّم يُحفظ تلقائيًا + اقتراح اللون تلقائيًا + رؤية ما يراه البوت**
-- **حساسية التصويب المتعلَّمة تُكتب في القاعدة تلقائيًا**: كان `aim_to_found` يتعلّم `sensitivity` أثناء التشغيل (`status.learned`) وتضيع مع كل تشغيل جديد. الآن الـ relay (Durable Object) عند انتهاء أي تشغيل يكتب القيمة المتعلَّمة في القاعدة نفسها، يزوّد عدّاد `bot.tuned`، ويدفع `bot_sync` للهاتف — كل تشغيل يبدأ من حيث انتهى السابق. `autoApplyLearned:false` يجمّد القاعدة (يبقى `learned` مخزّنًا للمراجعة). `game_bot list` يعرض `tuned/autoStart/assist/template`.
-- **الصانع — زر "✨ اقترح اللون"**: بعد اللقطة، يأخذ `sample_colors` من الشاشة ويجرّب كل لون مرشّح بـ `find_objects` بنفس وضع المطابقة، يقيّمها (عدد أجسام معقول + حجم + تشبّع) ويختار الأنسب — للي مش عارف يلمس اللون بدقة.
-- **الصانع — إطارات الأجسام**: بعد اختيار اللون، الصانع يرسم إطارًا حول كل جسم كشفه الهاتف فعليًا بنفس اللون — تشوف بعينك "البوت شايف إيه" قبل الحفظ؛ لو الإطارات على حاجة غلط غيّر التسامح/الوضع.
-- Android بدون تغيير (3.1.0 — التعلّم كان موجودًا؛ الجديد على الـ relay والصانع).
-
-**🎯 v3.3 — AimEngine: محرك تصويب أصلي (Native) للشوترز — يحل محل بوت القواعد**
-- **لماذا؟** بوت القواعد (`game_bot`) كان يطلق بدفعات (burst→توقف→burst) ويعطي إطلاقات كاذبة لأنه يعيد تقييم القاعدة كل tick. `AimEngine` كائن Kotlin واحد داخل خدمة الـ Accessibility: حلقة التقاط ~30fps → عدّادات بكسل → **hysteresis** (`armFrames`/`releaseFrames`/`maxHoldMs`) → **إصبع واحد حقيقي محتجز** على زر الضرب بـ `continueStroke` (مقاطع 400ms تُمدّد قبل انتهائها بـ 150ms مع اهتزاز 0.5px) — يضغط ما دام الشرط قائمًا ويرفع فورًا عند زواله؛ لا إطلاق في الهواء.
-- **المشغّلات** (`trigger`): `reticle` (تحوّل شعيرة اللعبة نفسها للأحمر — تأكيد من اللعبة أن هناك عدوًا)، `target` (لون الجلد/الرأس داخل `headBox`)، `both`. **Aim assist** اختياري: أقرب كتلة (CC labelling على شبكة 3px) → سحب كاميرا تناسبي بإصبع ثانٍ (`assist.gain/deadzone/maxStep`). **إعادة تحميل تلقائية** عند ظهور لون النفاد في `ammoBox`.
-- **التشغيل**: `autoStart` مع التطبيق الأمامي، الفقاعة العائمة، أزرار الإشعار «🎯 name / ■ أوقف Aim»، Vol-Up×2 / Vol-Down×2. الإعدادات محفوظة في SharedPreferences وفي الـ relay (`aims` بالـ Durable Object) وتُدفع للهاتف عند الاتصال. حالة مباشرة `aim_status` (fps, holding, heldMs, holdCount, aimMoves, reloads, lastTrigger).
-- **أداة الـ AI**: `aim_engine action=set|start|stop|status|get|clear` — تقبل `@names` من `game_profile` (`@fire, @look, @reload, @crosshair`, ألوان `@ring/@skin/@reloadRed`, مناطق `@reticle/@headzone/@ammo`) مع تحقق وقصّ للقيم (`validateAim`). القيم الافتراضية معايَرة لـ Free Fire على RMX3269 (1600×720). `agent/phone.sh aim ...`. الـ bootstrap يوجّه الـ AI: شوترز → `aim_engine`، غير ذلك → `game_bot`.
-- Android **3.3.0** (versionCode 16). 80 أداة، 44 فحصًا جديدًا (`tests/e2e-v33.sh`).
-
-**🎯 v3.4 — HeadLock: أنت تلعب وتضرب، وطلقاتك تروح على الرأس (بالملّي) — عبر Shizuku**
-- **المطلوب من المستخدم**: «أنا ألعب كل شيء بنفسي؛ فقط لما أضغط زر الضرب تكون الطلقة على الرأس». مستحيل بخدمة إمكانية الوصول وحدها: Android يلغي أي لمسة مصنّعة لحظة ما يتحرك إصبع حقيقي (والعكس) — فأي "تصويب" كان سيرفع إصبعك من زر الضرب.
-- **الحل — `TouchProxyService` داخل خدمة مستخدم Shizuku (uid shell)**: يفتح عقدة شاشة اللمس في النواة `/dev/input/eventN` قراءةً وكتابةً. **قراءة**: يعرف مواضع أصابعك الحقيقية بأقل من مللي ثانية (بدون لقطة شاشة) → "إصبع على زر الضرب = أنت تضرب". **كتابة**: يكتب إصبعنا كـ MT slot حقيقي داخل نفس تيار شاشة اللمس (بروتوكول Linux MT type-B، tracking id مرتفع لا يتصادم مع الدرايفر) → بالنسبة لـ Android هو إصبع ثانٍ من نفس الشاشة، لا حقن ولا إلغاء. ربط `bindSlot`: لو رفعت إصبعك من الضرب يُرفع إصبعنا فورًا حتى لو تعطّل التطبيق. تحويل الإحداثيات raw↔display لكل الدورانات.
-- **`AimEngine` وضع `mode:"headlock"`**: خامل تمامًا وأنت تلعب (استطلاع 20Hz لتيار اللمس فقط، بدون التقاط). عند ضغطك على الضرب (`fireRadius` حول `@fire`): التقاط 30fps → أقرب كتلة جلد للشعيرة (`headColor`, `lockRange`) مع تفضيل الاستمرارية مع الرأس السابق وتفضيل الكتل التي تحتها لون قماش العدو (`bodyColor` = يرفض الأيادي والأغراض) → **تنقية بدقّة كاملة** لصفوف الكتلة العلوية: أعلى صف جلد + متوسط x لأول `headTopRows` صفوف = مركز الرأس بدقّة sub-pixel (`headTopOffset` تحت الحافة) → حلقة مغلقة كل إطار تسحب الكاميرا بإصبعنا حتى يصبح خطأ الشعيرة ≤ `headDeadzone` (افتراضي **1px**), مع feed-forward بالسرعة `headLead` للرؤوس المتحركة، وثبات `stickyMs` عند اختفاء لحظي، وإعادة تمركز إصبع السحب بعد `lookTravel`. رفعت إصبعك → توقف فوري. لا ضرب تلقائي، لا reload، لا شيء آخر.
-- **الحالة**: `firing/locked/lockErrPx/locks/nudges/headX/headY/shizuku(absent|denied|granted|binding|proxy-not-ready|ready)`; كارت Shizuku في التطبيق (سماح/تحديث) ونص الإشعار/الفقاعة يعرض «🎯 على الرأس Npx».
-- **الـ relay**: حقول HeadLock في `aim_engine` مع قصّ وتحقق (`mode`, `headColor/@skin`, `bodyColor/@cloth` أو "" للإيقاف, `headBox/@headzone` …)، تلميحات Shizuku، bootstrap يوجّه: «أنا أضرب وحدي» ⇒ headlock. 15 فحصًا جديدًا.
-- Android **3.4.0** (versionCode 17): تبعيات `dev.rikka.shizuku:api/provider 13.1.5`، AIDL `ITouchProxy`، `ShizukuProvider` في الـ Manifest. يحتاج Shizuku يعمل (لاسلكي، Android 11+) + السماح للتطبيق.
+**🎮 v4.0 — الرجوع للأصل: الـ AI هو اللاعب (بدون بوتات)**
+- بعد تجربة v2.6→v3.4 (بوتات قواعد على الهاتف، AimEngine، HeadLock عبر Shizuku) قرّر المستخدم الرجوع للنموذج الأصلي: **الـ AI يتحكم ويلعب مباشرة** من أي محادثة. تمت إزالة كل ما يخص البوتات بالكامل: أدوات `game_bot`/`aim_engine`، قوالب البوتات، صفحة صانع البوتات `/builder`، تخزين `bots/aims` في الـ Durable Object، أوامر `bot_*`/`aim_*` في البروتوكول، ومن التطبيق: `BotEngine`، `AimEngine`، `BotOverlay` (الفقاعة)، أزرار الصوت، أزرار الإشعار ▶/■، Shizuku/`TouchProxyService`/AIDL. الإصدار Android **4.0.0** خفيف: اتصال + إمكانية الوصول + الأدوات فقط.
+- **تطوير اللعب المباشر** — قسم جديد في الـ bootstrap **7a. HOW TO PLAY LIVE, FAST**: الاختناق هو عدد الرحلات لا التفكير؛ لا `capture_screen` منفردة أبدًا (كل فعل عبر `act_and_see`/`observe` في رحلة واحدة)، تفويض ردود الفعل للهاتف (`auto_react` ~80ms، `game_loop`، `do_until`، `wait_pixel`/`watch_color`/`wait_for_text` بلا polling)، `combo` واحد لكل اشتباك (حركة+تصويب+ضرب بأصابع منفصلة)، توقّع الحركة بـ `track_object`، معايرة مرة واحدة وحفظ في `game_profile`، وللشوترز: `auto_react` على لون الشعيرة الحمراء داخل `@reticle` = ضرب لحظة تأكيد اللعبة للهدف بلا طلقات كاذبة.
+- 78 أداة. `phone.sh` بدون أوامر `bot`/`aim set`. الاختبارات: 12 suite (حُذفت suites البوتات v26–v33).
 
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
@@ -207,12 +144,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
-- **v3.3**: `AimEngine` (حلقة التقاط + hysteresis + إصبع محتجز `FireHold` + aim assist + auto-reload)، `captureForEngine/dispatchForEngine`، أوامر `aim_config/aim_start/aim_stop/aim_status/aim_clear`
-- **v3.1**: `ColorMatcher` (rgb/hue)، target lock، fire gate، `find_objects.match`
-- **v3.0**: `aim_to_found` lead prediction + assist-range gate، `fire_burst.maxRange` (trigger-bot)
-- **v2.8**: `BotOverlay` فقاعة عائمة، `onKeyEvent` أزرار الصوت، `onForegroundApp` → autoStart، auto-tune لحساسية التصويب، `learned/startedBy` في `bot_status`
-- **v2.7**: `BotEngine` — كشف أجسام (`scanObjects`) مع pick/size، ألوان متعددة، `forMs`، `tap_all_found`، **`aim_to_found` aimbot** تناسبي مع deadzone، `aim.alternate`، `maxFires`، `ruleHits/avgTickMs`
-- **v2.6**: `BotEngine` — محرك قواعد على الجهاز (حلقة tick، تقييم شروط بالألوان/OCR/الأرقام، تنفيذ الأفعال بنفس محرك اللمس المتعدد)، أزرار إشعار ▶/↻/■، `bot_sync/bot_start/bot_stop/bot_status`
+- **v4.0**: إزالة BotEngine/AimEngine/BotOverlay/Shizuku — التطبيق يعود لدوره الأصلي: تنفيذ أدوات الـ AI بدقة
 - **v2.5**: محرك لمس متعدد — أصابع دائمة بـ `continueStroke` (`finger_down/move/up`)، `joystick` (يبقي العصا حية بمقاطع متواصلة)، `aim`، `fire_burst`، `combo`
 - **v2.1**: `sample_colors` (تكميم ألوان + تجاهل الرمادي)، `track_object` (عيّنات + انحدار خطي للسرعة)
 - **v2.0**: `auto_react` بمسارات متعددة (cooldown لكل مسار)، ردود فعل swipe، `stopColor`
@@ -473,7 +405,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v32.sh && tests/e2e-v33.sh   # ~1045 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh   # ~800 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -504,6 +436,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-09 (v3.4 — HeadLock: user fires, engine locks the crosshair on the head via a Shizuku kernel-touch proxy (no gesture cancellation), sub-pixel head finder, 1px closed loop; 80 tools; ~1045 e2e checks; Android 3.4.0)
+- **Last Updated**: 2026-09-09 (v4.0 — back to AI-direct play: all bot/aim/Shizuku code removed; bootstrap 7a fast live-play loop; 78 tools; Android 4.0.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.

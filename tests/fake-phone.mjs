@@ -9,10 +9,6 @@ let hashCounter = 0, diffCounter = 0, streaming = false
 // v1.9: two fake 'screens' — 'menu' (default) and 'home' (after home action); recents switches back
 let screen = 'menu'
 const fingersDown = new Map()
-let botStore = []
-let botRunning = null
-let aimCfg = null; let aimRun = null
-function aimStatusJson() { return { engine: 'aim', running: !!aimRun, configured: !!aimCfg, ...(aimCfg ? { name: aimCfg.name, configApp: aimCfg.app, trigger: aimCfg.trigger || 'reticle', aimEnabled: !!aimCfg.aimEnabled, autoStart: aimCfg.autoStart !== false, mode: aimCfg.mode || 'auto' } : {}), shizuku: 'ready', ...(aimRun ? (aimCfg && aimCfg.mode === 'headlock' ? { startedAt: aimRun.startedAt, frames: 240, fps: 30, firing: true, locked: true, lockErrPx: 1, locks: 3, nudges: 57, headX: 812, headY: 351 } : { startedAt: aimRun.startedAt, frames: 240, fps: 30, holding: true, holdCount: 4, heldMs: 3200, aimMoves: 12, reloads: 1 }) : {}) } }
 const HASHES = { menu: 'ffff0000ffff0000ffff0000ffff', home: '0f0f0f0f0f0f0f0f0f0f0f0f0f0f' }
 const FAKE_SCREEN = readFileSync(join(here, 'fake-screen.b64'), 'utf8').trim()
 const ws = new WebSocket(`${base}/api/ws/phone/${deviceId}`, { headers: { Authorization: `Bearer ${token}` } })
@@ -104,28 +100,6 @@ ws.onmessage = (ev) => {
       }
       res.data = { triggers: taps.length, taps, polls: taps.length + 5, stoppedBy, lanes: lanes.length, elapsedMs: taps.length ? 80 + taps.length * 120 : Math.min(a.timeoutMs ?? 10000, 600) }
     }
-    // v3.3 native aim engine (fake: store config, emit aim_status on start/stop)
-    if (a.type === 'aim_config') { aimCfg = a.aim || null; res.data = aimStatusJson() }
-    if (a.type === 'aim_start') {
-      if (!aimCfg) { res.ok = false; res.error = 'no aim config' }
-      else { aimRun = { startedAt: Date.now() }; res.data = aimStatusJson()
-        ws.send(JSON.stringify({ kind: 'aim_status', running: true, name: aimCfg.name, app: aimCfg.app, startedAt: aimRun.startedAt, frames: 0, fps: 30, holding: false, holdCount: 0, heldMs: 0, aimMoves: 0, reloads: 0, startedBy: 'relay', ts: Date.now() })) }
-    }
-    if (a.type === 'aim_stop') { const was = aimRun; aimRun = null; res.data = aimStatusJson()
-      if (was) ws.send(JSON.stringify({ kind: 'aim_status', running: false, name: aimCfg?.name, app: aimCfg?.app, startedAt: was.startedAt, frames: 240, fps: 30, holding: false, holdCount: 4, heldMs: 3200, aimMoves: 12, reloads: 1, lastTrigger: 'reticle', stoppedBy: 'relay', startedBy: 'relay', ts: Date.now() })) }
-    if (a.type === 'aim_status') res.data = aimStatusJson()
-    if (a.type === 'aim_clear') { aimCfg = null; aimRun = null; res.data = aimStatusJson() }
-    // v2.6 bots (fake: store synced bots, emit bot_status on start/stop)
-    if (a.type === 'bot_sync') { botStore = Array.isArray(a.bots) ? a.bots : []; res.data = { synced: botStore.length } }
-    if (a.type === 'bot_start') {
-      const b = botStore.find(x => x.id === a.botId)
-      if (!b) { res.ok = false; res.error = `bot ${a.botId} not on device` }
-      else { botRunning = { botId: b.id, name: b.name, app: b.app, startedAt: Date.now(), ticks: 0, fired: 0, rules: b.rules }; res.data = { started: true, botId: b.id, name: b.name, rules: (b.rules || []).length }
-        ws.send(JSON.stringify({ kind: 'bot_status', running: true, botId: b.id, name: b.name, startedAt: botRunning.startedAt, ticks: 0, fired: 0, ts: Date.now() })) }
-    }
-    if (a.type === 'bot_stop') { const was = botRunning; botRunning = null; res.data = { stopped: !!was, botId: was?.botId ?? null }
-      if (was) ws.send(JSON.stringify({ kind: 'bot_status', running: false, botId: was.botId, name: was.name, startedAt: was.startedAt, ticks: 12, fired: 3, stoppedBy: 'user', ruleHits: { [ (was.rules && was.rules[0] && was.rules[0].name) || 'rule' ]: 3 }, avgTickMs: 41, learned: (was.rules || []).some(r => (r.then || []).some(a => a.type === 'aim_to_found')) ? { [((was.rules[0] || {}).name || 'rule') + '/0/sensitivity']: 0.73 } : undefined, startedBy: 'relay', ts: Date.now() })) }
-    if (a.type === 'bot_status') res.data = botRunning ? { running: true, botId: botRunning.botId, name: botRunning.name, startedAt: botRunning.startedAt, ticks: 12, fired: 3, ruleHits: { [(botRunning.rules && botRunning.rules[0] && botRunning.rules[0].name) || 'rule']: 3 }, avgTickMs: 41 } : { running: false, bots: botStore.length }
     ws.send(JSON.stringify(res))
   }, delay)
 }
