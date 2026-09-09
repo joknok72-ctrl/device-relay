@@ -1,0 +1,10 @@
+const WebSocket = require("ws");
+const [url, token] = process.argv.slice(2);
+const ws = new WebSocket(url, { headers: { Authorization: "Bearer " + token, "User-Agent": "okhttp/4.12.0" } });
+const t0 = Date.now();
+ws.on("open", () => { console.log("OPEN"); ws.send(JSON.stringify({kind:"hello", deviceId:"probe-test", model:"probe", version:"4.1.0"})); });
+ws.on("message", m => console.log("MSG", String(m).slice(0,300)));
+ws.on("unexpected-response", (req, res) => { console.log("HTTP", res.statusCode); let b=""; res.on("data", d=>b+=d); res.on("end", ()=>{console.log(b.slice(0,400)); process.exit(0)}); });
+ws.on("error", e => console.log("ERR", e.message));
+ws.on("close", (c,r) => { console.log("CLOSE", c, String(r), (Date.now()-t0)+"ms"); process.exit(0); });
+setTimeout(()=>ws.close(), 8000);
