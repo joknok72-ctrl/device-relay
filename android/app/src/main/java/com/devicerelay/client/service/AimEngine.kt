@@ -258,9 +258,14 @@ object AimEngine {
         var dragX = cfg.lookX.toFloat(); var dragY = cfg.lookY.toFloat(); var dragDown = false
         var mappingSet = false
         suspend fun lift() { if (dragDown) { runCatching { bridge.proxy?.fingerUp() }; dragDown = false; dragX = cfg.lookX.toFloat(); dragY = cfg.lookY.toFloat() } }
+        // mapping FIRST (fire detection needs display coords): one capture gives the bitmap size in the current rotation
+        var lastRot = svc.displayRotation()
+        suspend fun setMapping() { val b = svc.captureForEngine(); if (b != null) { runCatching { bridge.proxy?.setMapping(lastRot, b.width, b.height) }; b.recycle() } else runCatching { bridge.proxy?.setMapping(lastRot, if (lastRot == 1 || lastRot == 3) 1600 else 720, if (lastRot == 1 || lastRot == 3) 720 else 1600) } }
+        setMapping(); mappingSet = true
         runCatching { bridge.proxy?.setFireButton(cfg.fireX, cfg.fireY, cfg.fireRadius, true) }
         val injectMode = runCatching { bridge.proxy?.injectMode() }.getOrNull() ?: false
-        val shz = bridge.state() + (if (injectMode) "+inject" else "+kernel")
+        val desc = runCatching { bridge.proxy?.describe() }.getOrNull() ?: ""
+        val shz = bridge.state() + (if (!injectMode) "+kernel" else if (desc.contains("grabbed=true")) "+grab" else "+takeover")
         status = status.copy(shizuku = shz); emit()
         try {
             while (currentCoroutineContext().isActive) {
@@ -279,8 +284,9 @@ object AimEngine {
                 if (!nowFiring && firing) { lift(); lockErr = -1; wasLocked = false }
                 firing = nowFiring
                 if (!firing) {
-                    // idle: cheap — no capture; ~20 Hz poll of the touch stream
+                    // idle: cheap — no capture; fast poll of the touch stream; re-map if the display rotated
                     frames++
+                    if (frames % 80 == 0) { val r = svc.displayRotation(); if (r != lastRot) { lastRot = r; setMapping() } }
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastEmit > 900) { lastEmit = now; status = status.copy(frames = frames, fps = 0, firing = false, locked = false, lockErrPx = -1, nudges = nudges, locks = locks, shizuku = shz, headX = -1, headY = -1); emit() }
                     delay(12); continue
@@ -289,7 +295,6 @@ object AimEngine {
                 val bmp = svc.captureForEngine()
                 if (bmp == null) { delay(frameMs); continue }
                 frames++; fpsFrames++
-                if (!mappingSet) { runCatching { proxy.setMapping(svc.displayRotation(), bmp.width, bmp.height) }; mappingSet = true }
                 val head = findHead(bmp, headRgb, cfg.headTol, bodyRgb, cfg.bodyTol, cfg.headBox, cfg.headMinSize, cfg.headMaxSize, cfg.crosshairX, cfg.crosshairY, cfg.lockRange, cfg.headTopOffset, cfg.headTopRows, lastHead)
                 bmp.recycle()
                 val now = SystemClock.elapsedRealtime()
