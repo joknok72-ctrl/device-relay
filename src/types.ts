@@ -97,7 +97,7 @@ export interface ScreenLabel { name: string; hash: string; words: string[]; app?
 export interface PlayState {
   ts: number
   /** per object name: nearest object centre + count */
-  objects: Record<string, { count: number; cx?: number; cy?: number }>
+  objects: Record<string, { count: number; cx?: number; cy?: number; area?: number }>
   /** per ocr name: last numeric value */
   values: Record<string, number>
   /** consecutive ticks with changedPct < 1 (screen frozen / menu) */

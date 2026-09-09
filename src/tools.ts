@@ -569,8 +569,33 @@ export const TOOLS: ToolDef[] = [
         diff: { type: 'boolean', description: 'include changedPct vs the previous play frame (default true)' },
         reset: { type: 'boolean', description: 'forget the previous tick (no deltas/events this time) — use at the start of a new round' },
         autoRead: { type: 'boolean', description: 'when the screen has been static for 3 ticks, OCR the whole screen and classify it (menu/game_over/paused) into `stuck` (default true)' },
+        autoMenu: { type: 'boolean', description: 'v4.3: when stuck on a menu/game_over/paused screen, tap the obvious button (PLAY/CONTINUE/RETRY/CLAIM/×) automatically (default false; play_loop defaults true)' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'play_loop',
+    description:
+      'AUTOPILOT (v4.3): give the relay a POLICY and it plays up to 40 ticks (~0.3-0.6 s each, max 25 s) by itself using the full play() perception (objects, deltas, threats, values, stuck) — one action per tick, first matching rule wins (order = priority). ' +
+      'policy:[{name, if:{threat:"@enemy"|true, present:"@coin", absent:"@enemy", stuck:"menu|game_over|any", valueBelow:{name:"hp",value:30}, valueAbove:{...}, everyTicks:3}, do:[combo steps — may use x:"@found.x", y:"@found.y", y:"@found.y-40" = nearest matched object] | tool:{name,arguments}, cooldownTicks, waitMs}]. ' +
+      'stopOn:{stuck:"game_over"|"any", event:"hp dropping", valueBelow:{name,value}, valueAbove:{...}}; autoMenu (default true) taps PLAY/CONTINUE/RETRY/× when a menu blocks the game. Returns per-tick log (rule fired, summary), fires per rule, stoppedBy, last frame. ' +
+      'Examples — clicker: [{if:{present:"@coin"},do:[{op:"tap",x:"@found.x",y:"@found.y"}]}]. Runner: [{name:"dodge",if:{threat:true},do:[{op:"swipe",x1:540,y1:1700,x2:540,y2:1100,duration:120}]},{if:{present:"@coin"},do:[{op:"tap",x:"@found.x",y:"@found.y"}]}]. Shooter: [{if:{valueBelow:{name:"hp",value:25}},do:[{op:"joystick",at:"@stick",direction:"down",duration:600}]},{if:{present:"@enemy"},do:[{op:"aim",at:"@look",dx:"@found.x-540",dy:0},{op:"fire",at:"@fire",count:4}]},{if:{everyTicks:2},do:[{op:"joystick",at:"@stick",direction:"up",duration:400}]}]. ' +
+      'Use play_loop for strategy-level autonomy (seconds), react_script for reflexes (< 100 ms), plain play when you want to think every tick.',
+    parameters: {
+      type: 'object',
+      properties: {
+        policy: { type: 'array', description: 'ordered rules [{name, if:{...}, do:[steps] | tool:{name,arguments}, cooldownTicks, waitMs}]', items: { type: 'object' } },
+        ticks: { type: 'integer', description: 'max ticks (default 10, max 40)', minimum: 1, maximum: 40 },
+        maxMs: { type: 'integer', description: 'time budget ms (default/max 25000)', minimum: 1000, maximum: 25000 },
+        stopOn: { type: 'object', description: '{stuck, event, valueBelow:{name,value}, valueAbove:{name,value}}' },
+        objects: { type: 'array', description: 'colours to track (default: profile colours)', items: { type: 'object' } },
+        ocr: { type: 'array', description: 'regions to read (default: numeric profile regions)', items: { type: 'object' } },
+        waitMs: { type: 'integer', description: 'default wait after each action (150)' },
+        autoMenu: { type: 'boolean', description: 'auto-tap obvious menu buttons when stuck (default true)' },
+        reset: { type: 'boolean', description: 'forget previous tick memory at start' },
+      },
+      required: ['policy'],
     },
   },
   {
@@ -1032,7 +1057,7 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'play' | 'play_frame' | 'game_setup'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'play' | 'play_frame' | 'game_setup' | 'play_loop'; error?: string } {
   switch (name) {
     case 'session_report': return { special: 'session_report' }
     case 'joystick': return { action: { type: 'joystick', x: args.x, y: args.y, angle: args.angle, direction: args.direction, distance: args.distance, duration: args.duration, finger: args.finger, release: args.release } }
@@ -1050,6 +1075,7 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'play': return { special: 'play' }
     case 'play_frame': return { special: 'play_frame' }
     case 'game_setup': return { special: 'game_setup' }
+    case 'play_loop': return { special: 'play_loop' }
     case '_play_frame': return { action: { type: 'play_frame', frame: args.frame } } // internal raw action (used by play)
     case 'game_profile': return { special: 'game_profile' }
     case 'sample_colors': return { action: { type: 'sample_colors', region: args.region, maxColors: args.maxColors, quant: args.quant, ignoreGrey: args.ignoreGrey } }
@@ -1212,7 +1238,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '4.2.0',
+      version: '4.3.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

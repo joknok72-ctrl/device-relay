@@ -182,6 +182,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'act_and_see') return actAndSee(env, deviceId, args, opts)
   if (mapped.special === 'play' || mapped.special === 'play_frame') return play(env, deviceId, args, opts, mapped.special === 'play_frame')
   if (mapped.special === 'game_setup') return gameSetup(env, deviceId, args, opts)
+  if (mapped.special === 'play_loop') return playLoop(env, deviceId, args, opts)
   if (mapped.special === 'wait_for_screen') return waitForScreen(env, deviceId, args)
   if (mapped.special === 'remember') return remember(env, deviceId, args)
   if (mapped.special === 'recall') return recall(env, deviceId, args)
@@ -439,7 +440,7 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
     const tool = args.tool as { name?: string; arguments?: Record<string, unknown> } | undefined
     if (Array.isArray(act) && act.length) action = await executeTool(env, deviceId, 'combo', { steps: act }, { ...opts, depth: (opts.depth ?? 0) + 1 })
     else if (tool && typeof tool.name === 'string') {
-      if (['play', 'act_and_see', 'batch', 'react_script'].includes(tool.name)) return { ok: false, error: `tool '${tool.name}' not allowed inside play` }
+      if (['play', 'act_and_see', 'batch', 'react_script', 'play_loop', 'game_loop', 'do_until'].includes(tool.name)) return { ok: false, error: `tool '${tool.name}' not allowed inside play` }
       action = await executeTool(env, deviceId, tool.name, tool.arguments ?? {}, { ...opts, depth: (opts.depth ?? 0) + 1 })
     }
     if (action) {
@@ -471,20 +472,34 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   const events: string[] = []
   const deltas: Record<string, unknown> = {}
   const state: PlayState = { ts: Date.now(), objects: {}, values: {}, staticTicks: 0, tick: (prev?.tick ?? 0) + 1 }
+  const dtMs = prev ? Math.max(50, Date.now() - prev.ts) : 0
+  const W = Number(d.w) || 1080, H = Number(d.h) || 2400
+  const threats: { name: string; cx: number; cy: number; approach: number; etaMs?: number; area: number }[] = []
   if (objs) for (const [k, v] of Object.entries(objs)) {
     const n = v.objects[0]
-    state.objects[k] = { count: v.count, cx: n?.cx, cy: n?.cy }
+    state.objects[k] = { count: v.count, cx: n?.cx, cy: n?.cy, area: n?.area }
     const p = prev?.objects[k]
     if (p) {
       if (v.count && !p.count) events.push(`@${k} appeared`)
       else if (!v.count && p.count) events.push(`@${k} vanished`)
       else if (v.count && p.count && n && p.cx !== undefined && p.cy !== undefined) {
         const dx = n.cx - p.cx, dy = n.cy - p.cy
-        if (Math.abs(dx) + Math.abs(dy) >= 6) deltas[`@${k}`] = { dx, dy, dir: Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up') }
+        if (Math.abs(dx) + Math.abs(dy) >= 6) {
+          // v4.3 velocity (px/s) + growth + approach towards the player zone (bottom-centre for runners/shooters: y ≥ 70%)
+          const vx = dtMs ? Math.round(dx * 1000 / dtMs) : 0, vy = dtMs ? Math.round(dy * 1000 / dtMs) : 0
+          const growth = p.area && n.area ? Number((n.area / p.area).toFixed(2)) : undefined
+          const towardY = dy > 0 && n.cy < H * 0.85, distY = H * 0.8 - n.cy
+          const etaMs = towardY && vy > 0 && distY > 0 ? Math.round(distY / vy * 1000) : undefined
+          const approach = (towardY ? 1 : 0) + (growth && growth > 1.15 ? 1 : 0)
+          deltas[`@${k}`] = { dx, dy, dir: Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'), vx, vy, ...(growth !== undefined ? { growth } : {}), ...(etaMs !== undefined ? { etaMs } : {}) }
+          if (approach) threats.push({ name: k, cx: n.cx, cy: n.cy, approach, etaMs, area: n.area })
+        }
       }
       if (v.count - p.count >= 2) events.push(`@${k} +${v.count - p.count}`)
     }
   }
+  threats.sort((a, b) => (b.approach - a.approach) || ((a.etaMs ?? 1e9) - (b.etaMs ?? 1e9)))
+  for (const t of threats.slice(0, 2)) events.push(`⚠ @${t.name} approaching${t.etaMs !== undefined ? ` eta ${t.etaMs}ms` : ''} at (${t.cx},${t.cy})`)
   if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number') {
     const val = (v as { value: number }).value
     state.values[k] = val
@@ -501,6 +516,12 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
     const kind = /game over|you died|defeat|try again|retry|revive/.test(words) ? 'game_over' : /pause|resume/.test(words) ? 'paused' : /play|start|tap to|continue|next|ok|claim|collect|skip|close|×|x\b/.test(words) ? 'menu' : 'unknown'
     stuck = { staticTicks: state.staticTicks, kind, text: lines, advice: kind === 'game_over' ? 'session ended — session_report then tap retry/continue' : kind === 'menu' ? 'tap the obvious button (PLAY/CONTINUE/CLAIM/×) via play {tool:{name:"tap_text",arguments:{text:"..."}}} or dismiss_popups' : 'screen is frozen: try dismiss_popups, press_back, or a tap in the centre' }
     events.push(`screen static ×${state.staticTicks} (${kind})`)
+    // v4.3 autoMenu: tap the obvious button ourselves (PLAY/CONTINUE/RETRY/CLAIM/OK/×) so the loop keeps going
+    if (args.autoMenu === true && !opts.readOnly && (kind === 'menu' || kind === 'game_over' || kind === 'paused')) {
+      const prio = ['play', 'start', 'continue', 'next', 'retry', 'try again', 'resume', 'claim', 'collect', 'ok', 'skip', 'close', 'no thanks', '×', 'x']
+      const pick = lines.find((l) => prio.some((p) => l.text.toLowerCase().trim() === p)) ?? lines.find((l) => prio.some((p) => l.text.toLowerCase().includes(p)))
+      if (pick) { const t = await executeTool(env, deviceId, 'tap', { x: pick.cx, y: pick.cy }, { ...opts, internal: true, depth: (opts.depth ?? 0) + 1 }).catch(() => null); stuck.autoTapped = { text: pick.text, x: pick.cx, y: pick.cy, ok: !!t?.ok }; events.push(`auto-tapped "${pick.text}"`); state.staticTicks = 0 }
+    }
   }
   room(env, deviceId).fetch(`https://do/play-state?deviceId=${deviceId}&app=${encodeURIComponent(stateKey)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) }).catch(() => {})
   // compact summary line the model can read without the image
@@ -508,11 +529,17 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   if (objs) for (const [k, v] of Object.entries(objs)) if (v.count) { const mv = deltas[`@${k}`] as { dir?: string } | undefined; summary.push(`@${k}×${v.count}${v.objects[0] ? ` nearest(${v.objects[0].cx},${v.objects[0].cy})` : ''}${mv?.dir ? ` →${mv.dir}` : ''}`) }
   if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && (v as { value?: number }).value !== undefined) { const dv = deltas[k]; summary.push(`${k}=${(v as { value: number }).value}${typeof dv === 'number' ? ` (${dv > 0 ? '+' : ''}${dv})` : ''}`) }
   if (changed >= 0) summary.push(`changed ${changed}%`)
-  if (stuck) summary.push(`STATIC×${state.staticTicks} ${stuck.kind}`)
+  if (threats.length) summary.push(`THREAT @${threats[0].name}${threats[0].etaMs !== undefined ? ` ${threats[0].etaMs}ms` : ''}`)
+  if (stuck) summary.push(`STATIC×${(stuck.staticTicks as number)} ${stuck.kind}`)
+  // v4.3 first tick of a game: surface what the previous session learned (handover note) so a new chat starts smarter
+  const last = profile?.lastReport as { outcome?: string; score?: number; summary?: string; nextTime?: string; learned?: string[] } | undefined
+  const memory = state.tick === 1 && last ? { lastOutcome: last.outcome, bestScore: profile?.bestScore, lastSummary: last.summary, nextTime: last.nextTime, learned: last.learned } : undefined
   return {
     ok: !action || action.ok,
     app: app || undefined,
     tick: state.tick,
+    ...(threats.length ? { threats: threats.slice(0, 3) } : {}),
+    ...(memory ? { memory } : {}),
     ...(action ? { action: { ok: action.ok, error: action.error, data: action.data } } : {}),
     frame: { w: d.w, h: d.h, scale: d.scale, objects: d.objects, ocr: d.ocr, pixels: d.pixels, changedPct: d.changedPct, ms: d.ms },
     ...(Object.keys(deltas).length ? { deltas } : {}),
@@ -522,6 +549,92 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
     image,
     durationMs: Date.now() - t0,
     hint: !profile ? 'no game_profile for this app yet — run game_setup {} once (auto-detects colours/HUD numbers/buttons) and play {} will auto-track them every tick' : undefined,
+  }
+}
+
+/**
+ * v4.3 play_loop: the AI hands the relay a POLICY (ordered rules over the play() perception: threats, objects, values, stuck)
+ * and the relay runs up to `ticks` play() rounds by itself (~300-600 ms each), choosing one action per tick.
+ * Rule `if`: {threat:"@name"|true, present:"@name", absent:"@name", stuck:"menu|game_over|any", valueBelow:{name,value}, valueAbove:{name,value}, everyTicks:N}
+ * Rule `do`: combo steps (same as play.act; steps may use "@found" tokens: x:"@found.x", y:"@found.y" → nearest object of the rule's colour) or tool {name, arguments}
+ * Stops on: maxTicks, stopOn (stuck kind / event text / value condition), or `until` value reached. Returns a compact per-tick log.
+ */
+async function playLoop(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const t0 = Date.now()
+  const ticks = Math.min(Math.max(Math.round(Number(args.ticks) || 10), 1), 40)
+  const budgetMs = Math.min(Math.max(Number(args.maxMs) || 25_000, 1000), 25_000)
+  const policy = Array.isArray(args.policy) ? (args.policy as Record<string, unknown>[]) : []
+  if (!policy.length) return { ok: false, error: 'play_loop requires policy:[{if:{...}, do:[combo steps] | tool:{name,arguments}, name?, cooldownTicks?}]' }
+  const stopOn = (args.stopOn ?? {}) as { stuck?: string; event?: string; valueBelow?: { name: string; value: number }; valueAbove?: { name: string; value: number } }
+  const frameArgs: Record<string, unknown> = { maxWidth: 0 }
+  for (const k of ['objects', 'ocr', 'pixels', 'quality']) if (args[k] !== undefined) frameArgs[k] = args[k]
+  const autoMenu = args.autoMenu !== false
+  const log: Record<string, unknown>[] = []
+  const fires: Record<string, number> = {}
+  const lastFire: Record<string, number> = {}
+  let stoppedBy = 'ticks'
+  let lastTick: ToolResult | undefined
+  const inner = { ...opts, depth: (opts.depth ?? 0) + 1 }
+  const sub = (v: unknown, found?: { cx: number; cy: number }): unknown => {
+    if (typeof v === 'string' && found) { if (v === '@found.x') return found.cx; if (v === '@found.y') return found.cy; const m = /^@found\.(x|y)([+-]\d+)$/.exec(v); if (m) return (m[1] === 'x' ? found.cx : found.cy) + Number(m[2]) }
+    if (Array.isArray(v)) return v.map((x) => sub(x, found))
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, sub(x, found)]))
+    return v
+  }
+  let pendingAct: Record<string, unknown> | undefined
+  for (let i = 1; i <= ticks; i++) {
+    if (Date.now() - t0 > budgetMs) { stoppedBy = 'maxMs'; break }
+    const tickArgs: Record<string, unknown> = { ...frameArgs, autoMenu, ...(i === 1 && args.reset === true ? { reset: true } : {}), ...(pendingAct ?? {}) }
+    const r = await play(env, deviceId, tickArgs, inner, false)
+    pendingAct = undefined
+    lastTick = r
+    if (!r.ok && !r.frame) { stoppedBy = 'error'; log.push({ tick: i, error: r.error }); break }
+    const objs = (r.frame as { objects?: Record<string, { count: number; objects: { cx: number; cy: number }[] }> } | undefined)?.objects ?? {}
+    const values = Object.fromEntries(Object.entries(((r.frame as { ocr?: Record<string, { value?: number } | unknown[]> }).ocr ?? {})).filter(([, v]) => v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number').map(([k, v]) => [k, (v as { value: number }).value]))
+    const threats = (r.threats as { name: string; cx: number; cy: number }[] | undefined) ?? []
+    const stuck = r.stuck as { kind?: string } | undefined
+    const events = (r.events as string[] | undefined) ?? []
+    const entry: Record<string, unknown> = { tick: i, summary: r.summary }
+    // stop conditions
+    if (stopOn.stuck && stuck && (stopOn.stuck === 'any' || stuck.kind === stopOn.stuck)) { stoppedBy = `stuck:${stuck.kind}`; log.push(entry); break }
+    if (stopOn.event && events.some((e) => e.toLowerCase().includes(stopOn.event!.toLowerCase()))) { stoppedBy = `event:${stopOn.event}`; log.push(entry); break }
+    if (stopOn.valueBelow && typeof values[stopOn.valueBelow.name] === 'number' && values[stopOn.valueBelow.name] < stopOn.valueBelow.value) { stoppedBy = `${stopOn.valueBelow.name}<${stopOn.valueBelow.value}`; log.push(entry); break }
+    if (stopOn.valueAbove && typeof values[stopOn.valueAbove.name] === 'number' && values[stopOn.valueAbove.name] > stopOn.valueAbove.value) { stoppedBy = `${stopOn.valueAbove.name}>${stopOn.valueAbove.value}`; log.push(entry); break }
+    // pick the first matching rule (policy order = priority)
+    for (let pi = 0; pi < policy.length; pi++) {
+      const rule = policy[pi]
+      const name = typeof rule.name === 'string' ? rule.name : `rule${pi}`
+      const cd = Math.max(0, Math.round(Number(rule.cooldownTicks) || 0))
+      if (lastFire[name] !== undefined && i - lastFire[name] <= cd) continue
+      const cond = (rule.if ?? {}) as Record<string, unknown>
+      let found: { cx: number; cy: number } | undefined
+      let ok = true
+      const strip = (s: unknown) => String(s).replace(/^@/, '')
+      if (cond.threat !== undefined) { const t = cond.threat === true ? threats[0] : threats.find((x) => x.name === strip(cond.threat)); if (!t) ok = false; else found = { cx: t.cx, cy: t.cy } }
+      if (ok && cond.present !== undefined) { const o = objs[strip(cond.present)]; if (!o?.count) ok = false; else found = found ?? { cx: o.objects[0].cx, cy: o.objects[0].cy } }
+      if (ok && cond.absent !== undefined) { const o = objs[strip(cond.absent)]; if (o?.count) ok = false }
+      if (ok && cond.stuck !== undefined) { if (!stuck || (cond.stuck !== 'any' && stuck.kind !== cond.stuck)) ok = false }
+      if (ok && cond.valueBelow) { const c = cond.valueBelow as { name: string; value: number }; if (!(typeof values[c.name] === 'number' && values[c.name] < c.value)) ok = false }
+      if (ok && cond.valueAbove) { const c = cond.valueAbove as { name: string; value: number }; if (!(typeof values[c.name] === 'number' && values[c.name] > c.value)) ok = false }
+      if (ok && cond.everyTicks !== undefined) { if (i % Math.max(1, Math.round(Number(cond.everyTicks))) !== 0) ok = false }
+      if (!ok) continue
+      fires[name] = (fires[name] ?? 0) + 1; lastFire[name] = i
+      entry.rule = name
+      if (Array.isArray(rule.do) && rule.do.length) pendingAct = { act: sub(rule.do, found), waitMs: rule.waitMs ?? args.waitMs ?? 150 }
+      else if (rule.tool && typeof (rule.tool as { name?: unknown }).name === 'string') pendingAct = { tool: sub(rule.tool, found), waitMs: rule.waitMs ?? args.waitMs ?? 250 }
+      if (found) entry.at = found
+      break
+    }
+    log.push(entry)
+    if (i === ticks) stoppedBy = 'ticks'
+  }
+  // a rule fired on the last tick but its action has not run yet → run it now (one final play) so the loop never ends "half-decided"
+  if (pendingAct) { const r = await play(env, deviceId, { ...frameArgs, ...pendingAct }, inner, false); lastTick = r; log.push({ tick: log.length + 1, summary: r.summary, final: true }) }
+  return {
+    ok: true, ticks: log.length, stoppedBy, fires, log: log.slice(-20),
+    last: lastTick ? { summary: lastTick.summary, events: lastTick.events, threats: lastTick.threats, stuck: lastTick.stuck, frame: lastTick.frame } : undefined,
+    durationMs: Date.now() - t0,
+    hint: 'inspect log → tune the policy (order = priority) → call play_loop again; use react_script instead when reactions must be < 100 ms',
   }
 }
 
