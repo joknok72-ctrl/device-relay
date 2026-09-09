@@ -112,6 +112,7 @@ class RelayConnectionService : Service() {
         val svc = AutomationAccessibilityService.instance ?: run { scope.launch { delay(3000); installForegroundHook() }; return }
         svc.onForegroundApp = { _ -> refreshNotification() }
     }
+    private var lastStatusText = ""
     private fun refreshNotification() { updateNotification(lastStatusText) }
 
     override fun onDestroy() {
