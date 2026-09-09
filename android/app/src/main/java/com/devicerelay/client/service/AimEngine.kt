@@ -267,6 +267,7 @@ object AimEngine {
         val injectMode = runCatching { bridge.proxy?.injectMode() }.getOrNull() ?: false
         val desc = runCatching { bridge.proxy?.describe() }.getOrNull() ?: ""
         val shz = bridge.state() + (if (!injectMode) "+kernel" else if (desc.contains("grabbed=true")) "+grab" else "+takeover")
+        Log.i(TAG, "headlock start: $shz :: $desc")
         status = status.copy(shizuku = shz); emit()
         try {
             while (currentCoroutineContext().isActive) {

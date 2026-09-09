@@ -175,6 +175,8 @@ class TouchProxyService : ITouchProxy.Stub() {
     }
     private fun grab(): Boolean {
         if (grabbed) return true
+        if (!mappingExplicit || !mappingSane()) { grabErr = "refused: mapping not set/sane (rot=$rotation disp=${dispW}x$dispH)"; return false }
+        if (injMethod == null) { grabErr = "refused: no injector"; return false }
         val fd = input?.fd ?: return false
         return try {
             if (!ioctlInt(fd, EVIOCGRAB, 1)) { grabErr = "no ioctlInt"; false }
@@ -185,6 +187,9 @@ class TouchProxyService : ITouchProxy.Stub() {
     private fun ungrab() {
         if (!grabbed) return
         grabbed = false
+        ungrabNow()
+    }
+    private fun ungrabNow() {
         synchronized(ptrLock) { while (ptrIds.isNotEmpty()) ptrRemove(ptrIds.last()) }
         val d = dev ?: return
         reopening = true
@@ -203,7 +208,9 @@ class TouchProxyService : ITouchProxy.Stub() {
         val coords = Array(n) { i -> MotionEvent.PointerCoords().apply { x = ptrX[ptrIds[i]] ?: 0f; y = ptrY[ptrIds[i]] ?: 0f; pressure = 1f; size = 0.05f } }
         val a = if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_POINTER_UP) action or (idx shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) else action
         if (inject(MotionEvent.obtain(injDownTime, now, a, n, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0))) mirrored++
+        else if (grabbed) { mirrorFails++; if (mirrorFails >= 2) { Log.w(TAG, "mirror injection failing — releasing grab"); grabbed = false; Thread { runCatching { ungrabNow() } }.start() } }
     }
+    private var mirrorFails = 0
     private fun ptrAdd(id: Int, x: Float, y: Float) {
         if (ptrIds.contains(id)) { ptrX[id] = x; ptrY[id] = y; return }
         ptrIds.add(id); ptrX[id] = x; ptrY[id] = y
@@ -232,7 +239,8 @@ class TouchProxyService : ITouchProxy.Stub() {
     private fun watchdog() {
         while (true) {
             Thread.sleep(500)
-            if (grabbed && lastPoll > 0 && SystemClock.elapsedRealtime() - lastPoll > 2500) { Log.w(TAG, "client stopped polling — releasing grab"); runCatching { ungrab() } }
+            if (grabbed && SystemClock.elapsedRealtime() - lastPoll > 2000) { Log.w(TAG, "client stopped polling — releasing grab"); runCatching { ungrab() } }
+            if (grabbed && !mappingSane()) { Log.w(TAG, "mapping became insane — releasing grab"); runCatching { ungrab() } }
         }
     }
 
@@ -417,10 +425,25 @@ class TouchProxyService : ITouchProxy.Stub() {
     override fun describe(): String {
         val d = dev
         return if (d == null) "not open: ${lastError ?: "unknown"} $diag" else
-            "${d.path} \"${d.name}\" raw x=${d.x.min}..${d.x.max} y=${d.y.min}..${d.y.max} slots=0..${d.slots.max} ourSlot=$ourSlot 64bit=$is64 rot=$rotation disp=${dispW}x$dispH alive=$alive write=$writeMode inject=${injMethod != null} grabbed=$grabbed grabErr=${grabErr ?: "-"} mirrored=$mirrored fireHeld=$fireHeld injDowns=$injDowns injErr=$injErrors mapping=${if (mappingExplicit) "set" else "DEFAULT"} events=$readEvents err=${lastError ?: "-"} $diag"
+            "${d.path} \"${d.name}\" raw x=${d.x.min}..${d.x.max} y=${d.y.min}..${d.y.max} slots=0..${d.slots.max} ourSlot=$ourSlot 64bit=$is64 rot=$rotation disp=${dispW}x$dispH alive=$alive write=$writeMode inject=${injMethod != null} grabbed=$grabbed grabErr=${grabErr ?: "-"} mirrored=$mirrored fireHeld=$fireHeld injDowns=$injDowns injErr=$injErrors mapping=${if (!mappingExplicit) "DEFAULT" else if (mappingInferred) "inferred" else "set"} sane=${mappingSane()} mirrorFails=$mirrorFails events=$readEvents err=${lastError ?: "-"} $diag"
     }
     override fun isReady(): Boolean = alive && dev != null && (injectMode() || (writeMode != "read-only" && writeMode != "none"))
-    override fun setMapping(rotation: Int, dispW: Int, dispH: Int) { this.rotation = rotation; this.dispW = dispW; this.dispH = dispH; mappingExplicit = true }
+    override fun setMapping(rotation: Int, dispW: Int, dispH: Int) {
+        val d = dev
+        var rot = rotation
+        if (d != null) {
+            val rawLandscape = d.x.span > d.y.span; val dispLandscape = dispW > dispH
+            val rotLandscape = rot == Surface.ROTATION_90 || rot == Surface.ROTATION_270
+            // the display is rotated relative to the panel iff landscape-ness differs — fix an inconsistent rotation value
+            if ((rawLandscape != dispLandscape) && !rotLandscape) { rot = Surface.ROTATION_90; mappingInferred = true }
+            else if ((rawLandscape == dispLandscape) && rotLandscape) { rot = Surface.ROTATION_0; mappingInferred = true }
+            else mappingInferred = false
+        }
+        this.rotation = rot; this.dispW = dispW; this.dispH = dispH; mappingExplicit = true
+    }
+    private var mappingInferred = false
+    /** true when raw-panel orientation and display orientation are consistent with the current rotation */
+    private fun mappingSane(): Boolean { val d = dev ?: return false; val rawL = d.x.span > d.y.span; val dispL = dispW > dispH; val rotL = rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270; return (rawL != dispL) == rotL }
     override fun touches(): IntArray { lastPoll = SystemClock.elapsedRealtime(); return snapshot }
     override fun lastEventAgeMs(): Long = if (lastEventAt == 0L) -1 else System.currentTimeMillis() - lastEventAt
 

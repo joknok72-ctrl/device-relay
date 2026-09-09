@@ -921,10 +921,11 @@ class AutomationAccessibilityService : AccessibilityService() {
     /** raw frame for the native aim loop (caller recycles) */
     suspend fun captureForEngine(): Bitmap? = captureBitmap()
     /** v3.4: current display rotation (Surface.ROTATION_*) for the Shizuku touch proxy mapping */
-    fun displayRotation(): Int = runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display?.rotation ?: 0
-        else @Suppress("DEPRECATION") (getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.rotation
-    }.getOrDefault(0)
+    fun displayRotation(): Int {
+        // DisplayManager works from any context (AccessibilityService.getDisplay() throws on Android 11)
+        runCatching { (getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)?.rotation }.getOrNull()?.let { return it }
+        return runCatching { @Suppress("DEPRECATION") (getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.rotation }.getOrDefault(0)
+    }
     /** dispatch one stroke; true when the system accepted and completed/continued it */
     suspend fun dispatchForEngine(s: GestureDescription.StrokeDescription): Boolean = withContext(Dispatchers.Main) { dispatchStrokes(listOf(s)) is Outcome.Ok }
     /** OCR lines as (text, centre) for bot conditions; latin recognizer, reused across ticks. */
