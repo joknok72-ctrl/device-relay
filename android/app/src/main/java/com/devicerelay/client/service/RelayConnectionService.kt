@@ -103,120 +103,16 @@ class RelayConnectionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        installBotStatusHook()
-        installHandsFreeHooks()
+        installForegroundHook()
         startAsForeground("جارٍ الاتصال…")
     }
 
-    // ------------------------------------------------------------ v2.8 hands-free: bubble, volume keys, auto-start
-    private var autoStartedFor: String? = null
-    private fun installHandsFreeHooks() {
-        val svc = AutomationAccessibilityService.instance ?: run { scope.launch { delay(3000); installHandsFreeHooks() }; return }
-        svc.onBotToggle = {
-            when {
-                AimEngine.status.running -> AimEngine.stop("overlay")
-                BotEngine.status.running -> BotEngine.stop("overlay")
-                aimConfiguredForForeground() -> { startedBy = "overlay"; AimEngine.start(this, "overlay") }
-                else -> startBotFromNotification(null, "overlay")
-            }
-        }
-        svc.onBotStartRequest = { reason -> if (aimConfiguredForForeground()) { startedBy = reason; AimEngine.start(this, reason) } else startBotFromNotification(null, reason) }
-        svc.onForegroundApp = { pkg -> onForegroundApp(pkg) }
-        refreshOverlay()
+    // ------------------------------------------------------------ foreground app tracking (profiles / sessions on the relay)
+    private fun installForegroundHook() {
+        val svc = AutomationAccessibilityService.instance ?: run { scope.launch { delay(3000); installForegroundHook() }; return }
+        svc.onForegroundApp = { _ -> refreshNotification() }
     }
-    private fun aimConfiguredForForeground(): Boolean {
-        val cfg = AimEngine.load(this) ?: return false
-        val fg = AutomationAccessibilityService.instance?.let { runCatching { it.currentPackage() }.getOrNull() } ?: return false
-        return cfg.app == fg
-    }
-    private var aimAutoStartedFor: String? = null
-    private fun onForegroundApp(pkg: String) {
-        botCursor = 0
-        refreshNotification()
-        // v3.3 native aim engine auto-start (takes precedence over rule bots for its app)
-        val aimCfg = AimEngine.load(this)
-        if (aimCfg != null && aimCfg.autoStart && aimCfg.app == pkg && aimAutoStartedFor != pkg && !AimEngine.status.running) {
-            aimAutoStartedFor = pkg
-            scope.launch {
-                delay(2000)
-                val fg = AutomationAccessibilityService.instance?.currentPackage()
-                if (fg == pkg && !AimEngine.status.running) { startedBy = "auto"; AimEngine.start(this@RelayConnectionService, "auto") }
-            }
-            return
-        }
-        if (aimCfg == null || aimCfg.app != pkg) aimAutoStartedFor = null
-        // auto-start: first time this app comes to the foreground in this session, ~2 s later (let the game settle)
-        val auto = BotEngine.forApp(this, pkg).firstOrNull { it["autoStart"]?.let { v -> v.toString() == "true" } == true }
-        if (auto != null && autoStartedFor != pkg && !BotEngine.status.running) {
-            autoStartedFor = pkg
-            scope.launch {
-                delay(2000)
-                val fg = AutomationAccessibilityService.instance?.currentPackage()
-                if (fg == pkg && !BotEngine.status.running) { startedBy = "auto"; BotEngine.start(this@RelayConnectionService, auto) }
-            }
-        }
-        if (pkg != autoStartedFor && !BotEngine.forApp(this, pkg).any { it["autoStart"]?.toString() == "true" }) autoStartedFor = null
-    }
-    private fun refreshOverlay() {
-        val svc = AutomationAccessibilityService.instance ?: return
-        val bs = BotEngine.status
-        val bots = botCandidates()
-        val fg = runCatching { svc.currentPackage() }.getOrNull()
-        val hasBots = bots.isNotEmpty() && fg != null && bots.any { it["app"]?.toString()?.trim('"') == fg }
-        val asx = AimEngine.status
-        if (asx.running && asx.mode == "headlock") { svc.updateOverlay("■ ${asx.name}", (if (!asx.firing) "🎮 أنت تلعب" else if (asx.locked) "🎯 على الرأس ${asx.lockErrPx}px" else "🔍 يبحث") + " · ${asx.locks} قفل", true, true); return }
-        if (asx.running) { svc.updateOverlay("■ ${asx.name}", (if (asx.holding) "🔥 يضرب" else "👁 يراقب") + " · ${asx.fps} fps · ${asx.holdCount} مرة", true, true); return }
-        if (bs.running) svc.updateOverlay("■ ${bs.name}", "${bs.fired} ضربة · ${bs.ticks} فحص${bs.lastRule?.let { " · $it" } ?: ""}", true, true)
-        else if (aimConfiguredForForeground()) svc.updateOverlay("▶ ${AimEngine.config?.name ?: "Aim"}", "اضغط للتشغيل · مطوّل للإخفاء", false, true)
-        else {
-            val cur = bots.getOrNull(if (bots.isEmpty()) 0 else botCursor % bots.size)
-            val name = cur?.get("name")?.toString()?.trim('"') ?: ""
-            svc.updateOverlay("▶ $name", if (bots.size > 1) "${bots.size} بوتات · اضغط الإشعار ↻ للتبديل" else "اضغط للتشغيل · مطوّل للإخفاء", false, hasBots)
-        }
-    }
-    private var startedBy = "notification"
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> { stopSelfClean(); return START_NOT_STICKY }
-            ACTION_BOT_START -> { startBotFromNotification(intent.getStringExtra(EXTRA_BOT_ID)); return START_STICKY }
-            ACTION_BOT_STOP -> { BotEngine.stop("notification"); return START_STICKY }
-            ACTION_AIM_START -> { BotEngine.stop("aim"); startedBy = "notification"; AimEngine.start(this, "notification"); return START_STICKY }
-            ACTION_AIM_STOP -> { AimEngine.stop("notification"); return START_STICKY }
-            ACTION_BOT_NEXT -> { botCursor++; refreshNotification(); return START_STICKY }
-            else -> { stopping = false; connectLoop() }
-        }
-        return START_STICKY
-    }
-
-    // ------------------------------------------------------------ v2.6 bots
-    /** which bot the ▶ button starts (cycles with ↻ among bots of the foreground app / all) */
-    private var botCursor = 0
-    private var lastStatusText = ""
-    private fun botCandidates(): List<kotlinx.serialization.json.JsonObject> {
-        val fg = AutomationAccessibilityService.instance?.let { runCatching { it.currentPackage() }.getOrNull() }
-        val forApp = BotEngine.forApp(this, fg).filter { fg != null }
-        return if (forApp.isNotEmpty()) forApp else BotEngine.load(this)
-    }
-    private fun startBotFromNotification(id: String?, reason: String = "notification") {
-        val bots = botCandidates()
-        val bot = (if (id != null) BotEngine.find(this, id) else null) ?: bots.getOrNull(if (bots.isEmpty()) 0 else botCursor % bots.size) ?: run { updateNotification("لا توجد بوتات — اطلب من الـ AI إنشاء واحد"); return }
-        startedBy = reason
-        BotEngine.start(this, bot)
-    }
-    private fun installBotStatusHook() {
-        AimEngine.onStatus = { s ->
-            val msg = com.devicerelay.client.net.AimStatusMessage(running = s.running, name = s.name, app = s.app, startedAt = s.startedAt.takeIf { it > 0 }, frames = s.frames, fps = s.fps, holding = s.holding, holdCount = s.holdCount, heldMs = s.heldMs, aimMoves = s.aimMoves, reloads = s.reloads, lastTrigger = s.lastTrigger, stoppedBy = s.stoppedBy, error = s.error, startedBy = s.startedBy, ts = System.currentTimeMillis(), mode = s.mode, firing = s.firing, locked = s.locked, lockErrPx = s.lockErrPx, nudges = s.nudges, locks = s.locks, shizuku = s.shizuku, headX = s.headX.takeIf { it >= 0 }, headY = s.headY.takeIf { it >= 0 })
-            socket?.send(RelayJson.encodeToString(com.devicerelay.client.net.AimStatusMessage.serializer(), msg))
-            refreshNotification()
-        }
-        BotEngine.onStatus = { s ->
-            val msg = com.devicerelay.client.net.BotStatusMessage(botId = s.botId, name = s.name, running = s.running, ticks = s.ticks, fired = s.fired, lastRule = s.lastRule, startedAt = s.startedAt, stoppedBy = s.stoppedBy, error = s.error, ruleHits = s.ruleHits.takeIf { it.isNotEmpty() }, avgTickMs = s.avgTickMs, learned = s.learned.takeIf { it.isNotEmpty() }, startedBy = startedBy, ts = System.currentTimeMillis())
-            socket?.send(RelayJson.encodeToString(com.devicerelay.client.net.BotStatusMessage.serializer(), msg))
-            refreshNotification()
-        }
-    }
-    private fun refreshNotification() { updateNotification(lastStatusText); refreshOverlay() }
+    private fun refreshNotification() { updateNotification(lastStatusText) }
 
     override fun onDestroy() {
         stopping = true
@@ -291,33 +187,6 @@ class RelayConnectionService : Service() {
         val svc = AutomationAccessibilityService.instance
         val result: ResultMessage = if (cmd.action.type == "ping") {
             ResultMessage(id = cmd.id, ok = true, durationMs = 0)
-        } else if (cmd.action.type == "aim_config") {
-            val raw = cmd.action.aim?.toString()
-            val cfg = raw?.let { AimEngine.save(this, it) }
-            if (cfg == null) ResultMessage(id = cmd.id, ok = false, error = "aim_config needs a valid aim object")
-            else { refreshNotification(); refreshOverlay(); ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = AimEngine.statusJson()) }
-        } else if (cmd.action.type == "aim_start") {
-            if (AutomationAccessibilityService.instance == null) ResultMessage(id = cmd.id, ok = false, error = "accessibility service not enabled")
-            else { BotEngine.stop("aim"); startedBy = "relay"; val ok = AimEngine.start(this, "relay"); ResultMessage(id = cmd.id, ok = ok, error = if (ok) null else AimEngine.status.error, durationMs = 0, data = AimEngine.statusJson()) }
-        } else if (cmd.action.type == "aim_stop") {
-            AimEngine.stop("relay"); ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = AimEngine.statusJson())
-        } else if (cmd.action.type == "aim_status") {
-            ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = AimEngine.statusJson())
-        } else if (cmd.action.type == "aim_clear") {
-            AimEngine.clear(this); refreshNotification(); refreshOverlay(); ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = AimEngine.statusJson())
-        } else if (cmd.action.type == "bot_sync") {
-            cmd.action.bots?.let { BotEngine.save(this, it) }
-            refreshNotification()
-            ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = kotlinx.serialization.json.buildJsonObject { put("stored", kotlinx.serialization.json.JsonPrimitive(cmd.action.bots?.size ?: 0)) })
-        } else if (cmd.action.type == "bot_start") {
-            val bot = cmd.action.botId?.let { BotEngine.find(this, it) }
-            if (bot == null) ResultMessage(id = cmd.id, ok = false, error = "bot not found on phone (sync first)")
-            else if (AutomationAccessibilityService.instance == null) ResultMessage(id = cmd.id, ok = false, error = "accessibility service not enabled")
-            else { startedBy = "relay"; val ok = BotEngine.start(this, bot); ResultMessage(id = cmd.id, ok = ok, error = if (ok) null else BotEngine.status.error, durationMs = 0, data = BotEngine.statusJson()) }
-        } else if (cmd.action.type == "bot_stop") {
-            BotEngine.stop("relay"); ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = BotEngine.statusJson())
-        } else if (cmd.action.type == "bot_status") {
-            ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = BotEngine.statusJson())
         } else if (cmd.action.type == "stream") {
             if (AutomationAccessibilityService.instance == null && cmd.action.enabled == true) ResultMessage(id = cmd.id, ok = false, error = "accessibility service not enabled")
             else { setStream(ws, cmd.action.enabled == true, cmd.action.fps, cmd.action.maxWidth, cmd.action.quality); ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = kotlinx.serialization.json.buildJsonObject { put("streaming", kotlinx.serialization.json.JsonPrimitive(cmd.action.enabled == true)) }) }
@@ -414,37 +283,13 @@ class RelayConnectionService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         lastStatusText = text
-        val bs = BotEngine.status
-        val bots = botCandidates()
-        val ax = AimEngine.status
-        val aimCfg = AimEngine.load(this)
         val b = NotificationCompat.Builder(this, RelayApp.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(if (ax.running) "🎯 Aim يعمل: ${ax.name}" else if (bs.running) "🤖 بوت يعمل: ${bs.name}" else getString(R.string.notification_title))
-            .setContentText(if (ax.running && ax.mode == "headlock") (if (!ax.firing) "🎮 أنت تلعب — ينتظر ضغطة الضرب" else if (ax.locked) "🎯 مقفول على الرأس · خطأ ${ax.lockErrPx}px" else "🔍 يبحث عن رأس") + " · ${ax.fps} fps · ${ax.locks} قفل" else if (ax.running) (if (ax.holding) "🔥 يضرب الآن" else "👁 يراقب") + " · ${ax.fps} fps · ${ax.holdCount} مرة · ${ax.reloads} تحميل" else if (bs.running) "${bs.fired} ضربة · ${bs.ticks} فحص${bs.lastRule?.let { " · $it" } ?: ""}" else text)
+            .setContentTitle(getString(R.string.notification_title))
+            .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
             .setSilent(true)
-        if (ax.running) {
-            val stopAim = PendingIntent.getService(this, 5, Intent(this, RelayConnectionService::class.java).setAction(ACTION_AIM_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            b.addAction(0, "■ أوقف Aim", stopAim)
-        } else if (!bs.running && aimCfg != null) {
-            val startAim = PendingIntent.getService(this, 6, Intent(this, RelayConnectionService::class.java).setAction(ACTION_AIM_START), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            b.addAction(0, "🎯 ${aimCfg.name}", startAim)
-        }
-        if (bs.running) {
-            val stopBot = PendingIntent.getService(this, 2, Intent(this, RelayConnectionService::class.java).setAction(ACTION_BOT_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            b.addAction(0, "■ أوقف البوت", stopBot)
-        } else if (bots.isNotEmpty()) {
-            val cur = bots[botCursor % bots.size]
-            val name = cur["name"]?.let { runCatching { it.toString().trim('"') }.getOrNull() } ?: "bot"
-            val startBot = PendingIntent.getService(this, 3, Intent(this, RelayConnectionService::class.java).setAction(ACTION_BOT_START).putExtra(EXTRA_BOT_ID, cur["id"]?.toString()?.trim('"')), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            b.addAction(0, "▶ $name", startBot)
-            if (bots.size > 1) {
-                val next = PendingIntent.getService(this, 4, Intent(this, RelayConnectionService::class.java).setAction(ACTION_BOT_NEXT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                b.addAction(0, "↻ ${bots.size}", next)
-            }
-        }
         b.addAction(0, "قطع الاتصال", stop)
         return b.build()
     }
@@ -466,12 +311,6 @@ class RelayConnectionService : Service() {
         private const val TAG = "RelayConnection"
         private const val NOTIF_ID = 1001
         const val ACTION_STOP = "com.devicerelay.client.STOP"
-        const val ACTION_BOT_START = "com.devicerelay.client.BOT_START"
-        const val ACTION_BOT_STOP = "com.devicerelay.client.BOT_STOP"
-        const val ACTION_AIM_START = "com.devicerelay.client.AIM_START"
-        const val ACTION_AIM_STOP = "com.devicerelay.client.AIM_STOP"
-        const val ACTION_BOT_NEXT = "com.devicerelay.client.BOT_NEXT"
-        const val EXTRA_BOT_ID = "botId"
 
         private val _ui = MutableStateFlow(RelayUiState())
         val ui: StateFlow<RelayUiState> = _ui.asStateFlow()

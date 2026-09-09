@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessibility
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Visibility
@@ -49,7 +48,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -133,8 +131,6 @@ fun RelayScreen(pairing: RelayConfig? = null, onPairingConsumed: () -> Unit = {}
     var showToken by remember { mutableStateOf(false) }
     var a11yEnabled by remember { mutableStateOf(AutomationAccessibilityService.isEnabled) }
     var notifAccess by remember { mutableStateOf(RelayNotificationListener.isEnabled) }
-    var shizukuState by remember { mutableStateOf(com.devicerelay.client.shizuku.ShizukuBridge.state()) }
-    DisposableEffect(Unit) { com.devicerelay.client.shizuku.ShizukuBridge.onChange = { shizukuState = com.devicerelay.client.shizuku.ShizukuBridge.state() }; onDispose { com.devicerelay.client.shizuku.ShizukuBridge.onChange = null } }
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     LaunchedEffect(Unit) {
@@ -156,7 +152,6 @@ fun RelayScreen(pairing: RelayConfig? = null, onPairingConsumed: () -> Unit = {}
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             a11yEnabled = AutomationAccessibilityService.isEnabled
             notifAccess = RelayNotificationListener.isEnabled
-            shizukuState = com.devicerelay.client.shizuku.ShizukuBridge.state()
         }
     }
 
@@ -224,31 +219,6 @@ fun RelayScreen(pairing: RelayConfig? = null, onPairingConsumed: () -> Unit = {}
                         if (!a11yEnabled) OutlinedButton(onClick = {
                             ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         }) { Text("تفعيل") }
-                    }
-                }
-            }
-
-            // ---- v3.4 Shizuku card (HeadLock needs it)
-            item {
-                val ok = shizukuState == "ready"
-                Card(colors = CardDefaults.cardColors(containerColor = if (ok) CardBg else Color(0xFF2A2440))) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Bolt, null, tint = if (ok) Green else Muted)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Shizuku — HeadLock (اختياري)", color = Color.White, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                when (shizukuState) {
-                                    "ready" -> "جاهز — الإصبع الثاني يُكتب مباشرة في شاشة اللمس (لا إلغاء للمسك)"
-                                    "absent" -> "Shizuku غير مشغّل — شغّله من تطبيق Shizuku ثم ارجع هنا"
-                                    "denied" -> "اضغط «سماح» ليطلب التطبيق إذن Shizuku"
-                                    "granted", "binding" -> "مصرّح — جارٍ تشغيل خدمة اللمس…"
-                                    else -> "الخدمة لم تجد شاشة اللمس: ${com.devicerelay.client.shizuku.ShizukuBridge.lastError ?: shizukuState}"
-                                },
-                                color = Muted, fontSize = 12.sp,
-                            )
-                        }
-                        if (!ok) OutlinedButton(onClick = { com.devicerelay.client.shizuku.ShizukuBridge.request(); shizukuState = com.devicerelay.client.shizuku.ShizukuBridge.state() }) { Text(if (shizukuState == "absent") "تحديث" else "سماح") }
                     }
                 }
             }

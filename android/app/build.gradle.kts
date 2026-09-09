@@ -13,8 +13,8 @@ android {
         applicationId = "com.devicerelay.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "3.4.0"
+        versionCode = 18
+        versionName = "4.0.0"
     }
 
     buildTypes {
@@ -29,7 +29,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true; aidl = true }
+    buildFeatures { compose = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     lint {
         abortOnError = false
@@ -59,7 +59,4 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-korean:16.0.1")
     implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
-    // v3.4 Shizuku: shell-uid touch proxy (read real fingers + write our own MT slot into /dev/input)
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

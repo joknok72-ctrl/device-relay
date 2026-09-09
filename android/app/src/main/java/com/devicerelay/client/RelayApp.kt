@@ -8,7 +8,6 @@ import android.os.Build
 class RelayApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        com.devicerelay.client.shizuku.ShizukuBridge.init(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,

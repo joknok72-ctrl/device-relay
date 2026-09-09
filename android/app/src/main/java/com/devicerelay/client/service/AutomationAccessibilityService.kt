@@ -62,28 +62,16 @@ class AutomationAccessibilityService : AccessibilityService() {
         data class Fail(val error: String) : Outcome()
     }
 
-    // ------------------------------------------------------------ v2.8 hands-free bot controls
-    /** floating ▶/■ bubble over the game (TYPE_ACCESSIBILITY_OVERLAY, no extra permission) */
-    val overlay: BotOverlay by lazy { BotOverlay(this) }
-    /** RelayConnectionService registers these so the bubble / volume keys / auto-start can drive BotEngine */
-    var onBotToggle: (() -> Unit)? = null
-    var onBotStartRequest: ((reason: String) -> Unit)? = null
+    /** RelayConnectionService registers this to learn which app is in the foreground (profiles / sessions). */
     var onForegroundApp: ((pkg: String) -> Unit)? = null
-    private var overlayHiddenFor: String? = null
-    private var lastVolDownAt = 0L; private var lastVolUpAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        // ask for hardware key events (volume double-press = start/stop bot) — flag is added at runtime so older configs keep working
-        runCatching { serviceInfo = serviceInfo.apply { flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS } }
-        overlay.onTap = { onBotToggle?.invoke() }
-        overlay.onLongPress = { overlayHiddenFor = lastPackage; overlay.hide() }
         Log.i(TAG, "AccessibilityService connected")
     }
 
     override fun onDestroy() {
-        runCatching { overlay.hide() }
         if (instance === this) instance = null
         super.onDestroy()
     }
@@ -92,27 +80,8 @@ class AutomationAccessibilityService : AccessibilityService() {
         val pkg = event?.packageName?.toString() ?: return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != lastPackage && pkg != packageName && !pkg.startsWith("com.android.systemui")) {
             lastPackage = pkg
-            if (overlayHiddenFor != null && overlayHiddenFor != pkg) overlayHiddenFor = null
             onForegroundApp?.invoke(pkg)
         } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) lastPackage = pkg
-    }
-
-    /** volume keys: double-press Vol-Down within 500 ms = stop bot, double-press Vol-Up = start current bot. Single presses pass through. */
-    override fun onKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (event.action != android.view.KeyEvent.ACTION_DOWN) return false
-        val now = android.os.SystemClock.elapsedRealtime()
-        when (event.keyCode) {
-            android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> { if (now - lastVolDownAt < 500 && (BotEngine.status.running || AimEngine.status.running)) { lastVolDownAt = 0; BotEngine.stop("volume"); AimEngine.stop("volume"); return true }; lastVolDownAt = now }
-            android.view.KeyEvent.KEYCODE_VOLUME_UP -> { if (now - lastVolUpAt < 500 && !BotEngine.status.running && !AimEngine.status.running) { lastVolUpAt = 0; onBotStartRequest?.invoke("volume"); return true }; lastVolUpAt = now }
-        }
-        return false
-    }
-
-    /** show/refresh the bubble for the current foreground app (called by RelayConnectionService) */
-    fun updateOverlay(text: String, sub: String, running: Boolean, hasBots: Boolean) {
-        if (!hasBots && !running) { overlay.hide(); return }
-        if (overlayHiddenFor != null && overlayHiddenFor == lastPackage && !running) { overlay.hide(); return }
-        overlay.show(text, sub, running)
     }
 
     override fun onInterrupt() { /* not used */ }
@@ -339,7 +308,6 @@ class AutomationAccessibilityService : AccessibilityService() {
             put("android", Build.VERSION.RELEASE)
             put("sdk", Build.VERSION.SDK_INT)
             put("notificationAccess", RelayNotificationListener.isEnabled)
-            put("shizuku", com.devicerelay.client.shizuku.ShizukuBridge.state())
             pkg?.let { put("package", it); appLabel(it)?.let { l -> put("label", l) } }
         }
     }
@@ -912,38 +880,7 @@ class AutomationAccessibilityService : AccessibilityService() {
         } finally { runCatching { recognizer.close() } }
     }
 
-    // ---------------------------------------------------------------- v2.6 BotEngine hooks (public, run on Main)
-    suspend fun captureForBot(): Bitmap? = captureBitmap()
-    fun scanColorPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?, mode: String = "rgb"): JsonObject = scanColor(bmp, hex, tol, region, mode)
-    fun scanObjectsPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?, minSize: Int, maxResults: Int, mode: String = "rgb"): JsonObject = scanObjects(bmp, hex, tol, region, minSize, maxResults, mode)
     fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString() ?: lastPackage
-    // ---------------------------------------------------------------- v3.3 AimEngine hooks
-    /** raw frame for the native aim loop (caller recycles) */
-    suspend fun captureForEngine(): Bitmap? = captureBitmap()
-    /** v3.4: current display rotation (Surface.ROTATION_*) for the Shizuku touch proxy mapping */
-    fun displayRotation(): Int {
-        // DisplayManager works from any context (AccessibilityService.getDisplay() throws on Android 11)
-        runCatching { (getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)?.rotation }.getOrNull()?.let { return it }
-        return runCatching { @Suppress("DEPRECATION") (getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.rotation }.getOrDefault(0)
-    }
-    /** dispatch one stroke; true when the system accepted and completed/continued it */
-    suspend fun dispatchForEngine(s: GestureDescription.StrokeDescription): Boolean = withContext(Dispatchers.Main) { dispatchStrokes(listOf(s)) is Outcome.Ok }
-    /** OCR lines as (text, centre) for bot conditions; latin recognizer, reused across ticks. */
-    private val botRecognizer by lazy { recognizerFor(null) }
-    suspend fun readTextPublic(bmp0: Bitmap, region: Region?): List<Pair<String, Pair<Int, Int>>> {
-        var bmp = bmp0; var ox = 0; var oy = 0
-        region?.let { r ->
-            val x = r.x.coerceIn(0, bmp.width - 1); val y = r.y.coerceIn(0, bmp.height - 1)
-            val w = r.w.coerceIn(8, bmp.width - x); val h = r.h.coerceIn(8, bmp.height - y)
-            bmp = Bitmap.createBitmap(bmp, x, y, w, h); ox = x; oy = y
-        }
-        return try {
-            val result: Text = botRecognizer.process(InputImage.fromBitmap(bmp, 0)).await()
-            val out = ArrayList<Pair<String, Pair<Int, Int>>>()
-            for (block: Text.TextBlock in result.textBlocks) for (line: Text.Line in block.lines) { val b: Rect = line.boundingBox ?: continue; out.add(line.text to ((b.centerX() + ox) to (b.centerY() + oy))) }
-            out
-        } catch (e: Exception) { emptyList() }
-    }
 
     private suspend fun findColors(a: Action): Outcome {
         val colors = a.colors?.take(8) ?: return Outcome.Fail("find_colors requires colors")
