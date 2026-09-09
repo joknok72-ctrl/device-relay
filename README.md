@@ -35,6 +35,12 @@
 
 ## المميزات المنجزة ✅
 
+**🎓 v4.4 — التعلّم من التجربة (learned strategies)**
+- كل تشغيل لـ `play_loop` يتم تقييمه تلقائيًا (مكاسب السكور/العملات لكل tick × نسبة النجاة) ويُحفظ كـ **strategy** باسم على بروفايل اللعبة (أفضل 5، مرتبة بالـ fitness، نفس السياسة تتجمع في سجل واحد).
+- `play_loop {strategy:"best"}` يعيد تشغيل أفضل سياسة متعلّمة بدون كتابتها؛ `strategy:"v2"` بالاسم؛ `name/note/learn:false`. النتيجة ترجع `learned:{rank, of, fitness, gained, died}` فيقول للـ AI هل نسخته الجديدة تغلبت على القديمة.
+- الاستراتيجيات تظهر في الـ bootstrap (5f / QUICK START) → أي محادثة جديدة تبدأ بـ `play_loop {strategy:"best"}` ثم تحسّن عليها.
+- إصلاحات إدراك: الحالة القديمة (>30s) تُهمل فلا تولّد deltas وهمية؛ الانزياح البطيء جدًا (eta > 10s) لا يُعدّ تهديدًا. اختبارات **839/839** ✅.
+
 **🛩️ v4.3 — الطيار الآلي `play_loop` + إدراك التهديدات + ذاكرة الجلسات**
 - **`play_loop`** — الـ AI يكتب سياسة (policy) مرتبة بالأولوية والـ relay يلعب لوحده حتى 40 tick (~0.4s لكل واحدة، أقصى 25s): `if:{threat:true | present:"@coin" | absent | stuck:"menu" | valueBelow:{name:"hp",value:30} | everyTicks:N}` → `do:[خطوات combo بـ x:"@found.x", y:"@found.y-40"]` أو `tool:{...}`؛ `stopOn:{stuck, event, valueBelow, valueAbove}`؛ `cooldownTicks`. يرجع سجل لكل tick (أي قاعدة اشتغلت + الملخص) + `fires` + `stoppedBy` + آخر إطار. ثلاث طبقات حسب سرعة اللعبة: `play` (فكر كل tick) → `play_loop` (سياسة لثواني) → `react_script` (ردود فعل 50ms على الجهاز).
 - **تهديدات وسرعات**: كل delta بقى فيه `vx/vy` (px/s)، `growth` (نسبة المساحة)، `etaMs` (وقت الوصول لمنطقة اللاعب)؛ `threats[]` مرتبة بالألحّية + حدث `⚠ @enemy approaching eta 800ms` + `THREAT` في الملخص.
@@ -460,6 +466,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-10 (v4.3 — play_loop autopilot policy engine, threats/velocity/eta, autoMenu, session memory on tick 1; 83 tools) · previously (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 83 tools; Android 4.1.1 connect fix)
+- **Last Updated**: 2026-09-10 (v4.4 — learned strategies: play_loop runs scored & ranked per game, strategy:"best" replay) · (v4.3 — play_loop autopilot policy engine, threats/velocity/eta, autoMenu, session memory on tick 1; 83 tools) · previously (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 83 tools; Android 4.1.1 connect fix)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.

@@ -16,7 +16,7 @@ call '{"name":"get_current_app"}' >/dev/null
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version"
-check version '"version":"4.3.0"' "$(curl -s $U/api/health)"
+check version '"version":"4.4.0"' "$(curl -s $U/api/health)"
 check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== joystick"

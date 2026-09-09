@@ -467,7 +467,8 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   // v4.2: deltas vs the previous tick (same app) → motion vectors, value changes, appear/vanish events, stuck detection
   const stateKey = app || '_'
   const prevRes = await room(env, deviceId).fetch(`https://do/play-state?deviceId=${deviceId}&app=${encodeURIComponent(stateKey)}`).then((r) => r.json() as Promise<{ state: PlayState | null }>).catch(() => ({ state: null }))
-  const prev = args.reset === true ? null : prevRes.state
+  // a previous tick older than 30 s belongs to another session → start fresh (no phantom deltas/threats)
+  const prev = args.reset === true || (prevRes.state && Date.now() - prevRes.state.ts > 30_000) ? null : prevRes.state
   const objs = d.objects as Record<string, { count: number; objects: { cx: number; cy: number; area: number; w?: number; h?: number }[] }> | undefined
   const ocr = d.ocr as Record<string, { value?: number; text?: string } | unknown[]> | undefined
   const changed = typeof d.changedPct === 'number' ? d.changedPct : -1
@@ -491,8 +492,9 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
           const vx = dtMs ? Math.round(dx * 1000 / dtMs) : 0, vy = dtMs ? Math.round(dy * 1000 / dtMs) : 0
           const growth = p.area && n.area ? Number((n.area / p.area).toFixed(2)) : undefined
           const towardY = dy > 0 && n.cy < H * 0.85, distY = H * 0.8 - n.cy
-          const etaMs = towardY && vy > 0 && distY > 0 ? Math.round(distY / vy * 1000) : undefined
-          const approach = (towardY ? 1 : 0) + (growth && growth > 1.15 ? 1 : 0)
+          let etaMs = towardY && vy > 0 && distY > 0 ? Math.round(distY / vy * 1000) : undefined
+          if (etaMs !== undefined && etaMs > 10_000) etaMs = undefined // crawling: not a threat signal
+          const approach = (towardY && (etaMs !== undefined || dy >= H * 0.05) ? 1 : 0) + (growth && growth > 1.15 ? 1 : 0)
           deltas[`@${k}`] = { dx, dy, dir: Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'), vx, vy, ...(growth !== undefined ? { growth } : {}), ...(etaMs !== undefined ? { etaMs } : {}) }
           if (approach) threats.push({ name: k, cx: n.cx, cy: n.cy, approach, etaMs, area: n.area })
         }

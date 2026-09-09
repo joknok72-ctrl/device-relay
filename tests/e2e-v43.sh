@@ -15,10 +15,10 @@ call '{"name":"game_profile","arguments":{"delete":true}}' >/dev/null
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version / schema"
-check version '"version":"4.3.0"' "$(curl -s $U/api/health)"
+check version '"version":"4.4.0"' "$(curl -s $U/api/health)"
 check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check schema-loop 'play_loop' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t["name"] for t in d if t["name"]=="play_loop"][0]')"
-check schema-loop-req 'policy' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t for t in d if t["name"]=="play_loop"][0]["parameters"]["required"][0]')"
+check schema-loop-req 'strategy' "$(curl -s "$U/api/tools/schema?format=raw" | j '"strategy" if "strategy" in [t for t in d if t["name"]=="play_loop"][0]["parameters"]["properties"] else "no"')"
 
 echo "== threats / velocity (hook quality 13)"
 call '{"name":"game_profile","arguments":{"set":{"colors":{"enemy":{"hex":"#ff0000"}},"regions":{"hp":{"x":0,"y":2200,"w":300,"h":100}}}}}' >/dev/null
