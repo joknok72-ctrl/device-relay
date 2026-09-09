@@ -106,6 +106,22 @@ export interface PlayState {
   tick: number
 }
 
+/** v4.4 one autopilot policy + how it performed (kept per game, max 5, sorted by fitness). */
+export interface Strategy {
+  name: string
+  policy: unknown[]
+  stopOn?: unknown
+  runs: number
+  ticks: number
+  /** sum of positive score-like deltas observed while running */
+  gained: number
+  /** how many runs ended in game_over / a hp<threshold stop */
+  deaths: number
+  fitness: number
+  ts: number
+  note?: string
+}
+
 export interface GameProfile {
   app: string
   label?: string
@@ -116,6 +132,8 @@ export interface GameProfile {
   ts: number
   /** v2.5 game genre: shooter | runner | puzzle | rhythm | strategy | rpg | racing | casual | other — selects the playbook */
   genre?: string
+  /** v4.4 learned autopilot policies (play_loop records how each ran; best = highest score gain per tick, then survival) */
+  strategies?: Strategy[]
   /** v2.4 progress tracking filled by session_report */
   bestScore?: number
   lastReport?: SessionReport

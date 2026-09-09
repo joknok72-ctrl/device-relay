@@ -305,6 +305,27 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (request.method === 'POST') { const b = (await request.json()) as PlayState; this.playState[app] = b; const keys = Object.keys(this.playState); if (keys.length > 10) delete this.playState[keys[0]]; return Response.json({ ok: true }) }
       if (request.method === 'DELETE') { if (app) delete this.playState[app]; else this.playState = {}; return Response.json({ ok: true }) }
     }
+    // ---------- v4.4 learned strategies: play_loop reports how a policy performed; kept per game (max 5, by fitness) ----------
+    if (url.pathname.endsWith('/strategy') && request.method === 'POST') {
+      const app = url.searchParams.get('app') ?? ''
+      if (!app) return Response.json({ ok: false, error: 'app required' }, { status: 400 })
+      const b = (await request.json()) as { name?: string; policy: unknown[]; stopOn?: unknown; ticks: number; gained: number; died: boolean; note?: string }
+      const p: GameProfile = this.profiles[app] ?? { app, controls: {}, colors: {}, regions: {}, settings: {}, ts: Date.now() }
+      const list = p.strategies ?? []
+      const key = JSON.stringify(b.policy)
+      let s = list.find((x) => JSON.stringify(x.policy) === key)
+      if (!s) { s = { name: (b.name ?? `s${list.length + 1}`).slice(0, 40), policy: b.policy, stopOn: b.stopOn, runs: 0, ticks: 0, gained: 0, deaths: 0, fitness: 0, ts: Date.now() }; list.push(s) }
+      s.runs++; s.ticks += Math.max(0, b.ticks | 0); s.gained += Math.max(0, Number(b.gained) || 0); if (b.died) s.deaths++; s.ts = Date.now(); if (b.note) s.note = b.note.slice(0, 200)
+      // fitness = score gained per tick, penalised by death rate; survival-only games (no score) reward longer runs
+      const perTick = s.ticks ? s.gained / s.ticks : 0
+      const survival = s.runs ? 1 - s.deaths / s.runs : 1
+      s.fitness = Number(((perTick > 0 ? perTick : s.ticks / Math.max(1, s.runs) / 10) * (0.5 + survival)).toFixed(3))
+      list.sort((a, c) => c.fitness - a.fitness)
+      p.strategies = list.slice(0, 5); p.ts = Date.now()
+      this.profiles[app] = p
+      await this.ctx.storage.put('profiles', this.profiles)
+      return Response.json({ ok: true, strategy: s, rank: p.strategies.indexOf(s) + 1, total: p.strategies.length })
+    }
     if (url.pathname.endsWith('/profile')) {
       const app = url.searchParams.get('app') ?? ''
       if (request.method === 'GET') return Response.json({ profile: app ? this.profiles[app] ?? null : null, apps: Object.keys(this.profiles), currentApp: this.currentApp })

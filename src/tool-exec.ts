@@ -565,9 +565,18 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
   const t0 = Date.now()
   const ticks = Math.min(Math.max(Math.round(Number(args.ticks) || 10), 1), 40)
   const budgetMs = Math.min(Math.max(Number(args.maxMs) || 25_000, 1000), 25_000)
-  const policy = Array.isArray(args.policy) ? (args.policy as Record<string, unknown>[]) : []
-  if (!policy.length) return { ok: false, error: 'play_loop requires policy:[{if:{...}, do:[combo steps] | tool:{name,arguments}, name?, cooldownTicks?}]' }
-  const stopOn = (args.stopOn ?? {}) as { stuck?: string; event?: string; valueBelow?: { name: string; value: number }; valueAbove?: { name: string; value: number } }
+  let policy = Array.isArray(args.policy) ? (args.policy as Record<string, unknown>[]) : []
+  let stopOn = (args.stopOn ?? {}) as { stuck?: string; event?: string; valueBelow?: { name: string; value: number }; valueAbove?: { name: string; value: number } }
+  // v4.4 strategy replay: strategy:"best" | "<name>" loads a learned policy from the game profile
+  const { app: appPkg, profile: prof } = await loadProfile(env, deviceId, undefined).catch(() => ({ app: '', profile: null as ProfileRec | null }))
+  const strategies = ((prof as unknown as { strategies?: { name: string; policy: unknown[]; stopOn?: unknown; fitness: number; runs: number }[] } | null)?.strategies) ?? []
+  let strategyName: string | undefined = typeof args.name === 'string' ? args.name.slice(0, 40) : undefined
+  if (typeof args.strategy === 'string' && !policy.length) {
+    const s = args.strategy === 'best' ? strategies[0] : strategies.find((x) => x.name === args.strategy)
+    if (!s) return { ok: false, error: strategies.length ? `no strategy '${args.strategy}' (known: ${strategies.map((x) => `${x.name} f=${x.fitness}`).join(', ')})` : 'no learned strategies for this game yet — run play_loop with a policy first' }
+    policy = s.policy as Record<string, unknown>[]; if (s.stopOn && !args.stopOn) stopOn = s.stopOn as typeof stopOn; strategyName = s.name
+  }
+  if (!policy.length) return { ok: false, error: 'play_loop requires policy:[{if:{...}, do:[combo steps] | tool:{name,arguments}, name?, cooldownTicks?}] (or strategy:"best")' }
   const frameArgs: Record<string, unknown> = { maxWidth: 0 }
   for (const k of ['objects', 'ocr', 'pixels', 'quality']) if (args[k] !== undefined) frameArgs[k] = args[k]
   const autoMenu = args.autoMenu !== false
@@ -576,6 +585,7 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
   const lastFire: Record<string, number> = {}
   let stoppedBy = 'ticks'
   let lastTick: ToolResult | undefined
+  let gained = 0, died = false
   const inner = { ...opts, depth: (opts.depth ?? 0) + 1 }
   const sub = (v: unknown, found?: { cx: number; cy: number }): unknown => {
     if (typeof v === 'string' && found) { if (v === '@found.x') return found.cx; if (v === '@found.y') return found.cy; const m = /^@found\.(x|y)([+-]\d+)$/.exec(v); if (m) return (m[1] === 'x' ? found.cx : found.cy) + Number(m[2]) }
@@ -597,10 +607,14 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
     const stuck = r.stuck as { kind?: string } | undefined
     const events = (r.events as string[] | undefined) ?? []
     const entry: Record<string, unknown> = { tick: i, summary: r.summary }
+    // v4.4 learning signals: positive changes of score-like values; death = game_over screen
+    const dl = (r.deltas as Record<string, unknown> | undefined) ?? {}
+    for (const [k, v] of Object.entries(dl)) if (typeof v === 'number' && v > 0 && /score|coin|gold|gem|point|kill|xp|money|cash|dist|level|combo|star/i.test(k)) gained += v
+    if (stuck?.kind === 'game_over') died = true
     // stop conditions
     if (stopOn.stuck && stuck && (stopOn.stuck === 'any' || stuck.kind === stopOn.stuck)) { stoppedBy = `stuck:${stuck.kind}`; log.push(entry); break }
     if (stopOn.event && events.some((e) => e.toLowerCase().includes(stopOn.event!.toLowerCase()))) { stoppedBy = `event:${stopOn.event}`; log.push(entry); break }
-    if (stopOn.valueBelow && typeof values[stopOn.valueBelow.name] === 'number' && values[stopOn.valueBelow.name] < stopOn.valueBelow.value) { stoppedBy = `${stopOn.valueBelow.name}<${stopOn.valueBelow.value}`; log.push(entry); break }
+    if (stopOn.valueBelow && typeof values[stopOn.valueBelow.name] === 'number' && values[stopOn.valueBelow.name] < stopOn.valueBelow.value) { stoppedBy = `${stopOn.valueBelow.name}<${stopOn.valueBelow.value}`; if (/hp|health|life|lives/i.test(stopOn.valueBelow.name)) died = true; log.push(entry); break }
     if (stopOn.valueAbove && typeof values[stopOn.valueAbove.name] === 'number' && values[stopOn.valueAbove.name] > stopOn.valueAbove.value) { stoppedBy = `${stopOn.valueAbove.name}>${stopOn.valueAbove.value}`; log.push(entry); break }
     // pick the first matching rule (policy order = priority)
     for (let pi = 0; pi < policy.length; pi++) {
@@ -632,11 +646,18 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
   }
   // a rule fired on the last tick but its action has not run yet → run it now (one final play) so the loop never ends "half-decided"
   if (pendingAct) { const r = await play(env, deviceId, { ...frameArgs, ...pendingAct }, inner, false); lastTick = r; log.push({ tick: log.length + 1, summary: r.summary, final: true }) }
+  // v4.4 record how this policy performed so the NEXT chat can just play_loop {strategy:"best"}
+  let learned: Record<string, unknown> | undefined
+  if (appPkg && args.learn !== false && log.length >= 2) {
+    const rec = await room(env, deviceId).fetch(`https://do/strategy?deviceId=${deviceId}&app=${encodeURIComponent(appPkg)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: strategyName, policy, stopOn: Object.keys(stopOn).length ? stopOn : undefined, ticks: log.length, gained, died, note: typeof args.note === 'string' ? args.note : undefined }) }).then((r) => r.json() as Promise<{ ok: boolean; strategy?: { name: string; fitness: number; runs: number }; rank?: number; total?: number }>).catch(() => null)
+    if (rec?.ok && rec.strategy) learned = { name: rec.strategy.name, fitness: rec.strategy.fitness, runs: rec.strategy.runs, rank: rec.rank, of: rec.total, gained, died }
+  }
   return {
     ok: true, ticks: log.length, stoppedBy, fires, log: log.slice(-20),
     last: lastTick ? { summary: lastTick.summary, events: lastTick.events, threats: lastTick.threats, stuck: lastTick.stuck, frame: lastTick.frame } : undefined,
+    ...(learned ? { learned } : {}),
     durationMs: Date.now() - t0,
-    hint: 'inspect log → tune the policy (order = priority) → call play_loop again; use react_script instead when reactions must be < 100 ms',
+    hint: learned && (learned.rank as number) > 1 ? `this policy ranks #${learned.rank}/${learned.of} for this game — play_loop {strategy:"best"} replays the top one` : 'inspect log → tune the policy (order = priority) → call play_loop again; use react_script instead when reactions must be < 100 ms',
   }
 }
 

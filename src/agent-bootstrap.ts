@@ -18,6 +18,7 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
     const col = Object.entries(p.colors); if (col.length) lines.push('    colors:   ' + col.map(([k, v]) => `@${k}=${v.hex}${v.tolerance ? `±${v.tolerance}` : ''}`).join('  '))
     const reg = Object.entries(p.regions); if (reg.length) lines.push('    regions:  ' + reg.map(([k, v]) => `@${k}={${v.x},${v.y},${v.w}x${v.h}}`).join('  '))
     const set = Object.entries(p.settings); if (set.length) lines.push('    settings: ' + set.map(([k, v]) => `@${k}=${JSON.stringify(v)}`).join('  '))
+    if (p.strategies?.length) lines.push('    strategies (learned autopilot policies, best first): ' + p.strategies.map((s) => `${s.name} f=${s.fitness} (${s.runs} runs, +${s.gained}, ${s.deaths} deaths)`).join('  ') + `  → play_loop {strategy:"best"} replays #1; play_loop {strategy:"${p.strategies[0].name}"} for a specific one`)
     if (p.bestScore !== undefined || p.lastReport) {
       const r = p.lastReport
       lines.push(`    progress: ${p.bestScore !== undefined ? `best score ${p.bestScore}` : ''}${p.reports ? ` · ${p.reports} reports` : ''}`)
@@ -174,7 +175,8 @@ The human can also review/delete/export all of it visually in the owner panel (/
 10. For OTP codes / incoming messages use "notifs" (get_notifications) instead of opening apps.
 11. Read section 5b first; after finishing, "remember" anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
 
-## 7a. HOW TO PLAY LIVE — you are the player (v4.3: game_setup + play + play_loop + react_script)
+## 7a. HOW TO PLAY LIVE — you are the player (v4.4: game_setup + play + play_loop(+learning) + react_script)
+v4.4 LEARNING: every play_loop run is scored (score-like gains per tick × survival) and saved as a named strategy on the game profile (max 5, best first, shown in 5f/QUICK START). Known game → play_loop {strategy:"best"} FIRST, read its log, then improve the policy and run again with name:"v2" — the ranking tells you if v2 beat v1. This is how each chat gets better than the last without re-thinking from zero.
 Four tools make you fast; everything else is for setup. Pick the layer by the reaction time the game needs: think every tick (play, ~1 s) → autopilot with a policy (play_loop, ~0.4 s/tick for up to 25 s) → reflexes on the phone (react_script, ~50 ms).
   • play_loop — your autopilot. Hand over an ordered policy and the relay plays up to 40 ticks alone: if:{threat:true | present:"@coin" | absent | stuck:"menu" | valueBelow:{name:"hp",value:30} | everyTicks:N} → do:[combo steps using x:"@found.x", y:"@found.y"] or tool:{...}. stopOn:{stuck:"game_over", event:"hp dropping", valueBelow}. autoMenu taps PLAY/CONTINUE/RETRY for you. Read the per-tick log, tune the policy, run again. This is how you play 5-25 s stretches without spending a turn per tick.
     v4.3 perception extras in every play/play_loop tick: deltas carry vx/vy (px/s), growth (area ratio) and etaMs; "threats" lists objects moving toward the player zone (bottom) sorted by urgency (summary shows THREAT @name eta); "memory" on tick 1 = what the previous session learned (lastOutcome, bestScore, nextTime, learned) — read it before your first move; autoMenu:true lets play tap the obvious menu button itself.
