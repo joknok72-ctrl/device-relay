@@ -258,6 +258,10 @@ object AimEngine {
         var dragX = cfg.lookX.toFloat(); var dragY = cfg.lookY.toFloat(); var dragDown = false
         var mappingSet = false
         suspend fun lift() { if (dragDown) { runCatching { bridge.proxy?.fingerUp() }; dragDown = false; dragX = cfg.lookX.toFloat(); dragY = cfg.lookY.toFloat() } }
+        runCatching { bridge.proxy?.setFireButton(cfg.fireX, cfg.fireY, cfg.fireRadius, true) }
+        val injectMode = runCatching { bridge.proxy?.injectMode() }.getOrNull() ?: false
+        val shz = bridge.state() + (if (injectMode) "+inject" else "+kernel")
+        status = status.copy(shizuku = shz); emit()
         try {
             while (currentCoroutineContext().isActive) {
                 val t0 = SystemClock.elapsedRealtime()
@@ -267,16 +271,10 @@ object AimEngine {
                     val fg = runCatching { svc.currentPackage() }.getOrNull()
                     if (fg != null && fg != cfg.app && fg != "com.devicerelay.client") { stoppedBy = "app-changed"; break }
                 }
-                // ---- 1. is the user firing? (real finger on the fire button)
-                val touches = runCatching { proxy.touches() }.getOrDefault(IntArray(0))
-                var slot = -1
-                var i = 0
-                while (i + 3 < touches.size) {
-                    val dx = touches[i + 1] - cfg.fireX; val dy = touches[i + 2] - cfg.fireY
-                    if (dx * dx + dy * dy <= cfg.fireRadius * cfg.fireRadius) { slot = touches[i]; break }
-                    i += 4
-                }
-                val nowFiring = slot >= 0
+                // ---- 1. is the user firing? (real finger on the fire button — tracked by the proxy from the kernel stream;
+                //         in inject mode the proxy has already taken the button over with its own finger)
+                val nowFiring = runCatching { proxy.firing() }.getOrDefault(false)
+                val slot = if (nowFiring) 0 else -1
                 if (nowFiring && !firing) { fireSlot = slot; prevHead = null; lastHead = null }
                 if (!nowFiring && firing) { lift(); lockErr = -1; wasLocked = false }
                 firing = nowFiring
@@ -284,8 +282,8 @@ object AimEngine {
                     // idle: cheap — no capture; ~20 Hz poll of the touch stream
                     frames++
                     val now = SystemClock.elapsedRealtime()
-                    if (now - lastEmit > 900) { lastEmit = now; status = status.copy(frames = frames, fps = 0, firing = false, locked = false, lockErrPx = -1, nudges = nudges, locks = locks, shizuku = bridge.state(), headX = -1, headY = -1); emit() }
-                    delay(50); continue
+                    if (now - lastEmit > 900) { lastEmit = now; status = status.copy(frames = frames, fps = 0, firing = false, locked = false, lockErrPx = -1, nudges = nudges, locks = locks, shizuku = shz, headX = -1, headY = -1); emit() }
+                    delay(12); continue
                 }
                 // ---- 2. capture + find the head
                 val bmp = svc.captureForEngine()
@@ -334,7 +332,7 @@ object AimEngine {
                 if (now - fpsWindowStart >= 1000) { fpsNow = fpsFrames; fpsFrames = 0; fpsWindowStart = now }
                 if (now - lastEmit > 500) {
                     lastEmit = now
-                    status = status.copy(frames = frames, fps = fpsNow, firing = true, locked = wasLocked, lockErrPx = lockErr, nudges = nudges, locks = locks, shizuku = bridge.state(), aimMoves = nudges, headX = lastHead?.first?.toInt() ?: -1, headY = lastHead?.second?.toInt() ?: -1)
+                    status = status.copy(frames = frames, fps = fpsNow, firing = true, locked = wasLocked, lockErrPx = lockErr, nudges = nudges, locks = locks, shizuku = shz, aimMoves = nudges, headX = lastHead?.first?.toInt() ?: -1, headY = lastHead?.second?.toInt() ?: -1)
                     emit()
                 }
                 val spent = SystemClock.elapsedRealtime() - t0
@@ -345,7 +343,7 @@ object AimEngine {
         } catch (e: Exception) {
             Log.w(TAG, "headlock loop error", e); stoppedBy = "error"; status = status.copy(error = e.message)
         } finally {
-            withContext(NonCancellable) { runCatching { bridge.proxy?.fingerUp() } }
+            withContext(NonCancellable) { runCatching { bridge.proxy?.fingerUp() }; runCatching { bridge.proxy?.setFireButton(cfg.fireX, cfg.fireY, cfg.fireRadius, false) } }
             status = status.copy(running = false, frames = frames, firing = false, locked = false, nudges = nudges, locks = locks, aimMoves = nudges, stoppedBy = status.stoppedBy ?: stoppedBy ?: "loop-end")
             job = null
             emit()

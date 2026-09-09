@@ -1,6 +1,10 @@
 package com.devicerelay.client.shizuku
 
+import android.os.SystemClock
 import android.util.Log
+import android.view.InputDevice
+import android.view.InputEvent
+import android.view.MotionEvent
 import android.view.Surface
 import android.system.Os
 import android.system.OsConstants
@@ -69,11 +73,84 @@ class TouchProxyService : ITouchProxy.Stub() {
     private var downs = 0L; private var moves = 0L; private var writeErrors = 0L; private var reinjects = 0L
     private val writeLock = Any()
 
+    // ---- v3.4.1 system-level injection (fallback when the kernel node is not writable — SELinux on many OEM ROMs)
+    private var injMethod: java.lang.reflect.Method? = null
+    private var injTarget: Any? = null
+    private val injLock = Any()
+    private var injDownTime = 0L
+    @Volatile private var fireHeld = false          // our injected finger is on the fire button
+    @Volatile private var aimDown = false           // our injected aim pointer is down (inject mode)
+    private var aimX = 0f; private var aimY = 0f
+    private var fireRealSlot = -1
+    private var realCountAtInject = 0
+    @Volatile private var fireEnabled = false
+    @Volatile private var fireBtnX = 0; @Volatile private var fireBtnY = 0; @Volatile private var fireBtnR = 70
+    @Volatile private var firingNow = false
+    private var injDowns = 0L; private var injErrors = 0L
+
+    private fun initInjector() {
+        runCatching {
+            val im = runCatching { Class.forName("android.hardware.input.InputManager") }.getOrNull()
+            val target: Any?; val cls: Class<*>
+            val g = runCatching { Class.forName("android.hardware.input.InputManagerGlobal") }.getOrNull()
+            if (g != null) { target = g.getMethod("getInstance").invoke(null); cls = g }
+            else { target = im!!.getMethod("getInstance").invoke(null); cls = im }
+            injMethod = cls.getMethod("injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType)
+            injTarget = target
+        }.onFailure { lastError = "injector: $it"; Log.w(TAG, "injector init failed", it) }
+    }
+    private fun inject(ev: MotionEvent): Boolean {
+        val m = injMethod ?: return false
+        return try { (m.invoke(injTarget, ev, 0) as? Boolean) ?: true } catch (e: Exception) { injErrors++; lastError = "inject: ${e.cause ?: e}"; false } finally { ev.recycle() }
+    }
+    private fun props(n: Int): Array<MotionEvent.PointerProperties> = Array(n) { i -> MotionEvent.PointerProperties().apply { id = i; toolType = MotionEvent.TOOL_TYPE_FINGER } }
+    private fun coords(vararg xy: Float): Array<MotionEvent.PointerCoords> = Array(xy.size / 2) { i -> MotionEvent.PointerCoords().apply { x = xy[i * 2]; y = xy[i * 2 + 1]; pressure = 1f; size = 0.05f } }
+    private fun motion(action: Int, n: Int, vararg xy: Float): MotionEvent {
+        val now = SystemClock.uptimeMillis()
+        if (action == MotionEvent.ACTION_DOWN) injDownTime = now
+        return MotionEvent.obtain(injDownTime, now, action, n, props(n), coords(*xy), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+    }
+    /** pointer 0 = fire (always first while held), pointer 1 = aim */
+    private fun injFireDown(): Boolean = synchronized(injLock) {
+        if (fireHeld) return true
+        val ok = inject(motion(MotionEvent.ACTION_DOWN, 1, fireBtnX.toFloat(), fireBtnY.toFloat()))
+        if (ok) { fireHeld = true; injDowns++ }
+        ok
+    }
+    private fun injAimDown(x: Float, y: Float): Boolean = synchronized(injLock) {
+        if (!fireHeld) return false
+        if (aimDown) return true
+        val ok = inject(motion(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, fireBtnX.toFloat(), fireBtnY.toFloat(), x, y))
+        if (ok) { aimDown = true; aimX = x; aimY = y }
+        ok
+    }
+    private fun injAimMove(x: Float, y: Float): Boolean = synchronized(injLock) {
+        if (!fireHeld || !aimDown) return false
+        val ok = inject(motion(MotionEvent.ACTION_MOVE, 2, fireBtnX.toFloat(), fireBtnY.toFloat(), x, y))
+        if (ok) { aimX = x; aimY = y }
+        ok
+    }
+    private fun injAimUp() = synchronized(injLock) {
+        if (!aimDown) return
+        aimDown = false
+        if (fireHeld) inject(motion(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, fireBtnX.toFloat(), fireBtnY.toFloat(), aimX, aimY))
+    }
+    private fun injAllUp() = synchronized(injLock) {
+        if (aimDown) injAimUp()
+        if (fireHeld) { fireHeld = false; inject(motion(MotionEvent.ACTION_UP, 1, fireBtnX.toFloat(), fireBtnY.toFloat())) }
+    }
+    /** a real pointer came/went while we hold → Android cancelled our stream: re-take the button (and the aim pointer) */
+    private fun injReinject() = synchronized(injLock) {
+        val hadAim = aimDown; val ax = aimX; val ay = aimY
+        injAllUp(); reinjects++
+        if (injFireDown() && hadAim) injAimDown(ax, ay)
+    }
+
     // ---- mapping
     @Volatile private var rotation = 0
     @Volatile private var dispW = 720; @Volatile private var dispH = 1600
 
-    init { runCatching { open() }.onFailure { lastError = it.toString(); Log.w(TAG, "open failed", it) } }
+    init { initInjector(); runCatching { open() }.onFailure { lastError = it.toString(); Log.w(TAG, "open failed", it) } }
 
     // ------------------------------------------------------------------ discovery (getevent -p is available to shell)
     private fun discover(): Dev? {
@@ -180,6 +257,21 @@ class TouchProxyService : ITouchProxy.Stub() {
         snapshot = out
         val b = boundSlot
         if (b >= 0 && ourDown && slotTracking[b] < 0) { fingerUp() }   // the real finger we were bound to lifted → lift ours at once
+        // ---- fire button tracking / take-over
+        if (fireEnabled) {
+            var slot = -1
+            if (fireRealSlot >= 0 && slotTracking[fireRealSlot] >= 0) slot = fireRealSlot   // keep following the same finger while it is down
+            else {
+                var i = 0
+                while (i + 3 < out.size) { val dx = out[i + 1] - fireBtnX; val dy = out[i + 2] - fireBtnY; if (dx * dx + dy * dy <= fireBtnR * fireBtnR) { slot = out[i]; break }; i += 4 }
+            }
+            firingNow = slot >= 0
+            if (injectMode()) {
+                if (slot >= 0 && !fireHeld) { fireRealSlot = slot; realCountAtInject = n; injFireDown() }
+                else if (slot < 0 && fireHeld) { fireRealSlot = -1; injAllUp() }
+                else if (fireHeld && n != realCountAtInject) { realCountAtInject = n; injReinject() }
+            } else fireRealSlot = slot
+        } else if (fireHeld) injAllUp()
     }
 
     // ------------------------------------------------------------------ mapping raw <-> display (current rotation)
@@ -234,14 +326,19 @@ class TouchProxyService : ITouchProxy.Stub() {
     override fun describe(): String {
         val d = dev
         return if (d == null) "not open: ${lastError ?: "unknown"} $diag" else
-            "${d.path} \"${d.name}\" raw x=${d.x.min}..${d.x.max} y=${d.y.min}..${d.y.max} slots=0..${d.slots.max} ourSlot=$ourSlot 64bit=$is64 rot=$rotation disp=${dispW}x$dispH alive=$alive write=$writeMode events=$readEvents err=${lastError ?: "-"} $diag"
+            "${d.path} \"${d.name}\" raw x=${d.x.min}..${d.x.max} y=${d.y.min}..${d.y.max} slots=0..${d.slots.max} ourSlot=$ourSlot 64bit=$is64 rot=$rotation disp=${dispW}x$dispH alive=$alive write=$writeMode inject=${injMethod != null} fireHeld=$fireHeld injDowns=$injDowns injErr=$injErrors events=$readEvents err=${lastError ?: "-"} $diag"
     }
-    override fun isReady(): Boolean = alive && dev != null && writeMode != "read-only" && writeMode != "none"
+    override fun isReady(): Boolean = alive && dev != null && (injectMode() || (writeMode != "read-only" && writeMode != "none"))
     override fun setMapping(rotation: Int, dispW: Int, dispH: Int) { this.rotation = rotation; this.dispW = dispW; this.dispH = dispH }
     override fun touches(): IntArray = snapshot
     override fun lastEventAgeMs(): Long = if (lastEventAt == 0L) -1 else System.currentTimeMillis() - lastEventAt
 
+    override fun setFireButton(x: Int, y: Int, radius: Int, enabled: Boolean) { fireBtnX = x; fireBtnY = y; fireBtnR = radius.coerceAtLeast(5); fireEnabled = enabled; if (!enabled) { firingNow = false; fireRealSlot = -1; injAllUp() } }
+    override fun firing(): Boolean = fireEnabled && (if (injectMode()) fireHeld else firingNow)
+    override fun injectMode(): Boolean = (writeMode == "read-only" || writeMode == "none") && injMethod != null
+
     override fun fingerDown(x: Int, y: Int, bindSlot: Int): Boolean = synchronized(writeLock) {
+        if (injectMode()) return injAimDown(x.toFloat(), y.toFloat())
         if (!isReady) return false
         if (ourDown) { fingerUpLocked() ; reinjects++ }
         val (rx, ry) = displayToRaw(x, y)
@@ -259,6 +356,7 @@ class TouchProxyService : ITouchProxy.Stub() {
     }
 
     override fun fingerMove(x: Int, y: Int): Boolean = synchronized(writeLock) {
+        if (injectMode()) return injAimMove(x.toFloat(), y.toFloat())
         if (!ourDown) return false
         val (rx, ry) = displayToRaw(x, y)
         val ok = write(intArrayOf(EV_ABS, ABS_MT_SLOT, ourSlot), intArrayOf(EV_ABS, ABS_MT_POSITION_X, rx), intArrayOf(EV_ABS, ABS_MT_POSITION_Y, ry), intArrayOf(EV_SYN, SYN_REPORT, 0))
@@ -266,7 +364,7 @@ class TouchProxyService : ITouchProxy.Stub() {
         ok
     }
 
-    override fun fingerUp() { synchronized(writeLock) { fingerUpLocked() } }
+    override fun fingerUp() { if (injectMode()) { injAimUp(); return }; synchronized(writeLock) { fingerUpLocked() } }
     private fun fingerUpLocked() {
         if (!ourDown) return
         ourDown = false; boundSlot = -1
@@ -278,11 +376,11 @@ class TouchProxyService : ITouchProxy.Stub() {
         write(*evs.toTypedArray())
     }
 
-    override fun fingerIsDown(): Boolean = ourDown
-    override fun counters(): LongArray = longArrayOf(downs, moves, readEvents, writeErrors, reinjects)
+    override fun fingerIsDown(): Boolean = if (injectMode()) aimDown else ourDown
+    override fun counters(): LongArray = longArrayOf(downs, moves, readEvents, writeErrors, reinjects, injDowns, injErrors)
 
     override fun destroy() {
-        runCatching { fingerUp() }
+        runCatching { injAllUp() }; runCatching { fingerUp() }
         alive = false
         runCatching { input?.close() }; runCatching { output?.close() }; runCatching { rwFd?.let { Os.close(it) } }; runCatching { shWriter?.write("exit\n".toByteArray()); shWriter?.flush(); shWriter?.close() }
         exitProcess(0)
