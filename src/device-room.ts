@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, Recording, ScreenLabel, SessionReport } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, PlayState, Recording, ScreenLabel, SessionReport } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
@@ -57,6 +57,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
   /** v2.3 play history: sessions (most recent first, max 100). */
   private sessions: PlaySession[] = []
   private currentApp = ''
+  /** v4.2 last play frame per app (in-memory only) so play() can report deltas/events between ticks. */
+  private playState: Record<string, PlayState> = {}
 
   private inputBusy = false
   private inputQueue: Array<() => void> = []
@@ -296,6 +298,13 @@ export class DeviceRoom extends DurableObject<Bindings> {
       return Response.json({ ok: true })
     }
     // ---------- v2.3 profiles (structured per-app knowledge the AI references by @name) ----------
+    // ---------- v4.2 play state: last play frame per app (in-memory, for deltas between ticks) ----------
+    if (url.pathname.endsWith('/play-state')) {
+      const app = url.searchParams.get('app') ?? ''
+      if (request.method === 'GET') return Response.json({ state: this.playState[app] ?? null })
+      if (request.method === 'POST') { const b = (await request.json()) as PlayState; this.playState[app] = b; const keys = Object.keys(this.playState); if (keys.length > 10) delete this.playState[keys[0]]; return Response.json({ ok: true }) }
+      if (request.method === 'DELETE') { if (app) delete this.playState[app]; else this.playState = {}; return Response.json({ ok: true }) }
+    }
     if (url.pathname.endsWith('/profile')) {
       const app = url.searchParams.get('app') ?? ''
       if (request.method === 'GET') return Response.json({ profile: app ? this.profiles[app] ?? null : null, apps: Object.keys(this.profiles), currentApp: this.currentApp })

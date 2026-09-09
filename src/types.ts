@@ -93,6 +93,19 @@ export interface ReactLane { color: string; tolerance?: number; region?: Region;
 /** Named screen fingerprint: 112-bit perceptual hash (hex) + a few OCR words, used by identify_screen. */
 export interface ScreenLabel { name: string; hash: string; words: string[]; app?: string; ts: number }
 /** v2.3 structured per-app knowledge: named controls, colours, regions and settings the AI can reference by name (@jump, @enemy...). */
+/** v4.2 compact snapshot of the previous play frame (per app) used to compute deltas/events. */
+export interface PlayState {
+  ts: number
+  /** per object name: nearest object centre + count */
+  objects: Record<string, { count: number; cx?: number; cy?: number }>
+  /** per ocr name: last numeric value */
+  values: Record<string, number>
+  /** consecutive ticks with changedPct < 1 (screen frozen / menu) */
+  staticTicks: number
+  /** ticks since the frame was started */
+  tick: number
+}
+
 export interface GameProfile {
   app: string
   label?: string

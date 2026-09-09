@@ -1,4 +1,4 @@
-import type { Bindings, DeviceInfo } from './types'
+import type { Bindings, DeviceInfo, PlayState } from './types'
 import { parseAction } from './validate'
 import { toolToAction, TOOLS, READ_ONLY_TOOLS, OBSERVATION_TOOLS } from './tools'
 import type { DeviceRegistry } from './registry'
@@ -181,6 +181,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'find_tap') return findAndTap(env, deviceId, args)
   if (mapped.special === 'act_and_see') return actAndSee(env, deviceId, args, opts)
   if (mapped.special === 'play' || mapped.special === 'play_frame') return play(env, deviceId, args, opts, mapped.special === 'play_frame')
+  if (mapped.special === 'game_setup') return gameSetup(env, deviceId, args, opts)
   if (mapped.special === 'wait_for_screen') return waitForScreen(env, deviceId, args)
   if (mapped.special === 'remember') return remember(env, deviceId, args)
   if (mapped.special === 'recall') return recall(env, deviceId, args)
@@ -367,6 +368,67 @@ async function actAndSee(env: Bindings, deviceId: string, args: Record<string, u
 
 // ---------------------------------------------------------------- v4.1 play: act + wait + perceive in one trip
 const NUMERIC_REGION = /score|hp|health|ammo|coin|gold|gem|time|timer|kill|level|lvl|dist|point|money|cash|energy|xp/i
+/**
+ * v4.2 game_setup: one call that turns an UNKNOWN game into a usable game_profile.
+ *  palette (dominant non-grey colours) → @c1..@cN colours · OCR digit lines → numeric HUD @regions (score/hp/...) ·
+ *  clickable UI buttons → @controls · genre guess from words/layout · optional screen label.
+ * Nothing is tapped. The AI can rename/prune afterwards with game_profile set/unset.
+ */
+async function gameSetup(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
+  const t0 = Date.now()
+  const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
+  if (!app) return { ok: false, error: 'could not determine the current app; open the game first' }
+  if (profile && Object.keys(profile.colors).length + Object.keys(profile.regions).length > 0 && args.force !== true) {
+    return { ok: true, app, existing: true, profile, hint: 'profile already exists — play {} uses it. Pass force:true to re-scan and merge.' }
+  }
+  const inner = { ...opts, internal: true, depth: (opts.depth ?? 0) + 1 }
+  const [pal, ocr, ui, shot] = await Promise.all([
+    executeTool(env, deviceId, 'sample_colors', { maxColors: 8 }, inner).catch((e) => ({ ok: false, error: String(e) } as ToolResult)),
+    ocrLines(env, deviceId, undefined, inner).catch(() => ({ ok: false, lines: [] as OcrLine[] })),
+    executeTool(env, deviceId, 'get_ui_elements', {}, inner).catch((e) => ({ ok: false, error: String(e) } as ToolResult)),
+    args.image === false ? Promise.resolve(undefined) : executeTool(env, deviceId, 'capture_screen', { maxWidth: 480, format: 'jpeg', quality: 55 }, inner).catch(() => undefined),
+  ])
+  const info = await deviceInfo(env, deviceId)
+  const W = info.screen?.w ?? 1080, H = info.screen?.h ?? 2400
+  const set: { colors: Record<string, { hex: string; tolerance: number; note?: string }>; regions: Record<string, { x: number; y: number; w: number; h: number; note?: string }>; controls: Record<string, { x: number; y: number; note?: string }>; settings: Record<string, string | number | boolean> } = { colors: {}, regions: {}, controls: {}, settings: {} }
+  const notes: string[] = []
+  // 1. colours
+  const cols = ((pal.data as { colors?: { hex: string; share: number; count: number; cx: number; cy: number }[] } | undefined)?.colors ?? []).filter((c) => c.share >= 1.5).slice(0, 6)
+  const nameColor = (hex: string) => { const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16); if (r > 150 && g < 100 && b < 100) return 'red'; if (g > 150 && r < 120 && b < 120) return 'green'; if (b > 150 && r < 120 && g < 160) return 'blue'; if (r > 180 && g > 150 && b < 100) return 'yellow'; if (r > 180 && g < 140 && b > 150) return 'pink'; if (r > 180 && g > 90 && g < 160 && b < 80) return 'orange'; if (r < 120 && g > 150 && b > 150) return 'cyan'; if (r > 100 && g < 100 && b > 150) return 'purple'; return 'c' }
+  const used = new Map<string, number>()
+  for (const c of cols) { let n = nameColor(c.hex); const k = (used.get(n) ?? 0) + 1; used.set(n, k); if (k > 1 || n === 'c') n = `${n}${k}`; set.colors[n] = { hex: c.hex, tolerance: 30, note: `${c.share}% of screen near (${c.cx},${c.cy})` } }
+  // 2. numeric HUD regions from OCR (lines containing digits, in the top/bottom 25% = HUD)
+  const numLines = ocr.lines.filter((l) => /\d/.test(l.text) && l.w && l.h && (l.cy < H * 0.25 || l.cy > H * 0.8))
+  const labelFor = (t: string) => { const s = t.toLowerCase(); for (const [re, n] of [[/score|pts|points/, 'score'], [/hp|health|life|lives|❤|♥/, 'hp'], [/ammo|bullet/, 'ammo'], [/coin|gold|\$|cash|money/, 'coins'], [/gem|diamond|crystal/, 'gems'], [/time|timer|\d+:\d\d/, 'time'], [/kill|frag/, 'kills'], [/level|lvl|stage|wave/, 'level'], [/energy|stamina|fuel/, 'energy'], [/dist|m\b|km/, 'dist'], [/best|high|record/, 'best'], [/x\d|combo|streak/, 'combo']] as [RegExp, string][]) if (re.test(s)) return n; return 'num' }
+  const rused = new Map<string, number>()
+  for (const l of numLines.slice(0, 6)) { let n = labelFor(l.text); const k = (rused.get(n) ?? 0) + 1; rused.set(n, k); if (k > 1) n = `${n}${k}`; const pad = Math.round((l.h ?? 40) * 0.5); set.regions[n] = { x: Math.max(0, Math.round((l.x ?? l.cx - 100) - pad)), y: Math.max(0, Math.round((l.y ?? l.cy - 20) - pad)), w: Math.min(W, Math.round((l.w ?? 200) + pad * 2)), h: Math.min(H, Math.round((l.h ?? 40) + pad * 2)), note: `OCR "${l.text}"` } }
+  // 3. controls from clickable UI elements with text (menus) — games with custom canvases have none, that is fine
+  const els = ((ui.data as { elements?: { text?: string; id?: string; cx: number; cy: number; clickable?: boolean; cls?: string }[] } | undefined)?.elements ?? []).filter((e) => e.clickable && (e.text || e.id)).slice(0, 8)
+  for (const e of els) { const raw = (e.text || e.id || '').toLowerCase().replace(/^btn_?/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20); if (raw && !set.controls[raw]) set.controls[raw] = { x: e.cx, y: e.cy, note: e.text ? `button "${e.text}"` : `id ${e.id}` } }
+  // 4. genre guess (words + layout)
+  const words = ocr.lines.map((l) => l.text.toLowerCase()).join(' ')
+  const genre = args.genre && typeof args.genre === 'string' ? args.genre : /ammo|kill|reload|headshot|weapon|scope/.test(words) ? 'shooter' : /lap|speed|km\/h|mph|nitro|gear/.test(words) ? 'racing' : /wave|tower|build|deploy|gold|elixir|mana/.test(words) ? 'strategy' : /combo|perfect|great|beat|note/.test(words) ? 'rhythm' : /level \d|moves|match|swap|tiles|puzzle/.test(words) ? 'puzzle' : /quest|hp|mp|xp|inventory|skill/.test(words) ? 'rpg' : /distance|run|jump|dash|\d+ ?m\b/.test(words) ? 'runner' : 'casual'
+  set.settings.screenW = W; set.settings.screenH = H; set.settings.setupBy = 'game_setup'
+  if (!cols.length) notes.push('palette empty — screen may be black/loading; re-run game_setup in-game')
+  if (!numLines.length) notes.push('no HUD numbers found — start a round then game_setup {force:true} to capture score/hp')
+  if (!els.length) notes.push('no clickable UI elements (custom game canvas) — controls must be found by calibrate/tap and saved manually')
+  const r = room(env, deviceId)
+  const res = (await (await r.fetch(`https://do/profile?deviceId=${deviceId}&app=${encodeURIComponent(app)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ genre, label: typeof args.label === 'string' ? args.label : undefined, set }) })).json()) as { ok: boolean; error?: string; profile?: ProfileRec }
+  if (!res.ok) return { ok: false, error: res.error }
+  // clear play deltas for this app so the next play {} starts fresh
+  r.fetch(`https://do/play-state?deviceId=${deviceId}&app=${encodeURIComponent(app)}`, { method: 'DELETE' }).catch(() => {})
+  return {
+    ok: true, app, genre, created: !profile,
+    profile: res.profile,
+    found: { colors: Object.keys(set.colors).length, regions: Object.keys(set.regions).length, controls: Object.keys(set.controls).length },
+    ocrLines: ocr.lines.slice(0, 15).map((l) => ({ text: l.text, cx: l.cx, cy: l.cy })),
+    notes: notes.length ? notes : undefined,
+    image: shot?.image,
+    durationMs: Date.now() - t0,
+    next: 'play {} now auto-tracks these @colours and reads the numeric @regions. Rename what matters (game_profile set:{colors:{enemy:{hex:"@red"}}}, unset:{colors:["red"]}) and drop noise. For a shooter also save @stick/@look/@fire/@crosshair with calibrate.',
+  }
+}
+
 async function play(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions, frameOnly: boolean): Promise<ToolResult> {
   const t0 = Date.now()
   const { app, profile } = await loadProfile(env, deviceId, undefined).catch(() => ({ app: '', profile: null as ProfileRec | null }))
@@ -399,22 +461,67 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   if (!shot.ok) return { ok: false, error: shot.error ?? 'play_frame failed (needs app v4.1+)', action: action ? { ...action, image: undefined } : undefined }
   const d = (shot.data ?? {}) as Record<string, unknown>
   const image = Number(args.maxWidth) === 0 ? undefined : shot.image
-  // compact summary line the model can read without the image
+  // v4.2: deltas vs the previous tick (same app) → motion vectors, value changes, appear/vanish events, stuck detection
+  const stateKey = app || '_'
+  const prevRes = await room(env, deviceId).fetch(`https://do/play-state?deviceId=${deviceId}&app=${encodeURIComponent(stateKey)}`).then((r) => r.json() as Promise<{ state: PlayState | null }>).catch(() => ({ state: null }))
+  const prev = args.reset === true ? null : prevRes.state
   const objs = d.objects as Record<string, { count: number; objects: { cx: number; cy: number; area: number; w?: number; h?: number }[] }> | undefined
-  const summary: string[] = []
-  if (objs) for (const [k, v] of Object.entries(objs)) if (v.count) summary.push(`@${k}×${v.count}${v.objects[0] ? ` nearest(${v.objects[0].cx},${v.objects[0].cy})` : ''}`)
   const ocr = d.ocr as Record<string, { value?: number; text?: string } | unknown[]> | undefined
-  if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && (v as { value?: number }).value !== undefined) summary.push(`${k}=${(v as { value: number }).value}`)
-  if (typeof d.changedPct === 'number' && d.changedPct >= 0) summary.push(`changed ${d.changedPct}%`)
+  const changed = typeof d.changedPct === 'number' ? d.changedPct : -1
+  const events: string[] = []
+  const deltas: Record<string, unknown> = {}
+  const state: PlayState = { ts: Date.now(), objects: {}, values: {}, staticTicks: 0, tick: (prev?.tick ?? 0) + 1 }
+  if (objs) for (const [k, v] of Object.entries(objs)) {
+    const n = v.objects[0]
+    state.objects[k] = { count: v.count, cx: n?.cx, cy: n?.cy }
+    const p = prev?.objects[k]
+    if (p) {
+      if (v.count && !p.count) events.push(`@${k} appeared`)
+      else if (!v.count && p.count) events.push(`@${k} vanished`)
+      else if (v.count && p.count && n && p.cx !== undefined && p.cy !== undefined) {
+        const dx = n.cx - p.cx, dy = n.cy - p.cy
+        if (Math.abs(dx) + Math.abs(dy) >= 6) deltas[`@${k}`] = { dx, dy, dir: Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up') }
+      }
+      if (v.count - p.count >= 2) events.push(`@${k} +${v.count - p.count}`)
+    }
+  }
+  if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number') {
+    const val = (v as { value: number }).value
+    state.values[k] = val
+    const p = prev?.values[k]
+    if (typeof p === 'number' && p !== val) { const diff = val - p; deltas[k] = diff; events.push(`${k} ${diff > 0 ? '+' : ''}${diff}`); if (/hp|health|life|lives|shield|armor|energy/i.test(k) && diff < 0) events.push(`⚠ ${k} dropping`) }
+  }
+  state.staticTicks = changed >= 0 && changed < 1 ? (prev?.staticTicks ?? 0) + 1 : 0
+  let stuck: Record<string, unknown> | undefined
+  if (state.staticTicks >= 3 && args.autoRead !== false) {
+    // screen frozen for 3 ticks → probably a menu/popup/game over: read the whole screen once so the model can act
+    const txt = await executeTool(env, deviceId, 'read_text', {}, { ...opts, internal: true, depth: (opts.depth ?? 0) + 1 }).catch(() => null)
+    const lines = ((txt?.data as { lines?: { text: string; cx: number; cy: number }[] } | undefined)?.lines ?? []).slice(0, 12).map((l) => ({ text: l.text, cx: l.cx, cy: l.cy }))
+    const words = lines.map((l) => l.text.toLowerCase()).join(' ')
+    const kind = /game over|you died|defeat|try again|retry|revive/.test(words) ? 'game_over' : /pause|resume/.test(words) ? 'paused' : /play|start|tap to|continue|next|ok|claim|collect|skip|close|×|x\b/.test(words) ? 'menu' : 'unknown'
+    stuck = { staticTicks: state.staticTicks, kind, text: lines, advice: kind === 'game_over' ? 'session ended — session_report then tap retry/continue' : kind === 'menu' ? 'tap the obvious button (PLAY/CONTINUE/CLAIM/×) via play {tool:{name:"tap_text",arguments:{text:"..."}}} or dismiss_popups' : 'screen is frozen: try dismiss_popups, press_back, or a tap in the centre' }
+    events.push(`screen static ×${state.staticTicks} (${kind})`)
+  }
+  room(env, deviceId).fetch(`https://do/play-state?deviceId=${deviceId}&app=${encodeURIComponent(stateKey)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) }).catch(() => {})
+  // compact summary line the model can read without the image
+  const summary: string[] = []
+  if (objs) for (const [k, v] of Object.entries(objs)) if (v.count) { const mv = deltas[`@${k}`] as { dir?: string } | undefined; summary.push(`@${k}×${v.count}${v.objects[0] ? ` nearest(${v.objects[0].cx},${v.objects[0].cy})` : ''}${mv?.dir ? ` →${mv.dir}` : ''}`) }
+  if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && (v as { value?: number }).value !== undefined) { const dv = deltas[k]; summary.push(`${k}=${(v as { value: number }).value}${typeof dv === 'number' ? ` (${dv > 0 ? '+' : ''}${dv})` : ''}`) }
+  if (changed >= 0) summary.push(`changed ${changed}%`)
+  if (stuck) summary.push(`STATIC×${state.staticTicks} ${stuck.kind}`)
   return {
     ok: !action || action.ok,
     app: app || undefined,
+    tick: state.tick,
     ...(action ? { action: { ok: action.ok, error: action.error, data: action.data } } : {}),
     frame: { w: d.w, h: d.h, scale: d.scale, objects: d.objects, ocr: d.ocr, pixels: d.pixels, changedPct: d.changedPct, ms: d.ms },
+    ...(Object.keys(deltas).length ? { deltas } : {}),
+    ...(events.length ? { events } : {}),
+    ...(stuck ? { stuck } : {}),
     summary: summary.join(' · ') || 'nothing of interest detected',
     image,
     durationMs: Date.now() - t0,
-    hint: !profile ? 'no game_profile for this app yet — save @colours/@regions once (game_profile set) and play {} will auto-detect them every tick' : undefined,
+    hint: !profile ? 'no game_profile for this app yet — run game_setup {} once (auto-detects colours/HUD numbers/buttons) and play {} will auto-track them every tick' : undefined,
   }
 }
 

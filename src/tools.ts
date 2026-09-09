@@ -567,9 +567,18 @@ export const TOOLS: ToolDef[] = [
         ocr: { type: 'array', description: 'regions to read: [{name, region(@name or {x,y,w,h}), number:true}]. Default: numeric profile regions (score/hp/ammo/coins/time…).', items: { type: 'object' } },
         pixels: { type: 'array', description: 'points to sample exact colours [{x,y}] (or @control names)', items: { type: 'object' } },
         diff: { type: 'boolean', description: 'include changedPct vs the previous play frame (default true)' },
+        reset: { type: 'boolean', description: 'forget the previous tick (no deltas/events this time) — use at the start of a new round' },
+        autoRead: { type: 'boolean', description: 'when the screen has been static for 3 ticks, OCR the whole screen and classify it (menu/game_over/paused) into `stuck` (default true)' },
       },
       required: [],
     },
+  },
+  {
+    name: 'game_setup',
+    description:
+      'AUTO-PROFILE AN UNKNOWN GAME (v4.2) — call once when play {} says there is no game_profile. One capture: dominant colours → @colours (red/green/yellow…), OCR digit lines in the HUD → numeric @regions (score/hp/coins/time…), clickable UI buttons → @controls, genre guess. Saves everything as the game_profile (nothing is tapped). ' +
+      'Then play {} immediately tracks those colours/values every tick with deltas + events. Rename/prune afterwards with game_profile set/unset. Run in-game (not on a menu) for the best palette; force:true re-scans and merges.',
+    parameters: { type: 'object', properties: { force: { type: 'boolean', description: 're-scan even if a profile exists (merge)' }, genre: { type: 'string', description: 'override the genre guess: shooter|runner|puzzle|rhythm|strategy|rpg|racing|casual|other' }, label: { type: 'string', description: 'human name for the game' }, image: { type: 'boolean', description: 'include a small screenshot (default true)' } }, required: [] },
   },
   {
     name: 'react_script',
@@ -1023,7 +1032,7 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'play' | 'play_frame'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'play' | 'play_frame' | 'game_setup'; error?: string } {
   switch (name) {
     case 'session_report': return { special: 'session_report' }
     case 'joystick': return { action: { type: 'joystick', x: args.x, y: args.y, angle: args.angle, direction: args.direction, distance: args.distance, duration: args.duration, finger: args.finger, release: args.release } }
@@ -1040,6 +1049,7 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
     case 'react_script': return { action: { type: 'react_script', rules: args.rules, stopRules: args.stopRules, timeoutMs: args.timeoutMs, maxTriggers: args.maxTriggers, intervalMs: args.intervalMs, release: args.release } }
     case 'play': return { special: 'play' }
     case 'play_frame': return { special: 'play_frame' }
+    case 'game_setup': return { special: 'game_setup' }
     case '_play_frame': return { action: { type: 'play_frame', frame: args.frame } } // internal raw action (used by play)
     case 'game_profile': return { special: 'game_profile' }
     case 'sample_colors': return { action: { type: 'sample_colors', region: args.region, maxColors: args.maxColors, quant: args.quant, ignoreGrey: args.ignoreGrey } }
@@ -1202,7 +1212,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '4.1.0',
+      version: '4.2.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
