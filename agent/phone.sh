@@ -50,6 +50,7 @@
 #   ./phone.sh info | notifs [n] | clip "text" [paste]        # device info / notifications / clipboard
 #   ./phone.sh batch '<json steps array>' [continue]          # many tools in one request
 #   ./phone.sh call <tool> '<json args>'   # any tool
+#   ./phone.sh aim status|get|start|stop|clear | aim set '<json fields>'   # v3.3 native Free Fire aim engine (app v3.3+)
 set -euo pipefail
 : "${RELAY_URL:?set RELAY_URL}" "${RELAY_TOKEN:?set RELAY_TOKEN}"
 RELAY_URL="${RELAY_URL%/}"
@@ -346,6 +347,10 @@ for a in d.get("actions",[]):
   apps)    call list_apps | python3 -c '
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
+  aim)     sub="${1:-status}"; shift || true; case "$sub" in
+             set)   call aim_engine "{\"action\":\"set\",\"aim\":${1:-{\}}}" | pretty ;;
+             *)     call aim_engine "{\"action\":\"$sub\"}" | pretty ;;
+           esac ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,52p' "$0" ;;
+  *) sed -n '2,53p' "$0" ;;
 esac

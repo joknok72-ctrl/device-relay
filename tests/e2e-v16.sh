@@ -9,8 +9,8 @@ call() { curl -s "${A[@]}" -d "$1" $U/api/devices/$D/tools/call; }
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "== version / catalogue"
-check version '"version":"3.2.0"' "$(curl -s $U/api/health)"
-check tools-79 '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"3.3.0"' "$(curl -s $U/api/health)"
+check tools-80 '80' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== reflexes"
 check watch-appear '"matched":true' "$(call '{"name":"watch_color","arguments":{"color":"#ff0000","timeoutMs":1000}}')"

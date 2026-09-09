@@ -12,7 +12,7 @@ j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/nul
 call '{"name":"open_recents"}' >/dev/null; memdel 'kind=all' >/dev/null; call '{"name":"get_current_app"}' >/dev/null
 
 echo "== version + docs"
-check version '"version":"3.2.0"' "$(curl -s $U/api/health)"
+check version '"version":"3.3.0"' "$(curl -s $U/api/health)"
 check tool-doc-autoapply 'autoApplyLearned:false to freeze' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t for t in d if t["name"]=="game_bot"][0]["description"]')"
 check tool-param-autoapply 'write the self-learned aim sensitivity back' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t for t in d if t["name"]=="game_bot"][0]["parameters"]["properties"]["autoApplyLearned"]["description"]')"
 check boot-bake 'bakes it into the rule automatically' "$(curl -s $U/agent/$T)"

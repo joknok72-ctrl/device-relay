@@ -17,8 +17,8 @@ call '{"name":"get_current_app"}' >/dev/null
 call '{"name":"game_bot","arguments":{"action":"stop"}}' >/dev/null
 
 echo "== version"
-check version '"version":"3.2.0"' "$(curl -s $U/api/health)"
-check tools-79 '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"3.3.0"' "$(curl -s $U/api/health)"
+check tools-80 '80' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check schema-has-game_bot '"name":"game_bot"' "$(curl -s "$U/api/tools/schema?format=raw" | grep -o '"name":"game_bot"')"
 
 echo "== validation"

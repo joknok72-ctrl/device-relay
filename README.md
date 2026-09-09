@@ -182,6 +182,13 @@
 - **الصانع — إطارات الأجسام**: بعد اختيار اللون، الصانع يرسم إطارًا حول كل جسم كشفه الهاتف فعليًا بنفس اللون — تشوف بعينك "البوت شايف إيه" قبل الحفظ؛ لو الإطارات على حاجة غلط غيّر التسامح/الوضع.
 - Android بدون تغيير (3.1.0 — التعلّم كان موجودًا؛ الجديد على الـ relay والصانع).
 
+**🎯 v3.3 — AimEngine: محرك تصويب أصلي (Native) للشوترز — يحل محل بوت القواعد**
+- **لماذا؟** بوت القواعد (`game_bot`) كان يطلق بدفعات (burst→توقف→burst) ويعطي إطلاقات كاذبة لأنه يعيد تقييم القاعدة كل tick. `AimEngine` كائن Kotlin واحد داخل خدمة الـ Accessibility: حلقة التقاط ~30fps → عدّادات بكسل → **hysteresis** (`armFrames`/`releaseFrames`/`maxHoldMs`) → **إصبع واحد حقيقي محتجز** على زر الضرب بـ `continueStroke` (مقاطع 400ms تُمدّد قبل انتهائها بـ 150ms مع اهتزاز 0.5px) — يضغط ما دام الشرط قائمًا ويرفع فورًا عند زواله؛ لا إطلاق في الهواء.
+- **المشغّلات** (`trigger`): `reticle` (تحوّل شعيرة اللعبة نفسها للأحمر — تأكيد من اللعبة أن هناك عدوًا)، `target` (لون الجلد/الرأس داخل `headBox`)، `both`. **Aim assist** اختياري: أقرب كتلة (CC labelling على شبكة 3px) → سحب كاميرا تناسبي بإصبع ثانٍ (`assist.gain/deadzone/maxStep`). **إعادة تحميل تلقائية** عند ظهور لون النفاد في `ammoBox`.
+- **التشغيل**: `autoStart` مع التطبيق الأمامي، الفقاعة العائمة، أزرار الإشعار «🎯 name / ■ أوقف Aim»، Vol-Up×2 / Vol-Down×2. الإعدادات محفوظة في SharedPreferences وفي الـ relay (`aims` بالـ Durable Object) وتُدفع للهاتف عند الاتصال. حالة مباشرة `aim_status` (fps, holding, heldMs, holdCount, aimMoves, reloads, lastTrigger).
+- **أداة الـ AI**: `aim_engine action=set|start|stop|status|get|clear` — تقبل `@names` من `game_profile` (`@fire, @look, @reload, @crosshair`, ألوان `@ring/@skin/@reloadRed`, مناطق `@reticle/@headzone/@ammo`) مع تحقق وقصّ للقيم (`validateAim`). القيم الافتراضية معايَرة لـ Free Fire على RMX3269 (1600×720). `agent/phone.sh aim ...`. الـ bootstrap يوجّه الـ AI: شوترز → `aim_engine`، غير ذلك → `game_bot`.
+- Android **3.3.0** (versionCode 16). 80 أداة، 44 فحصًا جديدًا (`tests/e2e-v33.sh`).
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -192,6 +199,7 @@
 - AccessibilityService رسمي ينفذ: إيماءات (`tap`, `double_tap`, `long_press`, `swipe`), أزرار النظام، `screenshot`, `wake`
 - **v1.2**: قراءة شجرة الواجهة (`ui_dump`), الضغط على عنصر بالاسم/الـ id (`tap_element`), كتابة نص (`type_text`), فتح تطبيق/رابط (`open_app`, `open_url`), قائمة التطبيقات
 - **v1.4**: `drag` (سحب وإفلات), `pinch` (تكبير/تصغير بإصبعين), `scroll_element` (تمرير عنصر محدد عبر Accessibility), `set_clipboard` (+لصق), `get_notifications` (قراءة الإشعارات — يتطلب تفعيل "Notification access" من التطبيق), `get_device_info` (بطارية/شبكة/قفل/تخزين), لقطات بجودة/حجم متغير (PNG/JPEG), بطارية في `hello` كل 60 ثانية
+- **v3.3**: `AimEngine` (حلقة التقاط + hysteresis + إصبع محتجز `FireHold` + aim assist + auto-reload)، `captureForEngine/dispatchForEngine`، أوامر `aim_config/aim_start/aim_stop/aim_status/aim_clear`
 - **v3.1**: `ColorMatcher` (rgb/hue)، target lock، fire gate، `find_objects.match`
 - **v3.0**: `aim_to_found` lead prediction + assist-range gate، `fire_burst.maxRange` (trigger-bot)
 - **v2.8**: `BotOverlay` فقاعة عائمة، `onKeyEvent` أزرار الصوت، `onForegroundApp` → autoStart، auto-tune لحساسية التصويب، `learned/startedBy` في `bot_status`
@@ -457,7 +465,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v32.sh   # 987 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v32.sh && tests/e2e-v33.sh   # ~1030 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -488,6 +496,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-08 (v3.2 — learned aim sensitivity auto-baked into rules (`tuned`, `autoApplyLearned`), builder auto-suggest colour + object outlines; 79 tools; 987 e2e checks; Android 3.1.0)
+- **Last Updated**: 2026-09-09 (v3.3 — native `AimEngine` for shooters: held-finger fire while game reticle is red, hysteresis, aim assist, auto-reload; `aim_engine` tool; 80 tools; ~1030 e2e checks; Android 3.3.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.

@@ -16,8 +16,8 @@ call '{"name":"get_current_app"}' >/dev/null
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version"
-check version '"version":"3.2.0"' "$(curl -s $U/api/health)"
-check tools-79 '79' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"3.3.0"' "$(curl -s $U/api/health)"
+check tools-80 '80' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== joystick"
 R=$(call '{"name":"joystick","arguments":{"x":250,"y":1900,"direction":"up","duration":800,"distance":200}}')
