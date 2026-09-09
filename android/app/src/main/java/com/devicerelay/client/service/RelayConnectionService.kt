@@ -115,6 +115,14 @@ class RelayConnectionService : Service() {
     private var lastStatusText = ""
     private fun refreshNotification() { updateNotification(lastStatusText) }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> { stopSelfClean(); return START_NOT_STICKY }
+            else -> { stopping = false; connectLoop() }
+        }
+        return START_STICKY
+    }
+
     override fun onDestroy() {
         stopping = true
         socket?.close(1000, "service destroyed")
