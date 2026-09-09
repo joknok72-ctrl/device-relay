@@ -89,12 +89,11 @@ app.get('/agent/:token', async (c) => {
         r.fetch(`https://do/notes?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ notes: import('./types').Note[] }>),
         r.fetch(`https://do/macros?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ macros: import('./types').Macro[] }>),
         r.fetch(`https://do/screens?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ screens: import('./types').ScreenLabel[] }>),
-        r.fetch(`https://do/memory?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ groups: { app: string; label?: string; profile?: import('./types').GameProfile; bots?: import('./types').Bot[] }[]; sessions: import('./types').PlaySession[]; currentApp: string; botStatus?: { running: boolean; name?: string; fired?: number } | null }>),
+        r.fetch(`https://do/memory?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ groups: { app: string; label?: string; profile?: import('./types').GameProfile }[]; sessions: import('./types').PlaySession[]; currentApp: string }>),
       ])
       notes = n.notes; macros = m.macros; screens = s.screens
       extras.profiles = mem.groups.map((g) => g.profile).filter((p): p is import('./types').GameProfile => !!p)
       extras.sessions = mem.sessions; extras.currentApp = mem.currentApp
-      extras.bots = mem.groups.flatMap((g) => g.bots ?? []); extras.botStatus = mem.botStatus ?? null
       extras.appLabels = Object.fromEntries(mem.groups.filter((g) => g.label).map((g) => [g.app, g.label as string]))
     } catch { /* ignore */ }
   }
@@ -113,14 +112,6 @@ app.get('/setup/:token', async (c) => {
   const auth = await authenticate(c.env, c.req.param('token'))
   if (!auth || auth.role !== 'admin') return c.text('unauthorized — admin token required', 401)
   const res = await c.env.ASSETS.fetch(new Request(new URL('/setup.html', c.req.url).toString()))
-  return new Response(res.body, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
-})
-
-/** v2.9 visual Bot Builder for the human owner (any non-read-only token): /builder/<token> */
-app.get('/builder/:token', async (c) => {
-  const auth = await authenticate(c.env, c.req.param('token'))
-  if (!auth || auth.readOnly) return c.text('unauthorized — a device or admin token is required', 401)
-  const res = await c.env.ASSETS.fetch(new Request(new URL('/builder.html', c.req.url).toString()))
   return new Response(res.body, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
 })
 
@@ -183,7 +174,6 @@ function tokenUrls(origin: string, token: string, deviceId: string, isAdmin: boo
     agentUrl: `${origin}/agent/${token}`,
     mcpUrl: `${origin}/mcp/${token}`,
     monitorUrl: `${origin}/monitor/${token}`,
-    builderUrl: `${origin}/builder/${token}`,
     ...(isAdmin ? { setupUrl: `${origin}/setup/${token}` } : {}),
     pairUrl: pair,
     newChatPrompt: `${origin}/agent/${token}\nافتح الرابط ونفّذ ما فيه، ثم: <مهمتك هنا>`,
@@ -263,40 +253,18 @@ admin.delete('/devices/:deviceId/memory', async (c) => {
 admin.post('/devices/:deviceId/memory/import', async (c) => {
   const deviceId = c.req.param('deviceId')
   if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
-  let body: { groups?: { app?: string; notes?: { text: string; app?: string }[]; macros?: Record<string, unknown>[]; screens?: Record<string, unknown>[]; profile?: Record<string, unknown>; bots?: Record<string, unknown>[] }[] }
+  let body: { groups?: { app?: string; notes?: { text: string; app?: string }[]; macros?: Record<string, unknown>[]; screens?: Record<string, unknown>[]; profile?: Record<string, unknown>}[] }
   try { body = await c.req.json() } catch { return c.json({ error: 'invalid JSON' }, 400) }
   const r = room(c, deviceId)
   const hdr = { 'Content-Type': 'application/json' }
-  let notes = 0, macros = 0, screens = 0, profiles = 0, bots = 0
+  let notes = 0, macros = 0, screens = 0, profiles = 0
   for (const g of body.groups ?? []) {
-    for (const b of g.bots ?? []) { if (b && typeof b.id === 'string' && Array.isArray(b.rules)) { const res = await r.fetch(`https://do/bots?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify({ ...b, app: b.app ?? g.app }) }); if (res.ok) bots++ } }
     if (g.profile && g.app) { const res = await r.fetch(`https://do/profile?deviceId=${deviceId}&app=${encodeURIComponent(g.app)}`, { method: 'POST', headers: hdr, body: JSON.stringify({ replace: g.profile }) }); if (res.ok) profiles++ }
     for (const n of g.notes ?? []) { if (typeof n.text === 'string') { await r.fetch(`https://do/notes?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify({ text: n.text, app: n.app }) }); notes++ } }
     for (const m of g.macros ?? []) { const res = await r.fetch(`https://do/macros?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(m) }); if (res.ok) macros++ }
     for (const s of g.screens ?? []) { const res = await r.fetch(`https://do/screens?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(s) }); if (res.ok) screens++ }
   }
-  return c.json({ ok: true, imported: { notes, macros, screens, profiles, bots } })
-})
-/** v2.6 bots: owner controls from the setup page */
-admin.get('/devices/:deviceId/bots', async (c) => {
-  const deviceId = c.req.param('deviceId')
-  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
-  return c.json(await (await room(c, deviceId).fetch(`https://do/bots?deviceId=${deviceId}`)).json())
-})
-admin.post('/devices/:deviceId/bots/:botId/run', async (c) => {
-  const deviceId = c.req.param('deviceId')
-  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
-  return c.json(await executeTool(c.env, deviceId, 'game_bot', { action: 'run', id: c.req.param('botId') }))
-})
-admin.post('/devices/:deviceId/bots/stop', async (c) => {
-  const deviceId = c.req.param('deviceId')
-  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
-  return c.json(await executeTool(c.env, deviceId, 'game_bot', { action: 'stop' }))
-})
-admin.delete('/devices/:deviceId/bots/:botId', async (c) => {
-  const deviceId = c.req.param('deviceId')
-  if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
-  return c.json(await (await room(c, deviceId).fetch(`https://do/bots?deviceId=${deviceId}&id=${encodeURIComponent(c.req.param('botId'))}`, { method: 'DELETE' })).json())
+  return c.json({ ok: true, imported: { notes, macros, screens, profiles } })
 })
 /** Everything the setup page needs in one call */
 admin.get('/overview', async (c) => {

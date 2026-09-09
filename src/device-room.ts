@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, AimConfig, AimStatusMessage, Bindings, Bot, BotStatusMessage, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, Recording, ScreenLabel, SessionReport } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, Recording, ScreenLabel, SessionReport } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
@@ -57,12 +57,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
   /** v2.3 play history: sessions (most recent first, max 100). */
   private sessions: PlaySession[] = []
   private currentApp = ''
-  /** v2.6 bots (rule-based automations that run ON the phone). */
-  private bots: Bot[] = []
-  /** v3.3 native aim engine: one config per app + last status */
-  private aims: Record<string, AimConfig> = {}
-  private aimStatus: AimStatusMessage | null = null
-  private botStatus: BotStatusMessage | null = null
 
   private inputBusy = false
   private inputQueue: Array<() => void> = []
@@ -89,10 +83,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (profiles) this.profiles = profiles
       const sessions = await ctx.storage.get<PlaySession[]>('sessions')
       if (sessions) this.sessions = sessions
-      const bots = await ctx.storage.get<Bot[]>('bots')
-      if (bots) this.bots = bots
-      const aims = await ctx.storage.get<Record<string, AimConfig>>('aims')
-      if (aims) this.aims = aims
     })
   }
 
@@ -116,20 +106,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private updateLog(id: string, patch: Partial<LogEntry>) {
     const e = this.logs.find((l) => l.id === id)
     if (e) { Object.assign(e, patch); this.broadcastViewers({ kind: 'log', entry: e }) }
-  }
-  /** v2.6: send all bot definitions to the phone (it stores them and shows them in its notification). */
-  private pushBots(target?: WebSocket) {
-    const sockets = target ? [target] : this.phoneSockets()
-    const msg = JSON.stringify({ kind: 'command', id: crypto.randomUUID(), ts: Date.now(), action: { type: 'bot_sync', bots: this.bots } })
-    for (const ws of sockets) { try { ws.send(msg) } catch { /* ignore */ } }
-  }
-  /** v3.3: send the aim config (the one for the current app, else the newest) to the phone so it survives reinstall/reconnect */
-  private pushAim(target?: WebSocket, app?: string) {
-    const list = Object.values(this.aims); if (!list.length) return
-    const cfg = (app && this.aims[app]) || (this.currentApp && this.aims[this.currentApp]) || list.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0]
-    const sockets = target ? [target] : this.phoneSockets()
-    const msg = JSON.stringify({ kind: 'command', id: crypto.randomUUID(), ts: Date.now(), action: { type: 'aim_config', aim: cfg } })
-    for (const ws of sockets) { try { ws.send(msg) } catch { /* ignore */ } }
   }
   /** v2.3: extend the open session for this app or start a new one (gap > 10 min or app changed). */
   private touchSession(app: string, label?: string, patch?: { commands?: number; failed?: number; screenshots?: number }) {
@@ -186,9 +162,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
         await this.persist()
         this.broadcastViewers({ kind: 'status', info: this.snapshotInfo() })
         if (!wasOnline) this.webhook('online')
-        // v2.6: push bot definitions so the phone notification can start them without the AI
-        if (this.bots.length) this.pushBots(server)
-        this.pushAim(server)
       } else {
         server.send(JSON.stringify({ kind: 'snapshot', info: this.snapshotInfo(), logs: this.logs, screenshot: this.lastScreenshot, recording: this.recording ? { active: true, name: this.recording.name, steps: this.recording.steps.length } : { active: false } }))
       }
@@ -269,12 +242,11 @@ export class DeviceRoom extends DurableObject<Bindings> {
         for (const app of Object.keys(this.profiles)) g(app)
         for (const app of Object.keys(this.apps)) g(app)
         for (const s of this.sessions) { const grp = g(s.app); grp.sessions++; grp.playedMs += s.end - s.start }
-        for (const b of this.bots) { const grp = g(b.app) as Group & { bots?: Bot[] }; (grp.bots ??= []).push(b) }
         const list = Object.values(groups).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
         return Response.json({
           deviceId: this.info.deviceId,
-          totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, profiles: Object.keys(this.profiles).length, sessions: this.sessions.length, bots: this.bots.length, recording: !!this.recording },
-          recording: this.recording, groups: list, apps: this.apps, sessions: this.sessions.slice(0, 20), currentApp: this.currentApp, botStatus: this.botStatus,
+          totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, profiles: Object.keys(this.profiles).length, sessions: this.sessions.length, recording: !!this.recording },
+          recording: this.recording, groups: list, apps: this.apps, sessions: this.sessions.slice(0, 20), currentApp: this.currentApp,
         })
       }
       if (request.method === 'DELETE') {
@@ -303,9 +275,7 @@ export class DeviceRoom extends DurableObject<Bindings> {
         const beforeProfiles = Object.keys(this.profiles).length, beforeSessions = this.sessions.length
         if (kind === 'profiles' || kind === 'all') { if (app !== null) delete this.profiles[app]; else this.profiles = {} }
         if (kind === 'sessions' || kind === 'all') { this.sessions = app !== null ? this.sessions.filter((s) => s.app !== app) : [] }
-        const beforeBots = this.bots.length
-        if (kind === 'bots' || kind === 'all') { this.bots = app !== null ? this.bots.filter((b) => b.app !== app) : []; if (this.bots.length !== beforeBots) this.pushBots() }
-        await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps), this.ctx.storage.put('profiles', this.profiles), this.ctx.storage.put('sessions', this.sessions), this.ctx.storage.put('bots', this.bots)])
+        await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps), this.ctx.storage.put('profiles', this.profiles), this.ctx.storage.put('sessions', this.sessions), this.ctx.storage.delete('bots'), this.ctx.storage.delete('aims')])
         return Response.json({ ok: true, removed: { notes: before.notes - this.notes.length, macros: before.macros - this.macros.length, screens: before.screens - this.screens.length, apps: before.apps - Object.keys(this.apps).length, profiles: beforeProfiles - Object.keys(this.profiles).length, sessions: beforeSessions - this.sessions.length }, totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, profiles: Object.keys(this.profiles).length } })
       }
     }
@@ -356,52 +326,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
       }
     }
     // ---------- v2.4 session report: AI's handover note, attached to the current session + profile ----------
-    // ---------- v2.6 bots ----------
-    if (url.pathname.endsWith('/bots')) {
-      const app = url.searchParams.get('app')
-      const id = url.searchParams.get('id')
-      if (request.method === 'GET') return Response.json({ bots: app ? this.bots.filter((b) => b.app === app) : this.bots, status: this.botStatus })
-      if (request.method === 'POST') {
-        const b = (await request.json()) as Bot
-        const i = this.bots.findIndex((x) => x.id === b.id)
-        if (i >= 0) { b.createdAt = this.bots[i].createdAt; b.runs = this.bots[i].runs; b.lastRun = this.bots[i].lastRun; this.bots[i] = b }
-        else { if (this.bots.length >= 30) return Response.json({ ok: false, error: 'max 30 bots per device' }, { status: 400 }); this.bots.push(b) }
-        await this.ctx.storage.put('bots', this.bots)
-        this.pushBots()
-        this.broadcastViewers({ kind: 'bots', count: this.bots.length })
-        return Response.json({ ok: true, bot: b, count: this.bots.length })
-      }
-      if (request.method === 'DELETE') {
-        const before = this.bots.length
-        this.bots = id ? this.bots.filter((x) => x.id !== id) : app !== null ? this.bots.filter((x) => x.app !== app) : []
-        await this.ctx.storage.put('bots', this.bots)
-        this.pushBots()
-        return Response.json({ ok: true, removed: before - this.bots.length })
-      }
-    }
-    if (url.pathname.endsWith('/bot-status')) return Response.json({ status: this.botStatus, online: this.phoneSockets().length > 0 })
-    // ---------- v3.3 aim engine configs ----------
-    if (url.pathname.endsWith('/aims')) {
-      const app = url.searchParams.get('app')
-      if (request.method === 'GET') return Response.json({ aims: app ? (this.aims[app] ? [this.aims[app]] : []) : Object.values(this.aims), status: this.aimStatus, online: this.phoneSockets().length > 0 })
-      if (request.method === 'POST') {
-        const cfg = (await request.json()) as AimConfig
-        if (!cfg.app) return Response.json({ ok: false, error: 'app required' }, { status: 400 })
-        cfg.updatedAt = Date.now()
-        this.aims[cfg.app] = cfg
-        await this.ctx.storage.put('aims', this.aims)
-        this.pushAim(undefined, cfg.app)
-        this.broadcastViewers({ kind: 'aims', count: Object.keys(this.aims).length })
-        return Response.json({ ok: true, aim: cfg })
-      }
-      if (request.method === 'DELETE') {
-        const before = Object.keys(this.aims).length
-        if (app) delete this.aims[app]; else this.aims = {}
-        await this.ctx.storage.put('aims', this.aims)
-        return Response.json({ ok: true, removed: before - Object.keys(this.aims).length })
-      }
-    }
-    if (url.pathname.endsWith('/aim-status')) return Response.json({ status: this.aimStatus, online: this.phoneSockets().length > 0 })
     if (url.pathname.endsWith('/session-report') && request.method === 'POST') {
       const b = (await request.json()) as Partial<SessionReport> & { app?: string; label?: string }
       const app = String(b.app ?? this.currentApp ?? '').trim()
@@ -660,33 +584,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
           this.lastScreenshot = { ts: Date.now(), data: msg.screenshot, mime: msg.screenshotMime ?? 'image/png' }
           this.broadcastViewers({ kind: 'screenshot', id: msg.id, ts: this.lastScreenshot.ts, mime: this.lastScreenshot.mime, data: msg.screenshot })
         }
-        break
-      }
-      case 'bot_status': {
-        this.botStatus = msg
-        const b = msg.botId ? this.bots.find((x) => x.id === msg.botId) : undefined
-        if (b) {
-          if (msg.running && (!b.lastRun || b.lastRun.end !== undefined || b.lastRun.start !== msg.startedAt)) { b.runs = (b.runs ?? 0) + 1; b.lastRun = { start: msg.startedAt ?? Date.now(), ticks: msg.ticks ?? 0, fired: msg.fired ?? 0 } }
-          else if (b.lastRun) { b.lastRun.ticks = msg.ticks ?? b.lastRun.ticks; b.lastRun.fired = msg.fired ?? b.lastRun.fired; if (msg.ruleHits) b.lastRun.ruleHits = msg.ruleHits; if (msg.learned && Object.keys(msg.learned).length) b.learned = { ...(b.learned ?? {}), ...msg.learned }; if (!msg.running) { b.lastRun.end = Date.now(); b.lastRun.stoppedBy = msg.stoppedBy } }
-          // v3.2 auto-apply: when a run ends, bake the learned aim sensitivity into the rules so the next run (even offline, from the bubble) starts tuned
-          let changed = false
-          if (!msg.running && b.learned && b.autoApplyLearned !== false) {
-            for (const [k, v] of Object.entries(b.learned)) {
-              const m = k.match(/^(.+)\/(\d+)\/sensitivity$/); if (!m) continue
-              const rule = b.rules.find((r) => r.name === m[1]); const act = rule?.then[Number(m[2])] as { type?: string; sensitivity?: number } | undefined
-              if (act && act.type === 'aim_to_found' && typeof v === 'number' && v > 0 && Math.abs((act.sensitivity ?? 1) - v) > 0.02) { act.sensitivity = Math.round(v * 100) / 100; changed = true }
-            }
-            if (changed) { b.updatedAt = Date.now(); b.tuned = (b.tuned ?? 0) + 1 }
-          }
-          this.ctx.waitUntil(this.ctx.storage.put('bots', this.bots))
-          if (changed) this.pushBots()
-        }
-        this.broadcastViewers({ ...msg, kind: 'bot_status' })
-        break
-      }
-      case 'aim_status': {
-        this.aimStatus = msg
-        this.broadcastViewers({ ...msg, kind: 'aim_status' })
         break
       }
       case 'frame': {
