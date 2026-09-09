@@ -199,26 +199,6 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       const region = parseRegion(a.region); if (region) action.region = region
       return { action }
     }
-    // ---- v2.6 bots (definitions validated by validateBot in tool-exec; here just shape)
-    case 'bot_sync': {
-      if (!Array.isArray(a.bots) || a.bots.length > 30) return { error: 'bot_sync requires bots[0..30]' }
-      return { action: { type: 'bot_sync', bots: a.bots as Action extends { type: 'bot_sync'; bots: infer B } ? B : never } }
-    }
-    case 'bot_start': {
-      if (typeof a.botId !== 'string' || !a.botId) return { error: 'bot_start requires botId' }
-      return { action: { type: 'bot_start', botId: a.botId } }
-    }
-    case 'bot_stop': return { action: { type: 'bot_stop' } }
-    case 'bot_status': return { action: { type: 'bot_status' } }
-    case 'aim_config': {
-      const aim = a.aim as Record<string, unknown> | undefined
-      if (!aim || typeof aim !== 'object' || typeof aim.app !== 'string') return { error: 'aim_config requires aim:{app,...}' }
-      return { action: { type: 'aim_config', aim: aim as unknown as Action extends { type: 'aim_config'; aim: infer C } ? C : never } }
-    }
-    case 'aim_start': return { action: { type: 'aim_start' } }
-    case 'aim_stop': return { action: { type: 'aim_stop' } }
-    case 'aim_status': return { action: { type: 'aim_status' } }
-    case 'aim_clear': return { action: { type: 'aim_clear' } }
     // ---- v2.5 multi-touch
     case 'finger_down': {
       if (!isNum(a.x) || !isNum(a.y)) return { error: 'finger_down requires x, y' }

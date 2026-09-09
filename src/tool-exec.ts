@@ -3,7 +3,6 @@ import { parseAction } from './validate'
 import { toolToAction, TOOLS, READ_ONLY_TOOLS, OBSERVATION_TOOLS } from './tools'
 import type { DeviceRegistry } from './registry'
 import type { CommandResult } from './device-room'
-import { BOT_TEMPLATES, templateSummary } from './bot-templates'
 
 export interface ToolResult {
   ok: boolean
@@ -59,7 +58,7 @@ function room(env: Bindings, deviceId: string) {
   return env.DEVICE_ROOM.get(env.DEVICE_ROOM.idFromName(deviceId))
 }
 /** Input tools that must not be captured by record_macro (meta / non-replayable). */
-const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report', 'game_bot', 'aim_engine'])
+const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report'])
 
 /** Push a visual event to /monitor viewers (fire-and-forget). */
 function overlay(env: Bindings, deviceId: string, o: Record<string, unknown>) {
@@ -150,7 +149,7 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
 export async function executeTool(env: Bindings, deviceId: string, name: string, args: Record<string, unknown>, opts: ExecOptions = {}): Promise<ToolResult> {
   // v2.3: resolve @names (controls / colours / regions / settings from game_profile) anywhere in the arguments
   let usedRefs: string[] | undefined
-  if (args && hasRef(args) && name !== 'game_profile' && name !== 'remember' && name !== 'record_macro' && name !== 'save_macro' && name !== 'game_bot' && name !== 'aim_engine') {
+  if (args && hasRef(args) && name !== 'game_profile' && name !== 'remember' && name !== 'record_macro' && name !== 'save_macro') {
     const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
     if (!profile) return { ok: false, error: `arguments use @names but no game_profile exists for ${app || 'the current app'} — save one with game_profile set:{...} first` }
     const r = resolveRefs(args, profile)
@@ -198,16 +197,6 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'dismiss_popups') return dismissPopups(env, deviceId, args, opts)
   if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
   if (mapped.special === 'session_report') return sessionReport(env, deviceId, args)
-  if (mapped.special === 'game_bot') {
-    const act = String(args.action ?? 'list').toLowerCase()
-    if (opts.readOnly && !['list', 'get', 'status', 'templates'].includes(act)) return { ok: false, error: `token is read-only: game_bot ${act} not allowed` }
-    return gameBot(env, deviceId, args)
-  }
-  if (mapped.special === 'aim_engine') {
-    const act = String(args.action ?? 'status').toLowerCase()
-    if (opts.readOnly && !['status', 'get'].includes(act)) return { ok: false, error: `token is read-only: aim_engine ${act} not allowed` }
-    return aimEngine(env, deviceId, args)
-  }
   if (mapped.special === 'game_profile') {
     if (opts.readOnly && (args.set || args.unset || args.delete || args.label || args.genre)) return { ok: false, error: 'token is read-only: game_profile can only be read' }
     return gameProfile(env, deviceId, args)
@@ -658,208 +647,6 @@ async function dismissPopups(env: Bindings, deviceId: string, args: Record<strin
     await new Promise((res) => setTimeout(res, 600))
   }
   return { ok: true, dismissed: dismissed.length, actions: dismissed, durationMs: Date.now() - t0 }
-}
-
-// ---------------------------------------------------------------- v2.6 game bots
-const BOT_CONDITIONS = new Set(['color_present', 'color_absent', 'object_present', 'object_absent', 'pixel_is', 'pixel_not', 'text_present', 'text_absent', 'number_below', 'number_above', 'screen_changed', 'every_ms', 'always'])
-const BOT_ACTIONS = new Set(['tap', 'tap_found', 'tap_all_found', 'aim_to_found', 'swipe', 'long_press', 'tap_sequence', 'repeat_tap', 'joystick', 'aim', 'fire_burst', 'combo', 'finger_up', 'back', 'home', 'wait', 'stop_bot'])
-const FOUND_CONDS = new Set(['color_present', 'object_present', 'pixel_is', 'text_present'])
-const HEX_RE = /^#[0-9a-f]{6}$/
-const isFin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-function normColor(v: unknown): string | null { if (typeof v !== 'string') return null; const s = v.trim().toLowerCase(); const h = s.startsWith('#') ? s : '#' + s; return HEX_RE.test(h) ? h : null }
-function validRegion(v: unknown): v is { x: number; y: number; w: number; h: number } { const r = v as Record<string, unknown> | null; return !!r && typeof r === 'object' && isFin(r.x) && isFin(r.y) && isFin(r.w) && isFin(r.h) && r.w > 0 && r.h > 0 }
-/** Validate + normalise bot rules (after @name resolution). Returns error string or null. */
-function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; error?: string } {
-  if (!Array.isArray(rules) || rules.length === 0 || rules.length > 25) return { error: 'rules must be an array of 1..25' }
-  const out: import('./types').BotRule[] = []
-  for (let i = 0; i < rules.length; i++) {
-    const r = rules[i] as Record<string, unknown>
-    if (!r || typeof r !== 'object') return { error: `rules[${i}] must be an object` }
-    const name = String(r.name ?? `rule-${i + 1}`).slice(0, 40)
-    if (!Array.isArray(r.when) || r.when.length === 0 || r.when.length > 6) return { error: `rules[${i}] (${name}).when must have 1..6 conditions` }
-    if (!Array.isArray(r.then) || r.then.length === 0 || r.then.length > 10) return { error: `rules[${i}] (${name}).then must have 1..10 actions` }
-    let hasColorCond = false, hasFoundCond = false, hasObjectCond = false
-    for (let c = 0; c < r.when.length; c++) {
-      const w = r.when[c] as Record<string, unknown>
-      if (!w || typeof w.type !== 'string' || !BOT_CONDITIONS.has(w.type)) return { error: `rules[${i}].when[${c}].type must be one of ${[...BOT_CONDITIONS].join('|')}` }
-      if (['color_present', 'color_absent', 'object_present', 'object_absent'].includes(w.type)) {
-        // v2.7: `colors: [...]` (any of) or single `color`
-        const list = Array.isArray(w.colors) ? w.colors : (w.color !== undefined ? [w.color] : [])
-        const norm = list.map(normColor)
-        if (!norm.length || norm.some((x) => !x)) return { error: `rules[${i}].when[${c}] needs color "#rrggbb" or colors ["#..",..] (or @color)` }
-        if (norm.length > 8) return { error: `rules[${i}].when[${c}] max 8 colors` }
-        w.color = norm[0]; if (norm.length > 1) w.colors = norm; else delete w.colors
-        if (w.type.endsWith('_present')) { hasColorCond = true; hasFoundCond = true }
-        if (w.type.startsWith('object')) { hasObjectCond = w.type === 'object_present'; w.minSize ??= 12; w.maxSize ??= 0; if (w.pick !== undefined && !['largest', 'nearest', 'topmost', 'lowest'].includes(String(w.pick))) return { error: `rules[${i}].when[${c}].pick must be largest|nearest|topmost|lowest` } }
-      }
-      if (['pixel_is', 'pixel_not'].includes(w.type)) { const col = normColor(w.color); if (!col) return { error: `rules[${i}].when[${c}] needs color "#rrggbb" (or @color)` }; w.color = col; if (w.type === 'pixel_is') hasFoundCond = true }
-      if (w.type === 'text_present') hasFoundCond = true
-      if (w.forMs !== undefined && (!isFin(w.forMs) || w.forMs < 0 || w.forMs > 60_000)) return { error: `rules[${i}].when[${c}].forMs must be 0..60000` }
-      if (w.match !== undefined) { if (w.match !== 'rgb' && w.match !== 'hue') return { error: `rules[${i}].when[${c}].match must be rgb|hue` }; if (w.match === 'rgb') delete w.match }
-      if (w.lockRadius !== undefined && (!isFin(w.lockRadius) || w.lockRadius < 0)) return { error: `rules[${i}].when[${c}].lockRadius must be >= 0` }
-      if (['pixel_is', 'pixel_not'].includes(w.type) && (!isFin(w.x) || !isFin(w.y))) return { error: `rules[${i}].when[${c}] (${w.type}) needs x,y` }
-      if (['text_present', 'text_absent'].includes(w.type) && (typeof w.text !== 'string' || !w.text.trim())) return { error: `rules[${i}].when[${c}] needs text` }
-      if (['number_below', 'number_above'].includes(w.type) && (!validRegion(w.region) || !isFin(w.value))) return { error: `rules[${i}].when[${c}] (${w.type}) needs region {x,y,w,h} and value` }
-      if (w.type === 'every_ms' && (!isFin(w.ms) || w.ms < 50)) return { error: `rules[${i}].when[${c}] every_ms needs ms >= 50` }
-      if (w.region !== undefined && !validRegion(w.region)) return { error: `rules[${i}].when[${c}].region must be {x,y,w,h}` }
-    }
-    for (let t = 0; t < r.then.length; t++) {
-      const a = r.then[t] as Record<string, unknown>
-      if (!a || typeof a.type !== 'string' || !BOT_ACTIONS.has(a.type)) return { error: `rules[${i}].then[${t}].type must be one of ${[...BOT_ACTIONS].join('|')}` }
-      if (a.type === 'tap_found' && !hasFoundCond) return { error: `rules[${i}] (${name}) uses tap_found but has no color_present/object_present/pixel_is/text_present condition` }
-      if (a.type === 'tap_all_found' && !hasObjectCond) return { error: `rules[${i}] (${name}) uses tap_all_found but has no object_present condition` }
-      if (a.type === 'aim_to_found' && !hasFoundCond) return { error: `rules[${i}] (${name}) uses aim_to_found but has no *_present condition` }
-      if (a.type === 'aim_to_found') { if (!isFin(a.x) || !isFin(a.y)) return { error: `rules[${i}].then[${t}] aim_to_found needs x,y (start point on the look area, or at:"@look")` }; a.sensitivity ??= 1; a.maxStep ??= 300; a.deadzone ??= 12; a.duration ??= 60; a.finger ??= 1; if (a.autoTune !== false) delete a.autoTune; if (!isFin(a.predictMs) || a.predictMs <= 0) delete a.predictMs; else a.predictMs = Math.min(a.predictMs, 600); if (!isFin(a.maxRange) || a.maxRange <= 0) delete a.maxRange }
-      if (a.type === 'tap_all_found') { a.max ??= 5; a.intervalMs ??= 40 }
-      if (['tap', 'long_press', 'repeat_tap', 'joystick', 'aim', 'fire_burst'].includes(a.type) && (!isFin(a.x) || !isFin(a.y))) return { error: `rules[${i}].then[${t}] (${a.type}) needs x,y (or at:"@control")` }
-      if (a.type === 'swipe' && ![a.x1, a.y1, a.x2, a.y2].every(isFin)) return { error: `rules[${i}].then[${t}] swipe needs x1,y1,x2,y2` }
-      if (a.type === 'tap_sequence' && !Array.isArray(a.points)) return { error: `rules[${i}].then[${t}] tap_sequence needs points` }
-      if (a.type === 'combo' && !Array.isArray(a.combo ?? a.steps)) return { error: `rules[${i}].then[${t}] combo needs steps` }
-      if (a.type === 'combo' && a.steps && !a.combo) { a.combo = a.steps; delete a.steps }
-      if (a.type === 'wait' && !isFin(a.ms)) return { error: `rules[${i}].then[${t}] wait needs ms` }
-      // defaults matching the phone's expectations
-      if (a.type === 'joystick') { if (!isFin(a.angle)) { const m: Record<string, number> = { right: 0, 'down-right': 45, down: 90, 'down-left': 135, left: 180, 'up-left': 225, up: 270, 'up-right': 315 }; a.angle = m[String(a.direction ?? 'up').toLowerCase()] ?? 270; delete a.direction } a.distance ??= 150; a.duration ??= 500; a.finger ??= 0; a.release ??= true }
-      if (a.type === 'aim') { a.dx ??= 0; a.dy ??= 0; a.duration ??= 120; a.finger ??= 1; a.steps ??= 4; a.release ??= true; if (a.alternate !== true) delete a.alternate }
-      if (a.type === 'fire_burst') { a.count ??= 5; a.intervalMs ??= 90; a.holdMs ??= 0; if (!isFin(a.maxRange) || a.maxRange <= 0) delete a.maxRange; else if (!hasFoundCond) return { error: `rules[${i}].then[${t}] fire_burst.maxRange needs a *_present condition` }; if (!isFin(a.gateErr) || a.gateErr <= 0) delete a.gateErr }
-      if (a.type === 'repeat_tap') { a.count ??= 5; a.intervalMs ??= 100 }
-      if (a.type === 'finger_up') a.finger ??= -1
-    }
-    out.push({ name, when: r.when as import('./types').BotCondition[], then: r.then as import('./types').BotAction[], cooldownMs: isFin(r.cooldownMs) ? Math.min(Math.max(r.cooldownMs, 0), 60_000) : 300, priority: isFin(r.priority) ? r.priority : 0, exclusive: r.exclusive !== false, enabled: r.enabled !== false, ...(isFin(r.maxFires) && r.maxFires > 0 ? { maxFires: Math.floor(r.maxFires) } : {}) })
-  }
-  return { rules: out }
-}
-// ---------------------------------------------------------------- v3.3 native aim engine (AimEngine.kt on the phone)
-const AIM_NUM: Record<string, [number, number]> = { fireX: [0, 4000], fireY: [0, 4000], reticleTol: [0, 128], reticleMin: [1, 100000], targetTol: [0, 128], targetMin: [1, 100000], armFrames: [1, 30], releaseFrames: [1, 60], maxHoldMs: [500, 60000], aimTol: [0, 128], aimMinSize: [1, 2000], aimMaxSize: [0, 4000], crosshairX: [0, 4000], crosshairY: [0, 4000], lookX: [0, 4000], lookY: [0, 4000], aimGain: [0.05, 5], aimMaxStep: [5, 1500], aimDeadzone: [0, 200], aimRange: [10, 4000], aimOffsetY: [-500, 500], reloadTol: [0, 128], reloadMin: [1, 100000], reloadX: [0, 4000], reloadY: [0, 4000], fps: [5, 60], fireRadius: [10, 400], headTol: [0, 128], headMinSize: [1, 2000], headMaxSize: [0, 4000], headTopOffset: [-40, 80], headTopRows: [1, 40], bodyTol: [0, 128], lockRange: [10, 4000], headGain: [0.05, 5], headMaxStep: [1, 1500], headDeadzone: [0, 100], headLead: [0, 3], lookTravel: [20, 2000], stickyMs: [0, 5000], bodyMaxLum: [0, 255], bodyMinW: [1, 1000], bodyMaxW: [1, 2000], bodyMinH: [1, 1000], bodyMaxH: [1, 2000], headSearchUp: [5, 400], skinMinR: [0, 255], skinMinRB: [0, 255], skinMinRG: [0, 255], skinMinG: [0, 255] }
-const AIM_BOOL = new Set(['aimEnabled', 'reloadEnabled', 'autoStart', 'stopOnAppChange', 'bodyFirst'])
-const AIM_COLOR = new Set(['reticleColor', 'targetColor', 'aimColor', 'reloadColor', 'headColor', 'bodyColor'])
-const AIM_BOX = new Set(['reticleBox', 'targetBox', 'aimBox', 'reloadBox', 'headBox', 'excludeBox'])
-function validateAim(raw: Record<string, unknown>, app: string): { cfg?: import('./types').AimConfig; error?: string } {
-  const out: Record<string, unknown> = { app }
-  for (const [k, v] of Object.entries(raw)) {
-    if (k === 'app' || k === 'updatedAt') continue
-    if (k === 'name') { if (typeof v === 'string' && v.trim()) out.name = v.trim().slice(0, 40); continue }
-    if (k === 'trigger') { if (v !== 'reticle' && v !== 'target' && v !== 'both') return { error: 'trigger must be reticle|target|both' }; out.trigger = v; continue }
-    if (k === 'mode') { if (v !== 'auto' && v !== 'headlock') return { error: 'mode must be auto|headlock' }; out.mode = v; continue }
-    if (k in AIM_NUM) { if (typeof v !== 'number' || !Number.isFinite(v)) return { error: `${k} must be a number` }; const [lo, hi] = AIM_NUM[k]; out[k] = (k === 'aimGain' || k === 'headGain' || k === 'headLead') ? Math.min(Math.max(v, lo), hi) : Math.round(Math.min(Math.max(v, lo), hi)); continue }
-    if (AIM_BOOL.has(k)) { if (typeof v !== 'boolean') return { error: `${k} must be boolean` }; out[k] = v; continue }
-    if (k === 'bodyColor' && v === '') { out.bodyColor = ''; continue }
-    if (AIM_COLOR.has(k)) { if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) return { error: `${k} must be #rrggbb (or an @colour name)` }; out[k] = v.toLowerCase(); continue }
-    if (AIM_BOX.has(k)) { const b = v as Record<string, unknown>; if (!b || typeof b !== 'object' || ![b.x, b.y, b.w, b.h].every((n) => typeof n === 'number' && Number.isFinite(n))) return { error: `${k} must be {x,y,w,h} (or an @region name)` }; out[k] = { x: Math.round(b.x as number), y: Math.round(b.y as number), w: Math.max(1, Math.round(b.w as number)), h: Math.max(1, Math.round(b.h as number)) }; continue }
-    return { error: `unknown aim field ${k}` }
-  }
-  return { cfg: out as unknown as import('./types').AimConfig }
-}
-async function aimEngine(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
-  const act = String(args.action ?? 'status').toLowerCase()
-  const r = room(env, deviceId)
-  const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
-  const stored = async () => ((await (await r.fetch(`https://do/aims?deviceId=${deviceId}${app ? `&app=${encodeURIComponent(app)}` : ''}`)).json()) as { aims: import('./types').AimConfig[]; status: unknown; online: boolean })
-  if (act === 'get') { const s = await stored(); return { ok: true, app, aim: s.aims[0] ?? null, lastStatus: s.status, online: s.online, hint: s.aims[0] ? undefined : 'no aim config for this app — aim_engine action=set' } }
-  if (act === 'status') {
-    const s = await stored()
-    const live = await executeTool(env, deviceId, 'aim_status' as string, {}, { internal: true }).catch(() => null)
-    return { ok: true, app, aimStatus: live?.ok ? live.data : s.status, configured: !!s.aims[0], online: s.online, hint: live?.ok ? undefined : 'phone did not answer aim_status (needs app v3.3+); showing last known' }
-  }
-  if (act === 'clear') {
-    await r.fetch(`https://do/aims?deviceId=${deviceId}${app ? `&app=${encodeURIComponent(app)}` : ''}`, { method: 'DELETE' })
-    const res = await executeTool(env, deviceId, 'aim_clear' as string, {}, { internal: true }).catch(() => null)
-    return { ok: true, app, cleared: true, phone: res?.ok ? 'cleared' : 'offline or old app' }
-  }
-  if (act === 'stop') { const res = await executeTool(env, deviceId, 'aim_stop' as string, {}, { internal: true }); return { ...res, hint: res.ok ? 'aim engine stopped' : 'phone did not accept aim_stop (needs app v3.3+)' } }
-  if (act === 'start') {
-    const s = await stored(); if (!s.aims[0]) return { ok: false, error: `no aim config for ${app || 'this app'} — aim_engine action=set first` }
-    // make sure the phone has the latest config, then start
-    await executeTool(env, deviceId, 'aim_config' as string, { aim: s.aims[0] }, { internal: true }).catch(() => null)
-    const res = await executeTool(env, deviceId, 'aim_start' as string, {}, { internal: true })
-    return { ...res, hint: res.ok ? (s.aims[0].mode === 'headlock' ? 'HeadLock running — the USER fires; while a real finger is on the fire button the crosshair is locked on the nearest head. Watch action=status: firing / locked / lockErrPx (px from the head, target ≤1) / locks / nudges / shizuku.' : 'aim engine running — watch action=status (holding/holdCount/fps). The user can also start/stop it from the bubble, the 🎯 notification button or Volume keys.') : (String(res.error ?? '').includes('Shizuku') ? 'HeadLock needs Shizuku: the user must open the Shizuku app → start (wireless debugging), then Device Relay → Shizuku card → allow. ' + res.error : 'phone did not accept aim_start (needs app v3.3+ and the game in the foreground)') }
-  }
-  if (act === 'set') {
-    if (!app) return { ok: false, error: 'app unknown — open the game or pass app' }
-    let raw: Record<string, unknown> = { ...((args.aim as Record<string, unknown>) ?? {}) }
-    for (const [k, v] of Object.entries(args)) if (k !== 'action' && k !== 'app' && k !== 'aim') raw[k] = v
-    if (profile) { const rr = resolveRefs(raw, profile); if (rr.error) return { ok: false, error: rr.error }; raw = rr.args }
-    const cur = (await stored()).aims[0]
-    const merged = { ...(cur ?? {}), ...raw }
-    delete (merged as Record<string, unknown>).updatedAt
-    const v = validateAim(merged as Record<string, unknown>, app); if (v.error || !v.cfg) return { ok: false, error: v.error }
-    if (!v.cfg.name) v.cfg.name = `${profile?.label ?? app.split('.').pop()} Aim`
-    const saved = (await (await r.fetch(`https://do/aims?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(v.cfg) })).json()) as { ok: boolean; aim: import('./types').AimConfig }
-    const phone = await executeTool(env, deviceId, 'aim_config' as string, { aim: saved.aim }, { internal: true }).catch(() => null)
-    return { ok: true, app, aim: saved.aim, phone: phone?.ok ? 'synced' : 'offline or old app (<3.3) — will sync on next connect', hint: 'aim_engine action=start to run it now; autoStart launches it when the game opens.' }
-  }
-  return { ok: false, error: `unknown aim_engine action '${act}' (set|start|stop|status|get|clear)` }
-}
-
-async function gameBot(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
-  const act = String(args.action ?? 'list').toLowerCase()
-  const r = room(env, deviceId)
-  const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
-  const list = async () => ((await (await r.fetch(`https://do/bots?deviceId=${deviceId}`)).json()) as { bots: import('./types').Bot[]; status: unknown })
-  const findBot = (bots: import('./types').Bot[]) => bots.find((b) => (args.id && b.id === args.id) || (args.name && b.app === app && b.name === String(args.name).toLowerCase().replace(/[^a-z0-9_-]/g, '-')))
-  if (act === 'list') { const { bots, status } = await list(); const mine = app ? bots.filter((b) => b.app === app) : bots; return { ok: true, app, count: mine.length, bots: mine.map((b) => ({ id: b.id, name: b.name, app: b.app, description: b.description, rules: b.rules.length, runs: b.runs ?? 0, lastRun: b.lastRun, ...(b.tuned ? { tuned: b.tuned } : {}), ...(b.autoStart ? { autoStart: true } : {}), ...(b.assist ? { assist: true } : {}), ...(b.template ? { template: b.template } : {}) })), others: bots.length - mine.length, botStatus: status } }
-  if (act === 'status') { const s = (await (await r.fetch(`https://do/bot-status?deviceId=${deviceId}`)).json()) as { status: unknown; online: boolean }; const live = await executeTool(env, deviceId, 'bot_status' as string, {}, { internal: true }).catch(() => null); return { ok: true, botStatus: live?.ok ? live.data : s.status, online: s.online, hint: live?.ok ? undefined : 'phone did not answer bot_status (needs app v2.6+); showing last known' } }
-  if (act === 'get') { const { bots } = await list(); const b = findBot(bots); return b ? { ok: true, bot: b } : { ok: false, error: 'bot not found', available: bots.map((x) => ({ id: x.id, name: x.name, app: x.app })) } }
-  if (act === 'delete') { const { bots } = await list(); const b = findBot(bots); if (!b) return { ok: false, error: 'bot not found' }; const res = (await (await r.fetch(`https://do/bots?deviceId=${deviceId}&id=${encodeURIComponent(b.id)}`, { method: 'DELETE' })).json()) as ToolResult; return { ...res, deleted: b.name } }
-  if (act === 'stop') { const res = await executeTool(env, deviceId, 'bot_stop' as string, {}, { internal: true }); return { ...res, hint: res.ok ? 'bot stopped' : 'phone did not accept bot_stop (needs app v2.6+)' } }
-  if (act === 'run') {
-    const { bots } = await list(); const b = findBot(bots); if (!b) return { ok: false, error: 'bot not found', available: bots.map((x) => ({ id: x.id, name: x.name })) }
-    const res = await executeTool(env, deviceId, 'bot_start' as string, { botId: b.id }, { internal: true })
-    return { ...res, bot: { id: b.id, name: b.name }, hint: res.ok ? `bot '${b.name}' is running on the phone; the user can stop it from the notification. Observe for ~20s and fix rules if needed.` : 'phone refused bot_start — is the Android app v2.6+ and the game in the foreground?' }
-  }
-  if (act === 'templates') return { ok: true, templates: templateSummary(), hint: 'game_bot action=template template=<id> params={...@names...}. Set the @names with game_profile first (sample_colors/find_objects to pick a UNIQUE stable colour).' }
-  let template: string | undefined
-  if (act === 'template') {
-    const t = BOT_TEMPLATES.find((x) => x.id === String(args.template ?? '').toLowerCase())
-    if (!t) return { ok: false, error: `unknown template ${args.template}`, available: BOT_TEMPLATES.map((x) => x.id) }
-    const params = (args.params && typeof args.params === 'object' ? args.params : {}) as Record<string, unknown>
-    for (const pd of t.params) if (pd.default !== undefined && params[pd.key] === undefined) params[pd.key] = pd.default
-    const missing = t.params.filter((pd) => pd.required && params[pd.key] === undefined).map((pd) => `${pd.key} (${pd.kind}: ${pd.doc})`)
-    if (missing.length) return { ok: false, error: `template ${t.id} needs params: ${missing.join('; ')}`, params: t.params }
-    try { args.rules = t.build(params) } catch (e) { return { ok: false, error: `template ${t.id}: ${(e as Error).message}`, params: t.params } }
-    if (params.mode === 'assist' || params.mode === 'trigger') args.assist = true
-    args.tickMs ??= t.tickMs
-    args.name ??= `${t.id}-bot`
-    args.description ??= t.title
-    template = t.id
-  }
-  if (act === 'create' || act === 'update' || act === 'template') {
-    if (!app) return { ok: false, error: 'could not determine the current app; pass app=<package>' }
-    let existing: import('./types').Bot | undefined
-    if (act === 'template') { const { bots } = await list(); existing = findBot(bots) } // template re-run with the same name = overwrite
-    if (act === 'update') { const { bots } = await list(); existing = findBot(bots); if (!existing) return { ok: false, error: 'bot not found for update' } }
-    const nameRaw = String(args.name ?? existing?.name ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 40)
-    if (!nameRaw) return { ok: false, error: 'name required' }
-    let rulesIn: unknown = args.rules ?? existing?.rules
-    if (!rulesIn) return { ok: false, error: 'rules required' }
-    // resolve @names inside rules against the profile
-    if (hasRef(rulesIn)) {
-      if (!profile) return { ok: false, error: `rules use @names but no game_profile exists for ${app}` }
-      const rr = resolveRefs({ rules: rulesIn } as Record<string, unknown>, profile)
-      if (rr.error) return { ok: false, error: rr.error, profile: { controls: Object.keys(profile.controls), colors: Object.keys(profile.colors), regions: Object.keys(profile.regions) } }
-      rulesIn = (rr.args as { rules: unknown }).rules
-    }
-    const v = validateRules(rulesIn)
-    if (v.error) return { ok: false, error: v.error }
-    const hasStop = v.rules!.some((x) => x.then.some((a) => a.type === 'stop_bot'))
-    const bot: import('./types').Bot = {
-      id: existing?.id ?? `bot_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, app, label: profile?.label, name: nameRaw,
-      description: typeof args.description === 'string' ? args.description.slice(0, 200) : existing?.description,
-      rules: v.rules!, tickMs: isFin(args.tickMs) ? Math.min(Math.max(args.tickMs, 50), 2000) : existing?.tickMs ?? 120,
-      maxRunMs: isFin(args.maxRunMs) ? Math.min(Math.max(args.maxRunMs, 10_000), 21_600_000) : existing?.maxRunMs ?? 1_800_000,
-      stopOnAppChange: typeof args.stopOnAppChange === 'boolean' ? args.stopOnAppChange : existing?.stopOnAppChange ?? true,
-      ...((typeof args.autoStart === 'boolean' ? args.autoStart : existing?.autoStart) ? { autoStart: true } : {}),
-      ...((typeof args.assist === 'boolean' ? args.assist : existing?.assist) ? { assist: true } : {}),
-      ...(existing?.learned ? { learned: existing.learned } : {}),
-      ...(existing?.tuned ? { tuned: existing.tuned } : {}),
-      ...((typeof args.autoApplyLearned === 'boolean' ? args.autoApplyLearned : existing?.autoApplyLearned) === false ? { autoApplyLearned: false } : {}),
-      createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(), ...(template ? { template } : existing?.template ? { template: existing.template } : {}),
-    }
-    const res = (await (await r.fetch(`https://do/bots?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bot) })).json()) as ToolResult
-    if (!res.ok) return res
-    const ruleNames = bot.rules.map((x) => x.name)
-    return { ok: true, action: act, bot: { id: bot.id, name: bot.name, app, rules: bot.rules.length, ruleNames, tickMs: bot.tickMs, maxRunMs: bot.maxRunMs, ...(template ? { template } : {}) }, warnings: hasStop ? [] : ['no stop_bot rule — add a GAME OVER / popup safety rule'], hint: `saved and pushed to the phone. Start: game_bot action=run name="${bot.name}" — or the user taps ▶ in the Device Relay notification. Tell the user the bot name.` }
-  }
-  return { ok: false, error: 'action must be create|update|list|get|delete|run|stop|status|template|templates' }
 }
 
 // ---------------------------------------------------------------- v2.3 game profile

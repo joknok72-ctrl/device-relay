@@ -6,7 +6,7 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; bots?: { id: string; app: string; name: string; description?: string; rules: unknown[]; runs?: number; lastRun?: { start: number; end?: number; fired: number; stoppedBy?: string }; autoStart?: boolean; assist?: boolean; template?: string; learned?: Record<string, number> }[]; botStatus?: { running: boolean; name?: string; fired?: number } | null }
+export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; }
 
 export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = [], screens: ScreenLabel[] = [], extras: BootstrapExtras = {}): string {
   const profiles = extras.profiles ?? []
@@ -31,11 +31,6 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
   const sessionsBlock = sessions.length === 0
     ? '  (no play history yet)'
     : sessions.slice(0, 8).map((s) => `  ${new Date(s.start).toISOString().slice(0, 16).replace('T', ' ')}  ${Math.max(1, Math.round((s.end - s.start) / 60000))}min  ${s.label ?? s.app}  ${s.commands} cmds${s.failed ? ` (${s.failed} failed)` : ''}${s.report ? `  → ${s.report.outcome ?? 'report'}${s.report.score !== undefined ? ` ${s.report.score}` : ''}: ${s.report.summary.slice(0, 80)}` : '  (no report)'}`).join('\n')
-  const bots = extras.bots ?? []
-  const botsFor = (app: string) => bots.filter((b) => b.app === app)
-  const fmtBots = (list: typeof bots) => list.map((b) => `  🤖 ${b.name}  (${b.app})  ${b.rules.length} rules, ran ${b.runs ?? 0}x${b.lastRun ? `, last: ${b.lastRun.fired} fired${b.lastRun.stoppedBy ? `, stopped by ${b.lastRun.stoppedBy}` : ''}` : ''}${b.autoStart ? '  [autoStart]' : ''}${b.assist ? '  [assist: user plays, bot helps]' : ''}${b.template ? `  [template:${b.template}]` : ''}${b.learned && Object.keys(b.learned).length ? `  learned: ${Object.entries(b.learned).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}${b.description ? `  — ${b.description}` : ''}`).join('\n')
-  const botsBlock = bots.length ? fmtBots(bots) : '  (no bots yet — see section 8; the user wants bots they can start from the notification)'
-  const botLive = extras.botStatus?.running ? `⚠ A BOT IS RUNNING RIGHT NOW on the phone: ${extras.botStatus.name} (${extras.botStatus.fired ?? 0} fired). Do not send input while it runs unless asked; game_bot action=stop to take over.` : ''
   const cur = profiles.find((p) => p.app === currentApp)
   const curNotes = notes.filter((n) => n.app === currentApp)
   const curMacros = macros.filter((m) => m.app === currentApp)
@@ -45,8 +40,6 @@ ${cur ? `You already know this game${cur.genre ? ` (genre: ${cur.genre} → foll
 ${fmtProfile(cur)}` : 'No profile for this app yet → first turn: observe + sample_colors, calibrate each control, then game_profile set:{...}.'}
 ${curNotes.length ? `Notes for this game: ${curNotes.map((n) => n.text).join(' | ')}` : ''}
 ${curMacros.length ? `Macros for this game: ${curMacros.map((m) => `run_macro "${m.name}"`).join(', ')}` : ''}
-${botsFor(currentApp).length ? `Bots for this game (user starts them from the notification; you can game_bot action=run/stop/update):\n${fmtBots(botsFor(currentApp))}` : 'No bot for this game yet → if the user wants to relax, build one (section 8).'}
-${botLive}
 Suggested first call:  ${cur ? './phone.sh look' : './phone.sh look 100 && ./phone.sh palette'}
 When you finish (or get stuck):  session_report summary="..." outcome=win|loss|progress|stuck score=N nextTime="..."  — mandatory, it is how the next chat gets smarter.
 `
@@ -157,9 +150,6 @@ ${profilesBlock}
   observe is PROFILE-AWARE (v2.4): when a profile exists it also returns game.objects (each @color → count + biggest blobs) and game.values (numeric @regions like @score → number). One look = full game state.
   session_report at the end of EVERY session (summary, outcome, score, learned[], nextTime). bestScore is tracked; the next chat sees the last report in QUICK START and 5f.
 
-## 5h. Bots on this device (game_bot)
-${botsBlock}
-
 ## 5g. Play history on this device (most recent first)
 ${sessionsBlock}
 
@@ -170,7 +160,7 @@ Everything above (notes, macros, screens) is grouped per app package. If the use
 The human can also review/delete/export all of it visually in the owner panel (/setup, section "ذاكرة الـ AI"). Never keep relying on notes that contradict what you observe — delete them and re-learn.
 
 ## 6. Operating rules
-0. START of every session: read section 0 (QUICK START, incl. the previous session's report and NEXT TIME advice), 5f (profiles) and 5h (bots). If the user asks for a bot / "بوت" / "يلعب لوحده" / to relax → section 8 is your whole task. END of every session: session_report. If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
+0. START of every session: read section 0 (QUICK START, incl. the previous session's report and NEXT TIME advice) and 5f (profiles). YOU are the player: there are no bots — when the user says "play" / "العب" you play, live, with the fast loop in section 7a. END of every session: session_report. If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
 1. Observe before acting: "ui" first (exact, cheap). Use "look" (observe) when visuals matter (games, images, WebView) or when ui is empty — it gives image + text + app + diff at once.
 2. After every action that changes the screen, observe again and verify before the next step.
 3. Coordinates are ORIGINAL screen pixels (screen.w x screen.h). Elements from "ui" are already original. Screenshot px / scale = original.
@@ -184,68 +174,20 @@ The human can also review/delete/export all of it visually in the owner panel (/
 10. For OTP codes / incoming messages use "notifs" (get_notifications) instead of opening apps.
 11. Read section 5b first; after finishing, "remember" anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
 
-## 7b. SHOOTERS → use aim_engine (v3.3, NATIVE) — NOT game_bot
-For Free Fire / PUBG / CODM / any shooter the rule bot is the WRONG tool (one screenshot per tick + separate taps = burst-stop-burst, and colour rules shoot at walls). aim_engine is a compiled loop inside the app: ~30 fps frame analysis, ONE real finger that stays pressed on the fire button for as long as the trigger holds and lifts the instant it clears — exactly what a player means by "hold fire while the crosshair is red".
-  • trigger=reticle (default, recommended): the GAME's own crosshair turns red when an enemy is under it → the engine holds fire while that red is inside reticleBox around the crosshair. Zero false positives, works on every skin/map. trigger=target: fire while an enemy colour is in the tiny box under the crosshair. both = either.
-  • aimEnabled:true adds aim assist (nearest enemy-colour blob → smooth camera drag onto it, aimOffsetY to lift onto the head). Off by default: most players want trigger-only.
-  • Reload: when the ammo counter turns red the finger lifts, reload is tapped, firing resumes.
-  • Hands-free: autoStart (default true) starts ~2 s after the game opens; bubble / 🎯 notification button / Volume-Up×2 start, Volume-Down×2 or ■ stop.
-  • HEADLOCK (v3.4, app 3.4+ with Shizuku): when the user says "I play and shoot myself — just make my shots hit the HEAD" use mode:"headlock". The engine is idle until a REAL finger is on the fire button (it reads the kernel touch stream through Shizuku), then it locks the crosshair on the head of the nearest enemy with a 2nd finger written into the touchscreen itself (nothing gets cancelled), sub-pixel head centre, closed loop each frame until lockErrPx ≤ headDeadzone (1 px). Nothing else: no auto-fire, no reload. Setup: aim_engine set aim:{mode:"headlock", fireX/fireY:"@fire", crosshairX/Y:"@crosshair", lookX/Y:"@look", headColor:"@skin", bodyColor:"@cloth", headBox:"@headzone"} → start → status: shizuku must be "ready" (else tell the user: open Shizuku → start → Device Relay → Shizuku card → allow). Tune: lockErrPx stays >3 while firing → raise headGain (1.45 → 1.8) or headMaxStep; overshoots/oscillates → lower headGain, raise headDeadzone to 2; locks on hands → set bodyColor; misses moving heads → raise headLead (0.6 → 0.9).
-  Procedure: aim_engine action=get (already configured? defaults are calibrated for Free Fire 1600x720 landscape) → if not: capture_screen, locate fire button (Free Fire: the bullet icon right side), crosshair centre, look area, sample the red reticle colour with get_pixels while the user aims at an enemy → aim_engine action=set aim:{fireX,fireY,crosshairX,crosshairY,lookX,lookY,reticleColor,reticleBox,...} (accepts @names) → action=start → action=status while the user plays: holdCount grows when the reticle turns red, heldMs = total fire time, fps ≈ 25-30 → tune reticleTol/reticleMin/releaseFrames. Requires app v3.3+ (older app: "phone did not accept aim_start" → tell the user to update from the setup page).
-
-## 8. BOT BUILDER (game_bot) — for everything that is NOT a shooter — the user's favourite feature: a bot that plays WITHOUT you, started from the phone notification, costs zero tokens
-Why: the user wants to press ▶ and relax. HANDS-FREE controls (app v2.8+): a floating bubble over the game (tap = start/stop, drag to move, long-press = hide), double-press Volume-Up = start / Volume-Down = stop, the notification ▶/↻/■, and autoStart:true on the bot = it starts by itself ~2 s after the game opens (the user only opens the game). Offer autoStart when the user says they want zero effort. The user can ALSO build bots alone, without you, in the visual Bot Builder (${origin}/builder/<token> — linked from the setup page): pick a game type, tap the enemy colour/buttons on a screenshot, save. If the user mentions a bot you did not create, it probably came from there (template field set) — inspect it with game_bot get and improve it with update. Your job in a session is often NOT to play — it is to BUILD, TEST and TUNE a bot, then hand it over. The bot must play BETTER than a human: it reacts in ~70 ms, never blinks, never tires.
-The bot is a list of rules the PHONE evaluates every tickMs on the live frame: WHEN [colour/object/pixel/text/number conditions] THEN [taps/swipes/joystick/aim/fire/combo]. Everything is by pixels/colours, so it is fast and needs no AI.
-
-FASTEST PATH — templates (one call, tuned rules, safety included). Use them FIRST, hand-write rules only for unusual games:
-  game_bot action=templates → list. Then: game_profile set:{controls,colors,regions} for the @names the template needs → game_bot action=template template=shooter params={enemy:"@enemy", fire:"@fire", look:"@look", stick:"@stick", hp:"@hp", sensitivity:0.9} → action=run → observe 20 s → action=status → tweak with action=update or re-run the template with new params (same name = overwrite).
-  Templates: shooter (aimbot+auto-fire+camera sweep+advance+low-HP retreat) · runner (obstacle in lane → swipe/jump, coin steering) · rhythm (per-lane hit zones) · idle_tapper · clicker (tap every object: whack/pop/catch) · puzzle_match (hint colour) · fishing (indicator enters zone) · racing (steer away from edge colour, gas, nitro).
-  Common params: gameOverText ("GAME OVER"; false to disable), gameOverColor, close:true (+@close colour), playButton:true (+playText).
-
-COLOUR STRATEGY — this decides whether the bot works (most important part of the job):
-  • Every kind of thing the bot must react to gets ITS OWN @color in game_profile: @enemy, @enemyHead, @coin, @obstacle, @bomb, @note, @closeX, @hpBar… Many things in the game ⇒ many colours. Never reuse one colour for two meanings.
-  • Choose colours that are UNIQUE on screen and STABLE across skins/maps: name-tags, health bars, hit markers, head outlines, UI glows, red damage arrows — NOT bodies/clothes (skins change) and NOT anything that also appears in the background. Check with sample_colors (dominant colours) then find_objects for the candidate colour: it should return exactly the objects you mean (count ≈ number of enemies) and 0 objects on a screen without them. If a colour also hits the minimap/HUD, restrict the rule with region (exclude the HUD).
-  • SHOOTERS: if the game has an "enemy highlight / outline / nametag colour" setting (Free Fire, PUBG, CoD have them), tell the user to switch it to a vivid unique colour (e.g. bright magenta or lime) — that becomes @enemy and detection becomes near-perfect. Heads: use the small blob above the body (object_present with maxSize) as @enemyHead for headshots; body = larger blob.
-  • Several variants of one thing (teams, skins, note colours): colors:["@enemyRed","@enemyBlue"] in ONE condition (any-of), up to 8.
-  • match:"hue" (v3.1) for anything 3D/shaded: compares hue only (tolerance = degrees, 18-30) so a red outline stays red in shadow and in sunlight; rgb (default) for flat UI colours (tolerance 24-40). lockRadius keeps the same enemy between ticks; fire_burst gateErr skips shots while the aim is still far off. minSize (object_present) filters noise; maxSize separates head from body. forMs 100-300 kills single-frame flicker.
-
-SHOOTER — THREE MODES (template=shooter, params.mode). Ask the user which one, default assist:
-  • assist (most wanted by Free Fire players): THE USER PLAYS — moves, turns the camera, picks fights. The bot watches for the HEAD colour; when a head is within assistRange (default 320 px) of the crosshair it injects a ≤40 ms aim nudge that puts the crosshair on the head (predictMs leads running targets) and fires a burst, then gives control back. Feels like a strong aim-assist + headshot trigger. Needs: head (colour), fire, look. Optional crosshair, hp+heal (auto-heal).
-  • trigger: the user aims; the bot only fires when the head is under the crosshair (maxRange). Zero aim interference.
-  • full: plays alone (below). Needs enemy, fire, look, stick.
-  Head colour: in Free Fire/PUBG/CoD settings turn on enemy highlight/outline with a vivid colour → @head = that colour (small blobs, maxSize 90 separates heads from bodies). If only the body is highlighted, use headOffsetY:-25 so shots land above the blob centre.
-SHOOTER BOT ANATOMY — full mode (what a strong Free Fire / PUBG / CoD bot looks like — the template builds exactly this):
-  1. aim-and-fire (priority 10, cooldown 40): when object_present @enemy pick:nearest (nearest to the crosshair) → aim_to_found at:@look (drags the camera so the crosshair lands on the target; sensitivity = px dragged per px of error — calibrate: aim dx 200 and measure how far the world moved; too high = overshoot/jitter, too low = slow) → fire_burst at:@fire count 6 intervalMs 70. Because tick is 70 ms, this re-aims and re-fires continuously = tracking + spray.
-  2. sweep-and-advance (priority 1): when object_absent @enemy forMs 600 → aim alternate:true dx 260 (camera turns right, next time left — LOOKS AROUND, so it never stares at a wall) + joystick @stick up 450 (advances). Add dy sweeps too if enemies come from above/below (rooftops).
-  3. low-hp (priority 20): number_below @hp 30 → tap @heal + joystick down 900 (retreat). Or color_present @lowHpRed.
-  4. safety: text_present "GAME OVER"/"DEFEAT"/"VICTORY" → stop_bot; popup close; auto-"PLAY AGAIN" with maxFires if the user wants continuous matches.
-  Also useful: fire_burst holdMs for auto guns; a crouch/jump tap on every_ms 4000 to be harder to hit; separate @enemyHead rule with priority 11 and small deadzone for headshots.
-
-Procedure (30-60 tool calls, then the user is free):
-  1. observe grid:100 + sample_colors → understand the screen. game_profile genre=... set:{controls,colors,regions} (the bot rules will reference these @names). For shooters ALWAYS set @fire, @look (empty aim area, right half), @stick, and @enemy.
-  2. Find the TRIGGERS and VERIFY each colour with find_objects on 2-3 different moments (with and without the thing on screen).
-  3. game_bot action=template … (or action=create with 3-8 rules ordered by priority: safety → core reactions → fallback every_ms/idle rule).
-  4. game_bot action=run → observe every ~5 s for 20-30 s (observe still works while the bot runs) → game_bot action=status: learned shows the self-tuned aim sensitivity (aim_to_found adapts its gain from overshoot/undershoot; the relay bakes it into the rule automatically when the run ends — bot.tuned counts it — so every run starts where the last one ended), ruleHits tells which rule fires (a core rule with 0 hits = wrong colour/region/minSize; a rule firing constantly = tolerance too high) and avgTickMs (if > tickMs, remove text conditions or shrink regions) → update → run again.
-  5. When it survives 60 s: session_report + remember the working params ("shooter bot: @enemy=#ff00ff tol 36, sensitivity 0.8") + tell the user: "البوت اسمه X — شغّله من الإشعار (▶ X) وهو في اللعبة، وأوقفه من ■". Say what it handles and what it does not.
-
-Rule cookbook (copy, then replace @names):
-  popup/ad:    {name:"close-ad", priority:100, when:[{type:"text_present",text:"Close"}], then:[{type:"tap_found"}]}   or when:[{type:"color_present",color:"@closeX",region:"@topRight",minCount:15}] then:[{type:"tap_found"}]
-  game over:   {name:"game-over", priority:90, when:[{type:"text_present",text:"GAME OVER"}], then:[{type:"wait",ms:1500},{type:"tap",at:"@retry"}]}    or then:[{type:"stop_bot"}]
-  tap object:  {name:"hit", when:[{type:"object_present",color:"@target",region:"@playfield",minSize:16,pick:"largest"}], then:[{type:"tap_all_found",max:5}], cooldownMs:0}
-  dodge:       {name:"jump", when:[{type:"color_present",color:"@obstacle",region:"@laneAhead",minCount:60}], then:[{type:"swipe",x1:"@player",y1:"@player",x2:"@player",y2:"@player-500",duration:90}], cooldownMs:300}
-  rhythm:      one rule per lane, exclusive:false: when:[{type:"color_present",color:"@note",region:"@hit1",minCount:30}] then:[{type:"tap",at:"@lane1"}] cooldownMs:90, tickMs:50
-  aimbot:      {name:"aim-fire", priority:10, when:[{type:"object_present",colors:["@enemy","@enemy2"],pick:"nearest",minSize:10,tolerance:36}], then:[{type:"aim_to_found",at:"@look",sensitivity:0.9,maxStep:320,deadzone:14},{type:"fire_burst",at:"@fire",count:6,intervalMs:70}], cooldownMs:40}
-  look around: {name:"sweep", priority:1, when:[{type:"object_absent",color:"@enemy",minSize:10,forMs:600}], then:[{type:"aim",at:"@look",dx:260,dy:0,duration:140,alternate:true},{type:"joystick",at:"@stick",direction:"up",duration:450}], cooldownMs:500}
-  heal:        {name:"heal", priority:20, when:[{type:"number_below",region:"@hp",value:30}], then:[{type:"tap",at:"@medkit"}], cooldownMs:8000}
-  once:        {name:"start", when:[{type:"text_present",text:"PLAY"}], then:[{type:"tap_found"}], maxFires:1}
-  clicker:     {name:"farm", when:[{type:"always"}], then:[{type:"repeat_tap",at:"@coin",count:10,intervalMs:60}], cooldownMs:0}
-  timeout:     maxRunMs:3600000 (1 h) so the phone does not run all night unless asked.
-Rules of thumb: color/object conditions ≈ 5-15 ms, text ≈ 150 ms (menus/game-over only; tickMs ≥ 200 if several). Small regions → faster + fewer false positives. cooldownMs ≥ the game's animation time. exclusive:true (default) = one rule per tick; exclusive:false for rules that must run alongside others. tickMs 60-80 for shooters/rhythm/runners, 120 default, 300+ for idle games. ALWAYS include a stop/close rule. Never say "done" until status shows the core rule firing and observe shows the bot really hitting.
+## 7a. HOW TO PLAY LIVE, FAST — the AI is the player (v4.0)
+The bottleneck is round trips, not thinking. A human reacts in ~200 ms; you reach that by making the PHONE do the reflexes and by never spending a round trip on "just looking":
+  1. NEVER capture_screen alone. Every action goes through act_and_see (image + what changed, ONE trip) or observe (image + OCR + @colours + objects + screen name, ONE trip). Use maxWidth 540-720 jpeg; only go full-size for pixel measurements.
+  2. Delegate reflexes to the phone: auto_react (colour appears in a zone → tap/swipe within ~80 ms, up to 200 triggers / 40 s, multi-lane, stopColor), game_loop (phone repeats WHEN-observation → THEN-action for N rounds, with else/stopWhen), do_until (retry an action until an observation holds), wait_pixel / watch_color / wait_for_text (block on the phone until the moment arrives — zero polling). You decide strategy every few seconds; the phone executes the tactics at frame rate.
+  3. One combo per engagement: combo steps [{op:"joystick"...},{op:"aim"...},{op:"fire"...},{op:"up",finger:-1}] = move + aim + fire in a single request on separate fingers. joystick release:false keeps running between calls.
+  4. Predict, don't chase: track_object gives velocity + predicted position; aim/tap where the target WILL be.
+  5. Measure once, save forever: calibrate each control (reaction ms), aim ratio (dx px per world-px), colours with sample_colors + find_objects verification → game_profile set. Next session starts at full speed from QUICK START.
+  6. Cadence: act_and_see → (auto_react or game_loop for 5-20 s) → observe → adjust. Report score with read_number/watch_value; session_report at the end with nextTime advice.
+  7. Shooters: the crosshair of most games turns RED when an enemy is under it — save that colour as @ring and a small box around the crosshair as @reticle: auto_react color:"@ring" region:"@reticle" tapX/tapY at:"@fire" = fire the instant the game confirms a target (no false shots). For heads use find_objects on the skin/head colour with maxSize and aim at cy minus a few px.
 
 ## 7. GAME PLAYBOOK (canvas / OpenGL apps have NO ui tree — vision + precise input only)
 You will play MANY different games. First thing in any game: decide its genre and store it (game_profile genre=shooter|runner|puzzle|rhythm|strategy|rpg|racing|fighting|casual) — then follow that genre's section below. Switching games = switching profiles automatically (everything is keyed by package); never carry @names or assumptions from one game into another.
 
-### 7.shooter — Free Fire, PUBG, CoD Mobile, Brawl Stars, any twin-stick / FPS / TPS  (needs Android app v2.5+)
+### 7.shooter — Free Fire, PUBG, CoD Mobile, Brawl Stars, any twin-stick / FPS / TPS  (Android app v2.5+)
   Controls to find & save once: @stick (movement joystick centre, usually bottom-left), @look (empty area on the right half for camera drag), @fire (fire button, bottom-right), @aim/@scope, @jump, @crouch, @reload, @skill1.. ; colours: @enemy (enemy nameplate/outline or health-bar red), @teammate, @loot; regions: @hp (own health bar), @ammo, @minimap, @killfeed.
   Move:   joystick at:"@stick" direction:"up" duration:2000 release:false      (hold-to-run; call again with another direction to steer; finger op=up finger=0 to stop)
   Look:   aim at:"@look" dx:+/-N dy:+/-N   (turn right = +dx; look up = -dy). Fine aim: dx 30-80. 180° turn: dx 600-900. Measure once: aim dx:200 then observe how far the world moved; remember the ratio.

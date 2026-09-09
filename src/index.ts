@@ -14,7 +14,7 @@ import { authenticate, canAccess, extractToken, randomToken, rateLimit, registry
 
 export { DeviceRoom, DeviceRegistry }
 
-const VERSION = '3.4.0'
+const VERSION = '4.0.0'
 
 type Auth = AuthContext & { readOnly?: boolean }
 type Env = { Bindings: AuthEnv; Variables: { auth: Auth } }
