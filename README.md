@@ -189,6 +189,14 @@
 - **أداة الـ AI**: `aim_engine action=set|start|stop|status|get|clear` — تقبل `@names` من `game_profile` (`@fire, @look, @reload, @crosshair`, ألوان `@ring/@skin/@reloadRed`, مناطق `@reticle/@headzone/@ammo`) مع تحقق وقصّ للقيم (`validateAim`). القيم الافتراضية معايَرة لـ Free Fire على RMX3269 (1600×720). `agent/phone.sh aim ...`. الـ bootstrap يوجّه الـ AI: شوترز → `aim_engine`، غير ذلك → `game_bot`.
 - Android **3.3.0** (versionCode 16). 80 أداة، 44 فحصًا جديدًا (`tests/e2e-v33.sh`).
 
+**🎯 v3.4 — HeadLock: أنت تلعب وتضرب، وطلقاتك تروح على الرأس (بالملّي) — عبر Shizuku**
+- **المطلوب من المستخدم**: «أنا ألعب كل شيء بنفسي؛ فقط لما أضغط زر الضرب تكون الطلقة على الرأس». مستحيل بخدمة إمكانية الوصول وحدها: Android يلغي أي لمسة مصنّعة لحظة ما يتحرك إصبع حقيقي (والعكس) — فأي "تصويب" كان سيرفع إصبعك من زر الضرب.
+- **الحل — `TouchProxyService` داخل خدمة مستخدم Shizuku (uid shell)**: يفتح عقدة شاشة اللمس في النواة `/dev/input/eventN` قراءةً وكتابةً. **قراءة**: يعرف مواضع أصابعك الحقيقية بأقل من مللي ثانية (بدون لقطة شاشة) → "إصبع على زر الضرب = أنت تضرب". **كتابة**: يكتب إصبعنا كـ MT slot حقيقي داخل نفس تيار شاشة اللمس (بروتوكول Linux MT type-B، tracking id مرتفع لا يتصادم مع الدرايفر) → بالنسبة لـ Android هو إصبع ثانٍ من نفس الشاشة، لا حقن ولا إلغاء. ربط `bindSlot`: لو رفعت إصبعك من الضرب يُرفع إصبعنا فورًا حتى لو تعطّل التطبيق. تحويل الإحداثيات raw↔display لكل الدورانات.
+- **`AimEngine` وضع `mode:"headlock"`**: خامل تمامًا وأنت تلعب (استطلاع 20Hz لتيار اللمس فقط، بدون التقاط). عند ضغطك على الضرب (`fireRadius` حول `@fire`): التقاط 30fps → أقرب كتلة جلد للشعيرة (`headColor`, `lockRange`) مع تفضيل الاستمرارية مع الرأس السابق وتفضيل الكتل التي تحتها لون قماش العدو (`bodyColor` = يرفض الأيادي والأغراض) → **تنقية بدقّة كاملة** لصفوف الكتلة العلوية: أعلى صف جلد + متوسط x لأول `headTopRows` صفوف = مركز الرأس بدقّة sub-pixel (`headTopOffset` تحت الحافة) → حلقة مغلقة كل إطار تسحب الكاميرا بإصبعنا حتى يصبح خطأ الشعيرة ≤ `headDeadzone` (افتراضي **1px**), مع feed-forward بالسرعة `headLead` للرؤوس المتحركة، وثبات `stickyMs` عند اختفاء لحظي، وإعادة تمركز إصبع السحب بعد `lookTravel`. رفعت إصبعك → توقف فوري. لا ضرب تلقائي، لا reload، لا شيء آخر.
+- **الحالة**: `firing/locked/lockErrPx/locks/nudges/headX/headY/shizuku(absent|denied|granted|binding|proxy-not-ready|ready)`; كارت Shizuku في التطبيق (سماح/تحديث) ونص الإشعار/الفقاعة يعرض «🎯 على الرأس Npx».
+- **الـ relay**: حقول HeadLock في `aim_engine` مع قصّ وتحقق (`mode`, `headColor/@skin`, `bodyColor/@cloth` أو "" للإيقاف, `headBox/@headzone` …)، تلميحات Shizuku، bootstrap يوجّه: «أنا أضرب وحدي» ⇒ headlock. 15 فحصًا جديدًا.
+- Android **3.4.0** (versionCode 17): تبعيات `dev.rikka.shizuku:api/provider 13.1.5`، AIDL `ITouchProxy`، `ShizukuProvider` في الـ Manifest. يحتاج Shizuku يعمل (لاسلكي، Android 11+) + السماح للتطبيق.
+
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
 - `agent_runner.py`: حلقة AI مستقلة (رؤية → قرار → تنفيذ → تحقق) + سيناريوهات تكرارية + REPL
@@ -465,7 +473,7 @@ echo 'RELAY_TOKEN=dev-secret-token-123' > .dev.vars
 npm run build            # typecheck
 npx wrangler dev --port 3000
 node tests/fake-phone.mjs ws://localhost:3000 dev-secret-token-123 test-phone
-tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v32.sh && tests/e2e-v33.sh   # ~1030 checks green  (or: tests/run-all.sh)
+tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && tests/e2e-v18.sh && tests/e2e-v19.sh && tests/e2e-v20.sh && tests/e2e-v21.sh && tests/e2e-v22.sh && tests/e2e-v23.sh && tests/e2e-v24.sh && tests/e2e-v25.sh && tests/e2e-v32.sh && tests/e2e-v33.sh   # ~1045 checks green  (or: tests/run-all.sh)
 ```
 
 ## Data Architecture
@@ -496,6 +504,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-09 (v3.3 — native `AimEngine` for shooters: held-finger fire while game reticle is red, hysteresis, aim assist, auto-reload; `aim_engine` tool; 80 tools; ~1030 e2e checks; Android 3.3.0)
+- **Last Updated**: 2026-09-09 (v3.4 — HeadLock: user fires, engine locks the crosshair on the head via a Shizuku kernel-touch proxy (no gesture cancellation), sub-pixel head finder, 1px closed loop; 80 tools; ~1045 e2e checks; Android 3.4.0)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
