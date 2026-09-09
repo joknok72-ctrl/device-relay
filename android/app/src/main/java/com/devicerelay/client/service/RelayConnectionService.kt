@@ -164,6 +164,7 @@ class RelayConnectionService : Service() {
         val fg = runCatching { svc.currentPackage() }.getOrNull()
         val hasBots = bots.isNotEmpty() && fg != null && bots.any { it["app"]?.toString()?.trim('"') == fg }
         val asx = AimEngine.status
+        if (asx.running && asx.mode == "headlock") { svc.updateOverlay("■ ${asx.name}", (if (!asx.firing) "🎮 أنت تلعب" else if (asx.locked) "🎯 على الرأس ${asx.lockErrPx}px" else "🔍 يبحث") + " · ${asx.locks} قفل", true, true); return }
         if (asx.running) { svc.updateOverlay("■ ${asx.name}", (if (asx.holding) "🔥 يضرب" else "👁 يراقب") + " · ${asx.fps} fps · ${asx.holdCount} مرة", true, true); return }
         if (bs.running) svc.updateOverlay("■ ${bs.name}", "${bs.fired} ضربة · ${bs.ticks} فحص${bs.lastRule?.let { " · $it" } ?: ""}", true, true)
         else if (aimConfiguredForForeground()) svc.updateOverlay("▶ ${AimEngine.config?.name ?: "Aim"}", "اضغط للتشغيل · مطوّل للإخفاء", false, true)
@@ -205,7 +206,7 @@ class RelayConnectionService : Service() {
     }
     private fun installBotStatusHook() {
         AimEngine.onStatus = { s ->
-            val msg = com.devicerelay.client.net.AimStatusMessage(running = s.running, name = s.name, app = s.app, startedAt = s.startedAt.takeIf { it > 0 }, frames = s.frames, fps = s.fps, holding = s.holding, holdCount = s.holdCount, heldMs = s.heldMs, aimMoves = s.aimMoves, reloads = s.reloads, lastTrigger = s.lastTrigger, stoppedBy = s.stoppedBy, error = s.error, startedBy = s.startedBy, ts = System.currentTimeMillis())
+            val msg = com.devicerelay.client.net.AimStatusMessage(running = s.running, name = s.name, app = s.app, startedAt = s.startedAt.takeIf { it > 0 }, frames = s.frames, fps = s.fps, holding = s.holding, holdCount = s.holdCount, heldMs = s.heldMs, aimMoves = s.aimMoves, reloads = s.reloads, lastTrigger = s.lastTrigger, stoppedBy = s.stoppedBy, error = s.error, startedBy = s.startedBy, ts = System.currentTimeMillis(), mode = s.mode, firing = s.firing, locked = s.locked, lockErrPx = s.lockErrPx, nudges = s.nudges, locks = s.locks, shizuku = s.shizuku, headX = s.headX.takeIf { it >= 0 }, headY = s.headY.takeIf { it >= 0 })
             socket?.send(RelayJson.encodeToString(com.devicerelay.client.net.AimStatusMessage.serializer(), msg))
             refreshNotification()
         }
@@ -420,7 +421,7 @@ class RelayConnectionService : Service() {
         val b = NotificationCompat.Builder(this, RelayApp.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(if (ax.running) "🎯 Aim يعمل: ${ax.name}" else if (bs.running) "🤖 بوت يعمل: ${bs.name}" else getString(R.string.notification_title))
-            .setContentText(if (ax.running) (if (ax.holding) "🔥 يضرب الآن" else "👁 يراقب") + " · ${ax.fps} fps · ${ax.holdCount} مرة · ${ax.reloads} تحميل" else if (bs.running) "${bs.fired} ضربة · ${bs.ticks} فحص${bs.lastRule?.let { " · $it" } ?: ""}" else text)
+            .setContentText(if (ax.running && ax.mode == "headlock") (if (!ax.firing) "🎮 أنت تلعب — ينتظر ضغطة الضرب" else if (ax.locked) "🎯 مقفول على الرأس · خطأ ${ax.lockErrPx}px" else "🔍 يبحث عن رأس") + " · ${ax.fps} fps · ${ax.locks} قفل" else if (ax.running) (if (ax.holding) "🔥 يضرب الآن" else "👁 يراقب") + " · ${ax.fps} fps · ${ax.holdCount} مرة · ${ax.reloads} تحميل" else if (bs.running) "${bs.fired} ضربة · ${bs.ticks} فحص${bs.lastRule?.let { " · $it" } ?: ""}" else text)
             .setContentIntent(open)
             .setOngoing(true)
             .setSilent(true)

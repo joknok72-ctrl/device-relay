@@ -12,7 +12,7 @@ const fingersDown = new Map()
 let botStore = []
 let botRunning = null
 let aimCfg = null; let aimRun = null
-function aimStatusJson() { return { engine: 'aim', running: !!aimRun, configured: !!aimCfg, ...(aimCfg ? { name: aimCfg.name, configApp: aimCfg.app, trigger: aimCfg.trigger || 'reticle', aimEnabled: !!aimCfg.aimEnabled, autoStart: aimCfg.autoStart !== false } : {}), ...(aimRun ? { startedAt: aimRun.startedAt, frames: 240, fps: 30, holding: true, holdCount: 4, heldMs: 3200, aimMoves: 12, reloads: 1 } : {}) } }
+function aimStatusJson() { return { engine: 'aim', running: !!aimRun, configured: !!aimCfg, ...(aimCfg ? { name: aimCfg.name, configApp: aimCfg.app, trigger: aimCfg.trigger || 'reticle', aimEnabled: !!aimCfg.aimEnabled, autoStart: aimCfg.autoStart !== false, mode: aimCfg.mode || 'auto' } : {}), shizuku: 'ready', ...(aimRun ? (aimCfg && aimCfg.mode === 'headlock' ? { startedAt: aimRun.startedAt, frames: 240, fps: 30, firing: true, locked: true, lockErrPx: 1, locks: 3, nudges: 57, headX: 812, headY: 351 } : { startedAt: aimRun.startedAt, frames: 240, fps: 30, holding: true, holdCount: 4, heldMs: 3200, aimMoves: 12, reloads: 1 }) : {}) } }
 const HASHES = { menu: 'ffff0000ffff0000ffff0000ffff', home: '0f0f0f0f0f0f0f0f0f0f0f0f0f0f' }
 const FAKE_SCREEN = readFileSync(join(here, 'fake-screen.b64'), 'utf8').trim()
 const ws = new WebSocket(`${base}/api/ws/phone/${deviceId}`, { headers: { Authorization: `Bearer ${token}` } })

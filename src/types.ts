@@ -298,10 +298,15 @@ export interface AimConfig {
   aimGain?: number; aimMaxStep?: number; aimDeadzone?: number; aimRange?: number; aimOffsetY?: number
   reloadEnabled?: boolean; reloadColor?: string; reloadTol?: number; reloadMin?: number; reloadBox?: AimBox; reloadX?: number; reloadY?: number
   fps?: number; autoStart?: boolean; stopOnAppChange?: boolean
+  /** v3.4 HeadLock (user fires, engine locks the crosshair on the head via the Shizuku touch proxy) */
+  mode?: 'auto' | 'headlock'; fireRadius?: number
+  headColor?: string; headTol?: number; headMinSize?: number; headMaxSize?: number; headBox?: AimBox
+  headTopOffset?: number; headTopRows?: number; bodyColor?: string; bodyTol?: number
+  lockRange?: number; headGain?: number; headMaxStep?: number; headDeadzone?: number; headLead?: number; lookTravel?: number; stickyMs?: number
   /** relay-side bookkeeping */
   updatedAt?: number
 }
-export interface AimStatusMessage { kind: 'aim_status'; running: boolean; name?: string; app?: string; startedAt?: number; frames?: number; fps?: number; holding?: boolean; holdCount?: number; heldMs?: number; aimMoves?: number; reloads?: number; lastTrigger?: string; stoppedBy?: string; error?: string; startedBy?: string; ts: number }
+export interface AimStatusMessage { kind: 'aim_status'; running: boolean; name?: string; app?: string; startedAt?: number; frames?: number; fps?: number; holding?: boolean; holdCount?: number; heldMs?: number; aimMoves?: number; reloads?: number; lastTrigger?: string; stoppedBy?: string; error?: string; startedBy?: string; ts: number; mode?: string; firing?: boolean; locked?: boolean; lockErrPx?: number; nudges?: number; locks?: number; shizuku?: string; headX?: number; headY?: number }
 
 export type PhoneMessage = ResultMessage | HelloMessage | FrameMessage | BotStatusMessage | AimStatusMessage | { kind: 'pong' }
 

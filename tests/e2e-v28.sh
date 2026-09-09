@@ -13,7 +13,7 @@ P=/home/user/webapp/agent/phone.sh
 call '{"name":"open_recents"}' >/dev/null; memdel 'kind=all' >/dev/null; call '{"name":"get_current_app"}' >/dev/null; call '{"name":"game_bot","arguments":{"action":"stop"}}' >/dev/null
 
 echo "== version"
-check version '"version":"3.3.0"' "$(curl -s $U/api/health)"
+check version '"version":"3.4.0"' "$(curl -s $U/api/health)"
 check tools-80 '80' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check tool-doc-handsfree 'HANDS-FREE' "$(curl -s "$U/api/tools/schema?format=raw" | grep -o 'HANDS-FREE' | head -1)"
 check tool-param-autostart 'autoStart' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t for t in d if t["name"]=="game_bot"][0]["parameters"]["properties"]["autoStart"]["description"]')"

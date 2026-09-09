@@ -13,7 +13,7 @@ check() { # name expected_substring actual
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "== health / me"
-check health '"version":"3.3.0"' "$(curl -s $U/api/health)"
+check health '"version":"3.4.0"' "$(curl -s $U/api/health)"
 check me-admin '"role":"admin"' "$(curl -s "${A[@]}" $U/api/me)"
 check unauth '401' "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer nope' $U/api/devices)"
 

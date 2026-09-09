@@ -339,6 +339,7 @@ class AutomationAccessibilityService : AccessibilityService() {
             put("android", Build.VERSION.RELEASE)
             put("sdk", Build.VERSION.SDK_INT)
             put("notificationAccess", RelayNotificationListener.isEnabled)
+            put("shizuku", com.devicerelay.client.shizuku.ShizukuBridge.state())
             pkg?.let { put("package", it); appLabel(it)?.let { l -> put("label", l) } }
         }
     }
@@ -919,6 +920,11 @@ class AutomationAccessibilityService : AccessibilityService() {
     // ---------------------------------------------------------------- v3.3 AimEngine hooks
     /** raw frame for the native aim loop (caller recycles) */
     suspend fun captureForEngine(): Bitmap? = captureBitmap()
+    /** v3.4: current display rotation (Surface.ROTATION_*) for the Shizuku touch proxy mapping */
+    fun displayRotation(): Int = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display?.rotation ?: 0
+        else @Suppress("DEPRECATION") (getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.rotation
+    }.getOrDefault(0)
     /** dispatch one stroke; true when the system accepted and completed/continued it */
     suspend fun dispatchForEngine(s: GestureDescription.StrokeDescription): Boolean = withContext(Dispatchers.Main) { dispatchStrokes(listOf(s)) is Outcome.Ok }
     /** OCR lines as (text, centre) for bot conditions; latin recognizer, reused across ticks. */

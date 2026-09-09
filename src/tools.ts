@@ -598,13 +598,14 @@ export const TOOLS: ToolDef[] = [
       'RELOAD: when reloadColor appears in reloadBox (ammo counter turns red) the finger lifts, reload is tapped, and firing resumes when the reticle is red again. ' +
       'HANDS-FREE: autoStart (default true) starts it ~2 s after the game opens; the floating bubble / notification 🎯 button / Volume-Up×2 start it, Volume-Down×2 or ■ stop it. Config is stored on the phone and on the relay (survives reconnects). ' +
       'SETUP FOR A NEW PHONE/GAME: capture_screen → find the fire button, the crosshair centre, the look area; sample the red reticle colour (aim at an enemy, get_pixels on the ring) → action=set with those values → action=start → watch action=status (holding/holdCount/heldMs/fps) while the user plays → tune tolerances. Defaults are calibrated for Free Fire on a 1600x720 landscape frame. ' +
+      'HEADLOCK MODE (v3.4, app 3.4+, needs Shizuku running on the phone): mode=headlock = the USER plays and fires himself; the engine does NOTHING until one of the user\'s real fingers is on the fire button (read from the kernel touch stream, fireRadius px around fireX/fireY). While it is: the nearest enemy skin blob (headColor within lockRange of the crosshair, optional bodyColor = cloth below it to reject hands/props) is refined at full resolution to its topmost rows → head centre (headTopOffset px under the top edge, sub-pixel x over headTopRows rows) → a 2nd finger written directly into the touchscreen (a genuine touch slot, so the user\'s fire finger is never cancelled) drags the camera until the crosshair error ≤ headDeadzone px (default 1), with velocity feed-forward headLead for moving heads and stickyMs tolerance for brief occlusion. No auto-fire, no reload, no assist outside the press. Status: firing, locked, lockErrPx, locks, nudges, headX/headY, shizuku (absent|denied|granted|binding|proxy-not-ready|ready). ' +
       'action: set (save config, {aim:{...}} or top-level fields) | start | stop | status | get | clear.',
     parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', description: 'set | start | stop | status | get | clear' },
         app: { type: 'string', description: 'Game package (default current app)' },
-        aim: { type: 'object', description: 'action=set: config fields (any subset). Keys: name, fireX, fireY, trigger(reticle|target|both), reticleColor, reticleTol, reticleMin, reticleBox{x,y,w,h}, targetColor, targetTol, targetMin, targetBox, armFrames, releaseFrames, maxHoldMs, aimEnabled, aimColor, aimTol, aimMinSize, aimMaxSize, aimBox, crosshairX, crosshairY, lookX, lookY, aimGain, aimMaxStep, aimDeadzone, aimRange, aimOffsetY, reloadEnabled, reloadColor, reloadTol, reloadMin, reloadBox, reloadX, reloadY, fps, autoStart, stopOnAppChange. Colours/points accept @names from game_profile.' },
+        aim: { type: 'object', description: 'action=set: config fields (any subset). Keys: name, fireX, fireY, trigger(reticle|target|both), reticleColor, reticleTol, reticleMin, reticleBox{x,y,w,h}, targetColor, targetTol, targetMin, targetBox, armFrames, releaseFrames, maxHoldMs, aimEnabled, aimColor, aimTol, aimMinSize, aimMaxSize, aimBox, crosshairX, crosshairY, lookX, lookY, aimGain, aimMaxStep, aimDeadzone, aimRange, aimOffsetY, reloadEnabled, reloadColor, reloadTol, reloadMin, reloadBox, reloadX, reloadY, fps, autoStart, stopOnAppChange. HeadLock: mode(auto|headlock), fireRadius, headColor, headTol, headMinSize, headMaxSize, headBox, headTopOffset, headTopRows, bodyColor("" = off), bodyTol, lockRange, headGain, headMaxStep, headDeadzone, headLead, lookTravel, stickyMs. Colours/points accept @names from game_profile.' },
       },
       required: ['action'],
     },
@@ -1220,7 +1221,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '3.3.0',
+      version: '3.4.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

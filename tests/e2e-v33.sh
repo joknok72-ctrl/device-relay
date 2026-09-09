@@ -12,7 +12,7 @@ call '{"name":"open_recents"}' >/dev/null; memdel 'kind=all' >/dev/null; call '{
 call '{"name":"aim_engine","arguments":{"action":"clear"}}' >/dev/null
 
 echo "== version + docs"
-check version '"version":"3.3.0"' "$(curl -s $U/api/health)"
+check version '"version":"3.4.0"' "$(curl -s $U/api/health)"
 check tool-listed 'aim_engine' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t["name"] for t in d if t["name"]=="aim_engine"]')"
 check tool-doc 'ONE real finger that stays pressed' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t for t in d if t["name"]=="aim_engine"][0]["description"]')"
 check boot-section '7b. SHOOTERS → use aim_engine' "$(curl -s $U/agent/$T)"
@@ -79,6 +79,27 @@ echo "== read-only token"
 RO=$(curl -s "${A[@]}" -d '{"deviceId":"'$D'","readOnly":true,"label":"ro-aim"}' $U/api/admin/tokens | j 'd["token"]')
 check ro-status-ok '"ok":true' "$(curl -s -H "Authorization: Bearer $RO" -H "Content-Type: application/json" -d '{"name":"aim_engine","arguments":{"action":"status"}}' $U/api/devices/$D/tools/call)"
 check ro-start-denied 'read-only' "$(curl -s -H "Authorization: Bearer $RO" -H "Content-Type: application/json" -d '{"name":"aim_engine","arguments":{"action":"start"}}' $U/api/devices/$D/tools/call)"
+
+echo "== v3.4 headlock"
+R=$(call '{"name":"aim_engine","arguments":{"action":"set","aim":{"mode":"headlock","headColor":"#e6a68a","bodyColor":"","headDeadzone":1,"headGain":1.45,"headLead":0.6,"fireRadius":70,"headBox":{"x":330,"y":60,"w":1000,"h":440}}}}')
+check hl-set-ok '"ok":true' "$R"
+check hl-mode '"mode":"headlock"' "$R"
+check hl-gain '"headGain":1.45' "$R"
+check hl-lead '"headLead":0.6' "$R"
+check hl-body-empty '"bodyColor":""' "$R"
+check hl-bad-mode 'mode must be' "$(call '{"name":"aim_engine","arguments":{"action":"set","aim":{"mode":"laser"}}}')"
+check hl-bad-color 'headColor must be' "$(call '{"name":"aim_engine","arguments":{"action":"set","aim":{"headColor":"pink"}}}')"
+check hl-clamp-dead '"headDeadzone":100' "$(call '{"name":"aim_engine","arguments":{"action":"set","aim":{"headDeadzone":900}}}')"
+R=$(call '{"name":"aim_engine","arguments":{"action":"start"}}')
+check hl-start-ok '"ok":true' "$R"
+check hl-start-hint 'HeadLock running' "$R"
+R=$(call '{"name":"aim_engine","arguments":{"action":"status"}}')
+check hl-status-firing '"firing":true' "$R"
+check hl-status-locked '"locked":true' "$R"
+check hl-status-err '"lockErrPx":1' "$R"
+check hl-status-shizuku '"shizuku":"ready"' "$R"
+call '{"name":"aim_engine","arguments":{"action":"stop"}}' >/dev/null
+check hl-schema-mode 'mode(auto|headlock)' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t for t in d if t["name"]=="aim_engine"][0]["parameters"]["properties"]["aim"]["description"]')"
 
 echo "== clear"
 R=$(call '{"name":"aim_engine","arguments":{"action":"clear"}}')

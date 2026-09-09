@@ -119,6 +119,9 @@ data class AimStatusMessage(
     val frames: Int? = null, val fps: Int? = null, val holding: Boolean? = null, val holdCount: Int? = null, val heldMs: Long? = null,
     val aimMoves: Int? = null, val reloads: Int? = null, val lastTrigger: String? = null, val stoppedBy: String? = null,
     val error: String? = null, val startedBy: String? = null, val ts: Long,
+    // v3.4 headlock
+    val mode: String? = null, val firing: Boolean? = null, val locked: Boolean? = null, val lockErrPx: Int? = null,
+    val nudges: Int? = null, val locks: Int? = null, val shizuku: String? = null, val headX: Int? = null, val headY: Int? = null,
 )
 
 @Serializable

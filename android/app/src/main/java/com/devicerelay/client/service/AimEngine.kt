@@ -71,6 +71,20 @@ object AimEngine {
         val fps: Int = 30,
         val autoStart: Boolean = true,
         val stopOnAppChange: Boolean = true,
+        // ---- v3.4 HeadLock (mode = "headlock"): the USER fires; while a real finger is on the fire button we lock the
+        //      crosshair onto the HEAD of the nearest enemy using a 2nd finger written straight into the touchscreen (Shizuku).
+        val mode: String = "auto",                        // auto (v3.3 trigger/hold) | headlock
+        val fireRadius: Int = 70,                         // a real finger within this radius of (fireX,fireY) = user is firing
+        val headColor: String = "#e6a68a", val headTol: Int = 30, val headMinSize: Int = 6, val headMaxSize: Int = 140,
+        val headBox: Box = Box(330, 60, 1000, 440),
+        val headTopOffset: Int = 5,                       // px below the topmost skin pixel = centre of the head
+        val headTopRows: Int = 6,                         // rows under the top used for the x-centre of the head
+        val bodyColor: String = "", val bodyTol: Int = 28, // optional: enemy cloth colour to prefer blobs sitting on a body
+        val lockRange: Int = 420,                         // max distance from the crosshair to acquire a target
+        val headGain: Float = 1.45f, val headMaxStep: Int = 160, val headDeadzone: Int = 1,
+        val headLead: Float = 0.6f,                       // velocity feed-forward (fraction of last frame's target motion)
+        val lookTravel: Int = 260,                        // re-centre the drag finger after this many px from lookX/lookY
+        val stickyMs: Int = 350,                          // keep the last lock this long when the head is briefly hidden
     )
 
     data class Status(
@@ -78,6 +92,9 @@ object AimEngine {
         val frames: Int = 0, val fps: Int = 0, val holding: Boolean = false, val holdCount: Int = 0, val heldMs: Long = 0,
         val aimMoves: Int = 0, val reloads: Int = 0, val lastTrigger: String? = null, val stoppedBy: String? = null,
         val error: String? = null, val startedBy: String? = null,
+        // v3.4 headlock
+        val mode: String = "auto", val firing: Boolean = false, val locked: Boolean = false, val lockErrPx: Int = -1,
+        val nudges: Int = 0, val locks: Int = 0, val shizuku: String? = null, val headX: Int = -1, val headY: Int = -1,
     )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -109,7 +126,11 @@ object AimEngine {
         s.stoppedBy?.let { put("stoppedBy", it) }; s.error?.let { put("error", it) }; s.startedBy?.let { put("startedBy", it) }
         if (s.startedAt > 0) put("startedAt", s.startedAt)
         val c = config
-        if (c != null) { put("configured", true); put("trigger", c.trigger); put("aimEnabled", c.aimEnabled); put("autoStart", c.autoStart); put("configApp", c.app) } else put("configured", false)
+        if (c != null) { put("configured", true); put("trigger", c.trigger); put("aimEnabled", c.aimEnabled); put("autoStart", c.autoStart); put("configApp", c.app); put("mode", c.mode) } else put("configured", false)
+        put("firing", s.firing); put("locked", s.locked); put("lockErrPx", s.lockErrPx); put("nudges", s.nudges); put("locks", s.locks)
+        if (s.headX >= 0) { put("headX", s.headX); put("headY", s.headY) }
+        put("shizuku", com.devicerelay.client.shizuku.ShizukuBridge.state())
+        com.devicerelay.client.shizuku.ShizukuBridge.proxy?.let { p -> runCatching { put("touchProxy", p.describe()) } }
     }
 
     // -------------------------------------------------------------------- lifecycle
@@ -117,9 +138,13 @@ object AimEngine {
         val svc = AutomationAccessibilityService.instance ?: run { status = Status(running = false, error = "accessibility service not enabled"); emit(); return false }
         val cfg = load(ctx) ?: run { status = Status(running = false, error = "no aim config — send aim_config first"); emit(); return false }
         if (status.running) return true
-        status = Status(running = true, name = cfg.name, app = cfg.app, startedAt = System.currentTimeMillis(), startedBy = startedBy)
+        if (cfg.mode == "headlock") {
+            val bridge = com.devicerelay.client.shizuku.ShizukuBridge
+            if (!bridge.ready) { bridge.bind(); status = Status(running = false, mode = "headlock", shizuku = bridge.state(), error = "headlock needs Shizuku (" + bridge.state() + ") — open Device Relay → Shizuku → allow"); emit(); return false }
+        }
+        status = Status(running = true, name = cfg.name, app = cfg.app, startedAt = System.currentTimeMillis(), startedBy = startedBy, mode = cfg.mode, shizuku = com.devicerelay.client.shizuku.ShizukuBridge.state())
         emit()
-        job = scope.launch { loop(svc, cfg) }
+        job = scope.launch { if (cfg.mode == "headlock") headlockLoop(svc, cfg) else loop(svc, cfg) }
         return true
     }
 
@@ -210,6 +235,192 @@ object AimEngine {
             job = null
             emit()
         }
+    }
+
+    // -------------------------------------------------------------------- v3.4 HeadLock loop
+    /**
+     * The user plays. We only act while one of the user's REAL fingers sits on the fire button (read from the kernel
+     * touch stream via the Shizuku proxy): find the nearest enemy skin blob, refine its topmost rows at full resolution
+     * to a sub-pixel head centre, and drag the camera with OUR finger (a genuine 2nd touch slot of the same touchscreen,
+     * so nothing gets cancelled) until the crosshair error is within headDeadzone px. Closed loop every frame, plus
+     * velocity feed-forward so a moving head stays under the crosshair. No auto-fire, no reload, nothing else.
+     */
+    private suspend fun headlockLoop(svc: AutomationAccessibilityService, cfg: Config) {
+        val bridge = com.devicerelay.client.shizuku.ShizukuBridge
+        val frameMs = 1000L / cfg.fps.coerceIn(5, 60)
+        val headRgb = rgb(cfg.headColor); val bodyRgb = if (cfg.bodyColor.isNotBlank()) rgb(cfg.bodyColor) else -1
+        var frames = 0; var nudges = 0; var locks = 0
+        var lastEmit = 0L; var fpsWindowStart = SystemClock.elapsedRealtime(); var fpsFrames = 0; var fpsNow = 0
+        var stoppedBy: String? = null
+        var firing = false; var fireSlot = -1
+        var lockedUntil = 0L; var lastHead: Pair<Float, Float>? = null; var prevHead: Pair<Float, Float>? = null; var prevHeadAt = 0L
+        var lockErr = -1; var wasLocked = false
+        var dragX = cfg.lookX.toFloat(); var dragY = cfg.lookY.toFloat(); var dragDown = false
+        var mappingSet = false
+        suspend fun lift() { if (dragDown) { runCatching { bridge.proxy?.fingerUp() }; dragDown = false; dragX = cfg.lookX.toFloat(); dragY = cfg.lookY.toFloat() } }
+        try {
+            while (currentCoroutineContext().isActive) {
+                val t0 = SystemClock.elapsedRealtime()
+                val proxy = bridge.proxy
+                if (proxy == null || !runCatching { proxy.isReady }.getOrDefault(false)) { status = status.copy(error = "touch proxy lost", shizuku = bridge.state()); stoppedBy = "shizuku-lost"; break }
+                if (cfg.stopOnAppChange && frames % 15 == 0) {
+                    val fg = runCatching { svc.currentPackage() }.getOrNull()
+                    if (fg != null && fg != cfg.app && fg != "com.devicerelay.client") { stoppedBy = "app-changed"; break }
+                }
+                // ---- 1. is the user firing? (real finger on the fire button)
+                val touches = runCatching { proxy.touches() }.getOrDefault(IntArray(0))
+                var slot = -1
+                var i = 0
+                while (i + 3 < touches.size) {
+                    val dx = touches[i + 1] - cfg.fireX; val dy = touches[i + 2] - cfg.fireY
+                    if (dx * dx + dy * dy <= cfg.fireRadius * cfg.fireRadius) { slot = touches[i]; break }
+                    i += 4
+                }
+                val nowFiring = slot >= 0
+                if (nowFiring && !firing) { fireSlot = slot; prevHead = null; lastHead = null }
+                if (!nowFiring && firing) { lift(); lockErr = -1; wasLocked = false }
+                firing = nowFiring
+                if (!firing) {
+                    // idle: cheap — no capture; ~20 Hz poll of the touch stream
+                    frames++
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastEmit > 900) { lastEmit = now; status = status.copy(frames = frames, fps = 0, firing = false, locked = false, lockErrPx = -1, nudges = nudges, locks = locks, shizuku = bridge.state(), headX = -1, headY = -1); emit() }
+                    delay(50); continue
+                }
+                // ---- 2. capture + find the head
+                val bmp = svc.captureForEngine()
+                if (bmp == null) { delay(frameMs); continue }
+                frames++; fpsFrames++
+                if (!mappingSet) { runCatching { proxy.setMapping(svc.displayRotation(), bmp.width, bmp.height) }; mappingSet = true }
+                val head = findHead(bmp, headRgb, cfg.headTol, bodyRgb, cfg.bodyTol, cfg.headBox, cfg.headMinSize, cfg.headMaxSize, cfg.crosshairX, cfg.crosshairY, cfg.lockRange, cfg.headTopOffset, cfg.headTopRows, lastHead)
+                bmp.recycle()
+                val now = SystemClock.elapsedRealtime()
+                var target: Pair<Float, Float>? = null
+                if (head != null) {
+                    // velocity feed-forward: where will the head be by the time the drag lands (~1 frame)?
+                    val ph = prevHead
+                    target = if (ph != null && now - prevHeadAt in 1..120) {
+                        val vx = (head.first - ph.first) / (now - prevHeadAt) * frameMs; val vy = (head.second - ph.second) / (now - prevHeadAt) * frameMs
+                        (head.first + vx * cfg.headLead) to (head.second + vy * cfg.headLead)
+                    } else head
+                    prevHead = head; prevHeadAt = now; lastHead = head; lockedUntil = now + cfg.stickyMs
+                    if (!wasLocked) { locks++; wasLocked = true }
+                } else if (now < lockedUntil && lastHead != null) {
+                    target = null // briefly hidden: hold the drag finger still, keep the lock alive
+                } else { wasLocked = false; lastHead = null; prevHead = null }
+                // ---- 3. converge the crosshair onto the head (closed loop, deadzone in px)
+                if (target != null) {
+                    val ex = target.first - cfg.crosshairX; val ey = target.second - cfg.crosshairY
+                    lockErr = kotlin.math.sqrt(ex * ex + ey * ey).toInt()
+                    if (abs(ex) > cfg.headDeadzone || abs(ey) > cfg.headDeadzone) {
+                        var sx = (ex * cfg.headGain).coerceIn(-cfg.headMaxStep.toFloat(), cfg.headMaxStep.toFloat())
+                        var sy = (ey * cfg.headGain).coerceIn(-cfg.headMaxStep.toFloat(), cfg.headMaxStep.toFloat())
+                        // sub-pixel steps still matter: never round a needed 0.6 px correction down to nothing
+                        if (abs(sx) < 1f && abs(ex) > cfg.headDeadzone) sx = if (ex > 0) 1f else -1f
+                        if (abs(sy) < 1f && abs(ey) > cfg.headDeadzone) sy = if (ey > 0) 1f else -1f
+                        if (!dragDown || abs(dragX + sx - cfg.lookX) > cfg.lookTravel || abs(dragY + sy - cfg.lookY) > cfg.lookTravel) {
+                            lift()
+                            dragDown = runCatching { proxy.fingerDown(cfg.lookX, cfg.lookY, fireSlot) }.getOrDefault(false)
+                            dragX = cfg.lookX.toFloat(); dragY = cfg.lookY.toFloat()
+                        }
+                        if (dragDown) {
+                            dragX += sx; dragY += sy
+                            if (runCatching { proxy.fingerMove(Math.round(dragX), Math.round(dragY)) }.getOrDefault(false)) nudges++
+                            else dragDown = false
+                        }
+                    }
+                } else if (head == null && now >= lockedUntil) { lift(); lockErr = -1 }
+                // ---- status
+                if (now - fpsWindowStart >= 1000) { fpsNow = fpsFrames; fpsFrames = 0; fpsWindowStart = now }
+                if (now - lastEmit > 500) {
+                    lastEmit = now
+                    status = status.copy(frames = frames, fps = fpsNow, firing = true, locked = wasLocked, lockErrPx = lockErr, nudges = nudges, locks = locks, shizuku = bridge.state(), aimMoves = nudges, headX = lastHead?.first?.toInt() ?: -1, headY = lastHead?.second?.toInt() ?: -1)
+                    emit()
+                }
+                val spent = SystemClock.elapsedRealtime() - t0
+                if (spent < frameMs) delay(frameMs - spent)
+            }
+        } catch (e: CancellationException) {
+            // normal stop
+        } catch (e: Exception) {
+            Log.w(TAG, "headlock loop error", e); stoppedBy = "error"; status = status.copy(error = e.message)
+        } finally {
+            withContext(NonCancellable) { runCatching { bridge.proxy?.fingerUp() } }
+            status = status.copy(running = false, frames = frames, firing = false, locked = false, nudges = nudges, locks = locks, aimMoves = nudges, stoppedBy = status.stoppedBy ?: stoppedBy ?: "loop-end")
+            job = null
+            emit()
+        }
+    }
+
+    /**
+     * Precise head finder: nearest skin blob to the crosshair (3-px grid CC), preferring the blob nearest the previous
+     * head (tracking continuity) and, when bodyColor is set, blobs with cloth colour right below them. Then a
+     * FULL-RESOLUTION pass over the blob's bounding box finds the topmost skin row and the mean x of the first
+     * `topRows` rows → head centre with sub-pixel x. Returns display px (floats).
+     */
+    private fun findHead(bmp: Bitmap, skin: Int, tol: Int, body: Int, bodyTol: Int, b: Box, minSize: Int, maxSize: Int, cx: Int, cy: Int, range: Int, topOffset: Int, topRows: Int, prev: Pair<Float, Float>?): Pair<Float, Float>? {
+        val step = 3
+        val x0 = b.x.coerceIn(0, bmp.width - 1); val y0 = b.y.coerceIn(0, bmp.height - 1)
+        val w = min(b.w, bmp.width - x0).coerceAtMost(rowBuf.size); val h = min(b.h, bmp.height - y0); if (w <= 0 || h <= 0) return null
+        val gw = (w + step - 1) / step; val gh = (h + step - 1) / step
+        val mask = BooleanArray(gw * gh)
+        var gy = 0
+        while (gy < gh) {
+            bmp.getPixels(rowBuf, 0, w, x0, y0 + gy * step, w, 1)
+            var gx = 0
+            while (gx < gw) { if (near(rowBuf[gx * step] and 0xFFFFFF, skin, tol)) mask[gy * gw + gx] = true; gx++ }
+            gy++
+        }
+        val seen = BooleanArray(gw * gh); val stack = IntArray(gw * gh)
+        var bestScore = Double.MAX_VALUE; var bMinX = 0; var bMaxX = 0; var bMinY = 0; var bMaxY = 0; var found = false
+        for (i in mask.indices) {
+            if (!mask[i] || seen[i]) continue
+            var sp = 0; stack[sp++] = i; seen[i] = true
+            var n = 0; var minX = gw; var maxX = -1; var minY = gh; var maxY = -1
+            while (sp > 0) {
+                val k = stack[--sp]; val kx = k % gw; val ky = k / gw
+                n++; if (kx < minX) minX = kx; if (kx > maxX) maxX = kx; if (ky < minY) minY = ky; if (ky > maxY) maxY = ky
+                if (kx > 0 && mask[k - 1] && !seen[k - 1]) { seen[k - 1] = true; stack[sp++] = k - 1 }
+                if (kx < gw - 1 && mask[k + 1] && !seen[k + 1]) { seen[k + 1] = true; stack[sp++] = k + 1 }
+                if (ky > 0 && mask[k - gw] && !seen[k - gw]) { seen[k - gw] = true; stack[sp++] = k - gw }
+                if (ky < gh - 1 && mask[k + gw] && !seen[k + gw]) { seen[k + gw] = true; stack[sp++] = k + gw }
+            }
+            val bw = (maxX - minX + 1) * step; val bh = (maxY - minY + 1) * step
+            if (bw < minSize && bh < minSize) continue
+            if (maxSize > 0 && (bw > maxSize || bh > maxSize)) continue
+            val px = x0 + (minX + maxX + 1) * step / 2f; val py = y0 + minY * step.toFloat()
+            val dCross = Math.hypot((px - cx).toDouble(), (py - cy).toDouble())
+            if (dCross > range) continue
+            var score = dCross
+            if (prev != null) score = min(score, Math.hypot((px - prev.first).toDouble(), (py - prev.second).toDouble()) * 0.5) // continuity wins
+            if (body >= 0) { // cloth just below the blob → this skin is a head on a body, not a hand/prop
+                val by = (y0 + (maxY + 1) * step + 4).coerceAtMost(bmp.height - 1); val bx = (x0 + (minX + maxX + 1) * step / 2).coerceIn(0, bmp.width - 1)
+                var hits = 0
+                for (dy in 0 until 12 step 3) { val yy = (by + dy).coerceAtMost(bmp.height - 1); if (near(bmp.getPixel(bx, yy) and 0xFFFFFF, body, bodyTol)) hits++ }
+                if (hits > 0) score *= 0.6 else score *= 1.3
+            }
+            if (score < bestScore) { bestScore = score; bMinX = minX; bMaxX = maxX; bMinY = minY; bMaxY = maxY; found = true }
+        }
+        if (!found) return null
+        // ---- full-resolution refinement over the winning blob's bbox (padded by one grid cell)
+        val rx0 = (x0 + (bMinX - 1) * step).coerceAtLeast(0); val rx1 = (x0 + (bMaxX + 2) * step).coerceAtMost(bmp.width)
+        val ry0 = (y0 + (bMinY - 1) * step).coerceAtLeast(0); val ry1 = (y0 + (bMaxY + 2) * step).coerceAtMost(bmp.height)
+        val rw = rx1 - rx0; if (rw <= 0 || rw > rowBuf.size) return null
+        var topY = -1; var sumX = 0.0; var cnt = 0; var rowsUsed = 0
+        var y = ry0
+        while (y < ry1) {
+            bmp.getPixels(rowBuf, 0, rw, rx0, y, rw, 1)
+            var rowHits = 0; var rowSum = 0.0
+            for (x in 0 until rw) if (near(rowBuf[x] and 0xFFFFFF, skin, tol)) { rowHits++; rowSum += rx0 + x }
+            if (rowHits >= 2) {
+                if (topY < 0) topY = y
+                if (rowsUsed < topRows) { sumX += rowSum; cnt += rowHits; rowsUsed++ }
+                else break
+            } else if (topY >= 0 && rowsUsed >= 2) break
+            y++
+        }
+        if (topY < 0 || cnt == 0) return null
+        return (sumX / cnt).toFloat() to (topY + topOffset).toFloat()
     }
 
     // -------------------------------------------------------------------- continuous finger on the fire button

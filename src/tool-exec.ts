@@ -130,8 +130,8 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
     if (typeof v === 'string' && v.startsWith('@')) {
       const r = look(v); if (!r) return v
       const k = (key ?? '').toLowerCase()
-      if (k === 'color' || k === 'stopcolor' || k === 'colors' || k === 'hex' || k === 'reticlecolor' || k === 'targetcolor' || k === 'aimcolor' || k === 'reloadcolor') { const c = p.colors[r.name]; if (!c) { error = `unknown color @${r.name} (known: ${Object.keys(p.colors).join(', ') || 'none'})`; return v } used.push('@' + r.name); return c.hex }
-      if (k === 'region' || k === 'stopregion' || k === 'reticlebox' || k === 'targetbox' || k === 'aimbox' || k === 'reloadbox') { const g = p.regions[r.name]; if (!g) { error = `unknown region @${r.name} (known: ${Object.keys(p.regions).join(', ') || 'none'})`; return v } used.push('@' + r.name); return { x: g.x, y: g.y, w: g.w, h: g.h } }
+      if (k === 'color' || k === 'stopcolor' || k === 'colors' || k === 'hex' || k === 'reticlecolor' || k === 'targetcolor' || k === 'aimcolor' || k === 'reloadcolor' || k === 'headcolor' || k === 'bodycolor') { const c = p.colors[r.name]; if (!c) { error = `unknown color @${r.name} (known: ${Object.keys(p.colors).join(', ') || 'none'})`; return v } used.push('@' + r.name); return c.hex }
+      if (k === 'region' || k === 'stopregion' || k === 'reticlebox' || k === 'targetbox' || k === 'aimbox' || k === 'reloadbox' || k === 'headbox') { const g = p.regions[r.name]; if (!g) { error = `unknown region @${r.name} (known: ${Object.keys(p.regions).join(', ') || 'none'})`; return v } used.push('@' + r.name); return { x: g.x, y: g.y, w: g.w, h: g.h } }
       if (/^(x|x1|x2|tapx|cx|crosshairx|nearx|firex|lookx|reloadx)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.x + r.dx }
       if (/^(y|y1|y2|tapy|cy|crosshairy|neary|firey|looky|reloady)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.y + (r.dx || 0) } // for y fields the single offset applies to y
       // colors arrays
@@ -729,18 +729,20 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
   return { rules: out }
 }
 // ---------------------------------------------------------------- v3.3 native aim engine (AimEngine.kt on the phone)
-const AIM_NUM: Record<string, [number, number]> = { fireX: [0, 4000], fireY: [0, 4000], reticleTol: [0, 128], reticleMin: [1, 100000], targetTol: [0, 128], targetMin: [1, 100000], armFrames: [1, 30], releaseFrames: [1, 60], maxHoldMs: [500, 60000], aimTol: [0, 128], aimMinSize: [1, 2000], aimMaxSize: [0, 4000], crosshairX: [0, 4000], crosshairY: [0, 4000], lookX: [0, 4000], lookY: [0, 4000], aimGain: [0.05, 5], aimMaxStep: [5, 1500], aimDeadzone: [0, 200], aimRange: [10, 4000], aimOffsetY: [-500, 500], reloadTol: [0, 128], reloadMin: [1, 100000], reloadX: [0, 4000], reloadY: [0, 4000], fps: [5, 60] }
+const AIM_NUM: Record<string, [number, number]> = { fireX: [0, 4000], fireY: [0, 4000], reticleTol: [0, 128], reticleMin: [1, 100000], targetTol: [0, 128], targetMin: [1, 100000], armFrames: [1, 30], releaseFrames: [1, 60], maxHoldMs: [500, 60000], aimTol: [0, 128], aimMinSize: [1, 2000], aimMaxSize: [0, 4000], crosshairX: [0, 4000], crosshairY: [0, 4000], lookX: [0, 4000], lookY: [0, 4000], aimGain: [0.05, 5], aimMaxStep: [5, 1500], aimDeadzone: [0, 200], aimRange: [10, 4000], aimOffsetY: [-500, 500], reloadTol: [0, 128], reloadMin: [1, 100000], reloadX: [0, 4000], reloadY: [0, 4000], fps: [5, 60], fireRadius: [10, 400], headTol: [0, 128], headMinSize: [1, 2000], headMaxSize: [0, 4000], headTopOffset: [-40, 80], headTopRows: [1, 40], bodyTol: [0, 128], lockRange: [10, 4000], headGain: [0.05, 5], headMaxStep: [1, 1500], headDeadzone: [0, 100], headLead: [0, 3], lookTravel: [20, 2000], stickyMs: [0, 5000] }
 const AIM_BOOL = new Set(['aimEnabled', 'reloadEnabled', 'autoStart', 'stopOnAppChange'])
-const AIM_COLOR = new Set(['reticleColor', 'targetColor', 'aimColor', 'reloadColor'])
-const AIM_BOX = new Set(['reticleBox', 'targetBox', 'aimBox', 'reloadBox'])
+const AIM_COLOR = new Set(['reticleColor', 'targetColor', 'aimColor', 'reloadColor', 'headColor', 'bodyColor'])
+const AIM_BOX = new Set(['reticleBox', 'targetBox', 'aimBox', 'reloadBox', 'headBox'])
 function validateAim(raw: Record<string, unknown>, app: string): { cfg?: import('./types').AimConfig; error?: string } {
   const out: Record<string, unknown> = { app }
   for (const [k, v] of Object.entries(raw)) {
     if (k === 'app' || k === 'updatedAt') continue
     if (k === 'name') { if (typeof v === 'string' && v.trim()) out.name = v.trim().slice(0, 40); continue }
     if (k === 'trigger') { if (v !== 'reticle' && v !== 'target' && v !== 'both') return { error: 'trigger must be reticle|target|both' }; out.trigger = v; continue }
-    if (k in AIM_NUM) { if (typeof v !== 'number' || !Number.isFinite(v)) return { error: `${k} must be a number` }; const [lo, hi] = AIM_NUM[k]; out[k] = k === 'aimGain' ? Math.min(Math.max(v, lo), hi) : Math.round(Math.min(Math.max(v, lo), hi)); continue }
+    if (k === 'mode') { if (v !== 'auto' && v !== 'headlock') return { error: 'mode must be auto|headlock' }; out.mode = v; continue }
+    if (k in AIM_NUM) { if (typeof v !== 'number' || !Number.isFinite(v)) return { error: `${k} must be a number` }; const [lo, hi] = AIM_NUM[k]; out[k] = (k === 'aimGain' || k === 'headGain' || k === 'headLead') ? Math.min(Math.max(v, lo), hi) : Math.round(Math.min(Math.max(v, lo), hi)); continue }
     if (AIM_BOOL.has(k)) { if (typeof v !== 'boolean') return { error: `${k} must be boolean` }; out[k] = v; continue }
+    if (k === 'bodyColor' && v === '') { out.bodyColor = ''; continue }
     if (AIM_COLOR.has(k)) { if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) return { error: `${k} must be #rrggbb (or an @colour name)` }; out[k] = v.toLowerCase(); continue }
     if (AIM_BOX.has(k)) { const b = v as Record<string, unknown>; if (!b || typeof b !== 'object' || ![b.x, b.y, b.w, b.h].every((n) => typeof n === 'number' && Number.isFinite(n))) return { error: `${k} must be {x,y,w,h} (or an @region name)` }; out[k] = { x: Math.round(b.x as number), y: Math.round(b.y as number), w: Math.max(1, Math.round(b.w as number)), h: Math.max(1, Math.round(b.h as number)) }; continue }
     return { error: `unknown aim field ${k}` }
@@ -769,7 +771,7 @@ async function aimEngine(env: Bindings, deviceId: string, args: Record<string, u
     // make sure the phone has the latest config, then start
     await executeTool(env, deviceId, 'aim_config' as string, { aim: s.aims[0] }, { internal: true }).catch(() => null)
     const res = await executeTool(env, deviceId, 'aim_start' as string, {}, { internal: true })
-    return { ...res, hint: res.ok ? 'aim engine running — watch action=status (holding/holdCount/fps). The user can also start/stop it from the bubble, the 🎯 notification button or Volume keys.' : 'phone did not accept aim_start (needs app v3.3+ and the game in the foreground)' }
+    return { ...res, hint: res.ok ? (s.aims[0].mode === 'headlock' ? 'HeadLock running — the USER fires; while a real finger is on the fire button the crosshair is locked on the nearest head. Watch action=status: firing / locked / lockErrPx (px from the head, target ≤1) / locks / nudges / shizuku.' : 'aim engine running — watch action=status (holding/holdCount/fps). The user can also start/stop it from the bubble, the 🎯 notification button or Volume keys.') : (String(res.error ?? '').includes('Shizuku') ? 'HeadLock needs Shizuku: the user must open the Shizuku app → start (wireless debugging), then Device Relay → Shizuku card → allow. ' + res.error : 'phone did not accept aim_start (needs app v3.3+ and the game in the foreground)') }
   }
   if (act === 'set') {
     if (!app) return { ok: false, error: 'app unknown — open the game or pass app' }
