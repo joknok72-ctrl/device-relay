@@ -35,6 +35,7 @@
 #   ./phone.sh play ['<json combo steps>'] [waitMs] ['<json extra: {objects,ocr,pixels,maxWidth}>']   # v4.1 ACT+WAIT+SEE in one call → play.jpg + summary
 #   ./phone.sh frame ['<json {objects,ocr,pixels}>']                                # v4.1 perception only (play_frame)
 #   ./phone.sh rules '<json rules[]>' [timeoutMs] ['<json stopRules[]>']              # v4.1 react_script: on-device reflex engine (~50 ms reaction)
+#   ./phone.sh setup [force] [genre] ["label"]                                        # v4.2 game_setup: auto-profile an unknown game (colours/HUD numbers/buttons)
 #   Any coordinate/colour/region arg accepts @names from the profile: tap @jump | tap @jump+20,-10 | color @enemy | objects @enemy | react @note 0,1900,1080,60
 #   ./phone.sh tap 540 990
 #   ./phone.sh tapel "Sign in"         # tap element by text
@@ -258,6 +259,11 @@ print(json.dumps(d,ensure_ascii=False,indent=1))' ;;
 import json,sys,base64; d=json.load(sys.stdin); img=d.pop("image",None)
 if img and img.get("base64"): open("play.jpg","wb").write(base64.b64decode(img["base64"])); print("saved play.jpg (%dx%d scale=%s)" % (img["w"],img["h"],img["scale"]))
 print(json.dumps(d,ensure_ascii=False,indent=1))' ;;
+  setup)   call game_setup "$(python3 -c 'import json,sys; a={"image":False}
+if sys.argv[1]=="force": a["force"]=True
+if sys.argv[2]: a["genre"]=sys.argv[2]
+if sys.argv[3]: a["label"]=sys.argv[3]
+print(json.dumps(a))' "${1:-}" "${2:-}" "${3:-}")" | pretty ;;
   rules)   call react_script "$(python3 -c 'import json,sys
 a={"rules":json.loads(sys.argv[1])}
 if sys.argv[2]: a["timeoutMs"]=int(sys.argv[2])
@@ -337,5 +343,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,54p' "$0" ;;
+  *) sed -n '2,55p' "$0" ;;
 esac

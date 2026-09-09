@@ -35,6 +35,12 @@
 
 ## المميزات المنجزة ✅
 
+**🧠 v4.2 — الـ AI يلعب أي لعبة مجهولة من أول دقيقة (game_setup + ذاكرة بين الـ ticks)**
+- **`game_setup`** — نداء واحد يحوّل لعبة مجهولة إلى بروفايل قابل للعب: الألوان المسيطرة → `@red/@green/@yellow…`، سطور OCR الرقمية في الـ HUD → مناطق `@score/@hp/@coins/@time…`، أزرار الـ UI → `@controls`، تخمين النوع (shooter/runner/puzzle…). لا يلمس أي شيء. `force:true` يعيد المسح ويدمج.
+- **`play` بذاكرة**: كل tick يقارن بالسابق (لكل لعبة) ويرجع `deltas` (حركة أقرب جسم dx/dy/dir، تغيّر كل رقم ±)، `events` (`@enemy appeared`، `@coin vanished`، `score +50`، `⚠ hp dropping`)، `tick`، و **`stuck`**: لو الشاشة ثابتة 3 ticks يقرأ الشاشة كلها OCR ويصنّفها (menu / game_over / paused) مع نصوص الأزرار + نصيحة. `reset:true` لبداية جولة جديدة، `autoRead:false` لإيقاف القراءة التلقائية. الملخص بقى يشمل الاتجاه والفرق: `@enemy×3 nearest(570,1500) →right · score=1260 (+10) · changed 7.5%`.
+- Bootstrap 7a: قواعد قرار عامة لأي لعبة (تهديد = يقترب، رقم متوقف = عالق، hp ينزل = انسحب، menu → tap_text، لا شيء مكتشف → game_setup force).
+- `phone.sh setup [force] [genre] ["label"]`. الأندرويد 4.1.1 (إصلاح: `onStartCommand` كانت ممسوحة منذ v4.0 فالتطبيق لم يكن يتصل أصلًا). 82 أداة، اختبارات **761/761** ✅.
+
 **🕹️ v4.1 — AI-direct play: `play` + `react_script` + `play_frame` (الـ AI هو اللاعب، بدون بوتات)**
 - **`play`** = ACT + WAIT + SEE في نداء واحد: خطوات combo (joystick/aim/fire/tap/down/move/up) أو أداة واحدة → انتظار `waitMs` → **إطار لعب**: صورة JPEG مضغوطة + كل الأجسام لكل لون (`objects{name:{count,objects[{cx,cy,area,w,h,top}]}}`) + أرقام OCR لكل منطقة (`ocr{score:{value,text}}`) + بكسلات محددة + `changedPct` + سطر `summary` مقروء بدون الصورة (`@enemy×3 nearest(540,1500) · score=1250 · changed 7.5%`).
 - **Profile-aware**: مع `game_profile` محفوظ، `play {}` وحدها تكشف تلقائيًا كل ألوان البروفايل وتقرأ كل المناطق الرقمية (score/hp/ammo/coins/time/kills…) — وعي كامل بالموقف كل tick.
@@ -44,7 +50,7 @@
 - Bootstrap 7a محدَّث: الحلقة `play {} → قرار → play {act} أو react_script → play {}`؛ playbook الشوتر بمرحلتين (Find & engage / Reactive).
 - `phone.sh play ['steps'] [waitMs] ['{objects,ocr}']` (يحفظ `play.jpg`)، `phone.sh frame`, `phone.sh rules '<rules>' [ms] ['<stopRules>']`.
 - Android **4.1.0**: تنفيذ `react_script` و `play_frame` على الجهاز (capture واحد → أجسام + OCR + بكسلات + diff).
-- 81 أداة، اختبارات: suite جديد `tests/e2e-v41.sh` (81 فحص) — الإجمالي **713/713** ✅.
+- 82 أداة، اختبارات: suite جديد `tests/e2e-v41.sh` (81 فحص) — الإجمالي **713/713** ✅.
 
 **السيرفر (Worker) — v1.4**
 - 🔐 **توكن لكل جهاز** (`/api/admin/tokens`): توكن محدود بجهاز واحد، خيار `readOnly` (مراقبة فقط)، إلغاء فوري. التوكنات تُخزَّن كـ SHA-256 فقط
@@ -143,7 +149,7 @@
 **🎮 v4.0 — الرجوع للأصل: الـ AI هو اللاعب (بدون بوتات)**
 - بعد تجربة v2.6→v3.4 (بوتات قواعد على الهاتف، AimEngine، HeadLock عبر Shizuku) قرّر المستخدم الرجوع للنموذج الأصلي: **الـ AI يتحكم ويلعب مباشرة** من أي محادثة. تمت إزالة كل ما يخص البوتات بالكامل: أدوات `game_bot`/`aim_engine`، قوالب البوتات، صفحة صانع البوتات `/builder`، تخزين `bots/aims` في الـ Durable Object، أوامر `bot_*`/`aim_*` في البروتوكول، ومن التطبيق: `BotEngine`، `AimEngine`، `BotOverlay` (الفقاعة)، أزرار الصوت، أزرار الإشعار ▶/■، Shizuku/`TouchProxyService`/AIDL. الإصدار Android **4.0.0** خفيف: اتصال + إمكانية الوصول + الأدوات فقط.
 - **تطوير اللعب المباشر** — قسم جديد في الـ bootstrap **7a. HOW TO PLAY LIVE, FAST**: الاختناق هو عدد الرحلات لا التفكير؛ لا `capture_screen` منفردة أبدًا (كل فعل عبر `act_and_see`/`observe` في رحلة واحدة)، تفويض ردود الفعل للهاتف (`auto_react` ~80ms، `game_loop`، `do_until`، `wait_pixel`/`watch_color`/`wait_for_text` بلا polling)، `combo` واحد لكل اشتباك (حركة+تصويب+ضرب بأصابع منفصلة)، توقّع الحركة بـ `track_object`، معايرة مرة واحدة وحفظ في `game_profile`، وللشوترز: `auto_react` على لون الشعيرة الحمراء داخل `@reticle` = ضرب لحظة تأكيد اللعبة للهدف بلا طلقات كاذبة.
-- 81 أداة. `phone.sh` بدون أوامر `bot`/`aim set`. الاختبارات: 12 suite (حُذفت suites البوتات v26–v33).
+- 82 أداة. `phone.sh` بدون أوامر `bot`/`aim set`. الاختبارات: 12 suite (حُذفت suites البوتات v26–v33).
 
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
@@ -447,6 +453,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-09 (v4.1 — AI-direct play upgrade: `play` (act+wait+see), `react_script` on-device reflex engine with tap_found/aim_found, `play_frame`; profile-aware defaults; 81 tools; Android 4.1.0; new Cloudflare account secrets applied)
+- **Last Updated**: 2026-09-10 (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 82 tools; Android 4.1.1 connect fix)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
