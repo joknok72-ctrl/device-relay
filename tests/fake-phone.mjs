@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
-let hashCounter = 0, diffCounter = 0, streaming = false, pfCounter = 0
+let hashCounter = 0, diffCounter = 0, streaming = false, pfCounter = 0, pfHook = 0
 // v1.9: two fake 'screens' — 'menu' (default) and 'home' (after home action); recents switches back
 let screen = 'menu'
 const fingersDown = new Map()
@@ -84,16 +84,19 @@ ws.onmessage = (ev) => {
     // v4.1 AI-direct play primitives
     if (a.type === 'play_frame') {
       const f = a.frame || {}
+      if ((f.quality ?? 0) !== pfHook) { pfHook = f.quality ?? 0; pfCounter = 0 }
       pfCounter++
       // test hooks: quality 11 = frozen screen (changedPct 0); quality 12 = moving world (red drifts right 30px/frame, score +10/frame)
-      const frozen = f.quality === 11, moving = f.quality === 12
+      // quality 13 = threat: red falls 200px/frame toward the player and grows; hp (region named hp) drops 5/frame
+      const frozen = f.quality === 11, moving = f.quality === 12, threat = f.quality === 13
       const drift = moving ? pfCounter * 30 : 0, bonus = moving ? pfCounter * 10 : 0
+      const fall = threat ? Math.min(pfCounter * 200, 900) : 0, grow = threat ? 1 + pfCounter * 0.3 : 1
       const present = (c) => c === '#ff0000' || c === '#00ff00'
       const objects = {}
       for (const [i, o] of (f.objects || []).entries()) {
         const name = o.name || `c${i}`
         const list = o.color === '#ff0000'
-          ? [ { cx: 540 + drift, cy: 1500, area: 8000, w: 80, h: 100, top: 1450 }, { cx: 200, cy: 1200, area: 2500, w: 50, h: 50, top: 1175 }, { cx: 900, cy: 800, area: 900, w: 30, h: 30, top: 785 } ]
+          ? [ { cx: 540 + drift, cy: (threat ? 600 : 1500) + fall, area: Math.round(8000 * grow), w: 80, h: 100, top: 1450 }, { cx: 200, cy: 1200, area: 2500, w: 50, h: 50, top: 1175 }, { cx: 900, cy: 800, area: 900, w: 30, h: 30, top: 785 } ]
           : (o.color === '#00ff00' ? [ { cx: 300, cy: 700, area: 4400, w: 70, h: 70, top: 665 } ] : [])
         const filtered = list.filter(x => x.w >= (o.minSize ?? 6) && (o.maxSize == null || x.w <= o.maxSize)).slice(0, o.max ?? 6)
         objects[name] = { count: filtered.length, objects: filtered, present: present(o.color) }
@@ -101,7 +104,8 @@ ws.onmessage = (ev) => {
       const ocr = {}
       for (const [i, r] of (f.ocr || []).entries()) {
         const name = r.name || `r${i}`
-        ocr[name] = r.number ? { value: 1250 + bonus, text: 'SCORE ' + (1250 + bonus) } : [ { text: 'SCORE 1250', cx: 190, cy: 90 } ]
+        const val = threat && name === 'hp' ? Math.max(0, 100 - pfCounter * 5) : 1250 + bonus
+        ocr[name] = r.number ? { value: val, text: String(val) } : [ { text: 'SCORE 1250', cx: 190, cy: 90 } ]
       }
       const pixels = (f.pixels || []).map(p => ({ x: p.x, y: p.y, hex: p.y > 1200 ? '#ff0000' : '#000000' }))
       res.screenshot = FAKE_SCREEN; res.screenshotMime = 'image/jpeg'

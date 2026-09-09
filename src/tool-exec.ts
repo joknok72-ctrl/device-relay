@@ -122,10 +122,12 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
       }
       for (const [k, val] of Object.entries(o)) {
         if (k === 'at' && at) continue
+        if (k === 'if' || k === 'stopOn') { out[k] = val; continue } // v4.3 play_loop conditions reference @colour NAMES, resolved by the loop itself
         out[k] = walk(val, k)
       }
       return out
     }
+    if (typeof v === 'string' && v.startsWith('@found.')) return v // v4.3 runtime token substituted per tick by play_loop
     if (typeof v === 'string' && v.startsWith('@')) {
       const r = look(v); if (!r) return v
       const k = (key ?? '').toLowerCase()

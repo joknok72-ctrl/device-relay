@@ -14,8 +14,8 @@ call '{"name":"get_current_app"}' >/dev/null
 call '{"name":"game_profile","arguments":{"delete":true}}' >/dev/null
 
 echo "== version / schema"
-check version '"version":"4.2.0"' "$(curl -s $U/api/health)"
-check tools-82 '82' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"4.3.0"' "$(curl -s $U/api/health)"
+check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check schema-setup 'game_setup' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t["name"] for t in d if t["name"]=="game_setup"][0]')"
 check schema-play-reset 'reset' "$(curl -s "$U/api/tools/schema?format=raw" | j '"reset" if "reset" in [t for t in d if t["name"]=="play"][0]["parameters"]["properties"] else "no"')"
 
@@ -52,7 +52,7 @@ check d1-tick '"tick":1' "$R"
 check d1-nodeltas 'nodeltas' "$(echo "$R" | j '"nodeltas" if "deltas" not in d else "HAS"')"
 R=$(call '{"name":"play","arguments":{"maxWidth":0,"quality":12}}')
 check d2-tick '"tick":2' "$R"
-check d2-delta-enemy '"@enemy":{"dx":30,"dy":0,"dir":"right"}' "$R"
+check d2-delta-enemy '"@enemy":{"dx":30,"dy":0,"dir":"right","vx":' "$R"
 check d2-delta-score '"score":10' "$R"
 check d2-event-score 'score +10' "$R"
 check d2-event-hp 'hp +10' "$R"
