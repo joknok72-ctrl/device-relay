@@ -2,7 +2,10 @@ package com.devicerelay.client.shizuku
 
 import android.util.Log
 import android.view.Surface
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
+import java.io.FileDescriptor
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -40,6 +43,10 @@ class TouchProxyService : ITouchProxy.Stub() {
     private var dev: Dev? = null
     private var input: FileInputStream? = null
     private var output: FileOutputStream? = null
+    private var rwFd: FileDescriptor? = null           // single O_RDWR descriptor (preferred)
+    private var shWriter: java.io.OutputStream? = null // fallback: persistent `sh` with the device on fd 3
+    private var writeMode = "none"
+    private var diag = ""
     private var reader: Thread? = null
     @Volatile private var alive = false
     private var lastError: String? = null
@@ -92,15 +99,42 @@ class TouchProxyService : ITouchProxy.Stub() {
         return devs.firstOrNull { it.direct } ?: devs.firstOrNull()
     }
 
+    private fun sh(cmd: String): String = runCatching {
+        val p = ProcessBuilder("sh", "-c", cmd).redirectErrorStream(true).start()
+        val t = p.inputStream.bufferedReader().readText(); p.waitFor(); t.trim()
+    }.getOrElse { "ERR $it" }
+    /** who are we, what is the node, does the stock sendevent binary manage to write? */
+    private fun collectDiag(path: String): String =
+        "id=[" + sh("id") + "] node=[" + sh("ls -lZ $path") + "] ctx=[" + sh("cat /proc/self/attr/current") + "] sendevent=[" + sh("sendevent $path 0 0 0 && echo OK") + "]"
+
     private fun open() {
         val d = discover() ?: run { lastError = "no touchscreen in getevent -p"; return }
         dev = d
         val f = File(d.path)
-        input = FileInputStream(f); output = FileOutputStream(f)
+        diag = collectDiag(d.path)
+        // 1) one O_RDWR fd (no O_CREAT/O_TRUNC that Java's FileOutputStream adds)
+        runCatching { Os.open(d.path, OsConstants.O_RDWR or OsConstants.O_CLOEXEC, 0) }.onSuccess { fd ->
+            rwFd = fd; input = FileInputStream(fd); output = FileOutputStream(fd); writeMode = "rdwr"
+        }.onFailure { e1 ->
+            lastError = "O_RDWR: $e1"
+            // 2) read-only stream + write through a persistent shell (`exec 3>>dev`, O_WRONLY|O_APPEND)
+            input = runCatching { FileInputStream(f) }.getOrElse { throw IllegalStateException("read open failed: $it (rdwr: $e1)") }
+            val sh = runCatching { ProcessBuilder("sh").redirectErrorStream(true).start() }.getOrNull()
+            if (sh != null) {
+                shWriter = sh.outputStream
+                shWriter!!.write("exec 3>>${d.path} || echo OPENFAIL\n".toByteArray()); shWriter!!.flush()
+                Thread.sleep(150)
+                val avail = sh.inputStream.available()
+                if (avail > 0) { val b = ByteArray(avail); sh.inputStream.read(b); val out = String(b); if (out.contains("OPENFAIL") || out.contains("denied")) { lastError = "$lastError; sh: ${out.trim()}"; shWriter = null } }
+                if (shWriter != null) writeMode = "sh-append"
+            }
+            if (shWriter == null) writeMode = "read-only"
+        }
         ourSlot = d.slots.max.coerceIn(1, 31)
         ourTrackingBase = (d.tracking.max - 100).coerceAtLeast(1000)
         alive = true
         reader = Thread({ readLoop() }, "touch-reader").apply { isDaemon = true; start() }
+        if (writeMode == "read-only") lastError = "can read but cannot write ${d.path}: ${lastError ?: ""}"
         Log.i(TAG, "opened ${d.path} (${d.name}) x=${d.x.min}..${d.x.max} y=${d.y.min}..${d.y.max} slots=${d.slots.max} ourSlot=$ourSlot 64bit=$is64")
     }
 
@@ -182,20 +216,27 @@ class TouchProxyService : ITouchProxy.Stub() {
         bb.putShort(type.toShort()); bb.putShort(code.toShort()); bb.putInt(value)
     }
     private fun write(vararg events: IntArray): Boolean {
-        val out = output ?: return false
         val bb = ByteBuffer.allocate(evSize * events.size).order(ByteOrder.nativeOrder())
         for (e in events) ev(bb, e[0], e[1], e[2])
-        return try { out.write(bb.array()); true } catch (e: Exception) { writeErrors++; lastError = e.toString(); false }
+        val bytes = bb.array()
+        val out = output
+        if (out != null) return try { out.write(bytes); true } catch (e: Exception) { writeErrors++; lastError = e.toString(); false }
+        val w = shWriter ?: return false
+        // printf with octal escapes into fd 3 — a shell builtin, no fork per event
+        val sb = StringBuilder("printf '")
+        for (b in bytes) { sb.append('\\'); sb.append(Integer.toOctalString(b.toInt() and 0xFF).padStart(3, '0')) }
+        sb.append("' >&3\n")
+        return try { w.write(sb.toString().toByteArray()); w.flush(); true } catch (e: Exception) { writeErrors++; lastError = e.toString(); false }
     }
     private fun realFingers(): Int = snapshot.size / 4
 
     // ------------------------------------------------------------------ ITouchProxy
     override fun describe(): String {
         val d = dev
-        return if (d == null) "not open: ${lastError ?: "unknown"}" else
-            "${d.path} \"${d.name}\" raw x=${d.x.min}..${d.x.max} y=${d.y.min}..${d.y.max} slots=0..${d.slots.max} ourSlot=$ourSlot 64bit=$is64 rot=$rotation disp=${dispW}x$dispH alive=$alive events=$readEvents err=${lastError ?: "-"}"
+        return if (d == null) "not open: ${lastError ?: "unknown"} $diag" else
+            "${d.path} \"${d.name}\" raw x=${d.x.min}..${d.x.max} y=${d.y.min}..${d.y.max} slots=0..${d.slots.max} ourSlot=$ourSlot 64bit=$is64 rot=$rotation disp=${dispW}x$dispH alive=$alive write=$writeMode events=$readEvents err=${lastError ?: "-"} $diag"
     }
-    override fun isReady(): Boolean = alive && dev != null
+    override fun isReady(): Boolean = alive && dev != null && writeMode != "read-only" && writeMode != "none"
     override fun setMapping(rotation: Int, dispW: Int, dispH: Int) { this.rotation = rotation; this.dispW = dispW; this.dispH = dispH }
     override fun touches(): IntArray = snapshot
     override fun lastEventAgeMs(): Long = if (lastEventAt == 0L) -1 else System.currentTimeMillis() - lastEventAt
@@ -243,7 +284,7 @@ class TouchProxyService : ITouchProxy.Stub() {
     override fun destroy() {
         runCatching { fingerUp() }
         alive = false
-        runCatching { input?.close() }; runCatching { output?.close() }
+        runCatching { input?.close() }; runCatching { output?.close() }; runCatching { rwFd?.let { Os.close(it) } }; runCatching { shWriter?.write("exit\n".toByteArray()); shWriter?.flush(); shWriter?.close() }
         exitProcess(0)
     }
 }
