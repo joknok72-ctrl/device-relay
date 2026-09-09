@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -81,6 +82,13 @@ object AimEngine {
         val headTopOffset: Int = 5,                       // px below the topmost skin pixel = centre of the head
         val headTopRows: Int = 6,                         // rows under the top used for the x-centre of the head
         val bodyColor: String = "", val bodyTol: Int = 28, // optional: enemy cloth colour to prefer blobs sitting on a body
+        // v3.4.3 BODY-FIRST detection: find the enemy TORSO first (dark cloth blob of human proportions), then the head is the
+        //   skin-like rows directly above it. Far more robust than skin-only (skin matches walls/floors/own arms).
+        val bodyFirst: Boolean = true,
+        val bodyMaxLum: Int = 60,                         // torso pixel = max(r,g,b) <= this (dark cloth)
+        val bodyMinW: Int = 12, val bodyMaxW: Int = 90, val bodyMinH: Int = 20, val bodyMaxH: Int = 160,
+        val headSearchUp: Int = 60,                       // how many px above the torso top to look for the head
+        val skinMinR: Int = 140, val skinMinRB: Int = 35, val skinMinRG: Int = 12, val skinMinG: Int = 80,   // skin-like rule (any skin tone)
         val lockRange: Int = 420,                         // max distance from the crosshair to acquire a target
         val headGain: Float = 1.45f, val headMaxStep: Int = 160, val headDeadzone: Int = 1,
         val headLead: Float = 0.6f,                       // velocity feed-forward (fraction of last frame's target motion)
@@ -297,7 +305,7 @@ object AimEngine {
                 val bmp = svc.captureForEngine()
                 if (bmp == null) { delay(frameMs); continue }
                 frames++; fpsFrames++
-                val head = findHead(bmp, headRgb, cfg.headTol, bodyRgb, cfg.bodyTol, cfg.headBox, cfg.excludeBox, cfg.headMinSize, cfg.headMaxSize, cfg.crosshairX, cfg.crosshairY, cfg.lockRange, cfg.headTopOffset, cfg.headTopRows, lastHead)
+                val head = if (cfg.bodyFirst) findHeadBodyFirst(bmp, cfg, lastHead) else findHead(bmp, headRgb, cfg.headTol, bodyRgb, cfg.bodyTol, cfg.headBox, cfg.excludeBox, cfg.headMinSize, cfg.headMaxSize, cfg.crosshairX, cfg.crosshairY, cfg.lockRange, cfg.headTopOffset, cfg.headTopRows, lastHead)
                 bmp.recycle()
                 val now = SystemClock.elapsedRealtime()
                 var target: Pair<Float, Float>? = null
@@ -355,6 +363,81 @@ object AimEngine {
             job = null
             emit()
         }
+    }
+
+    private fun skinLike(c: Int, cfg: Config): Boolean {
+        val r = (c shr 16) and 0xFF; val g = (c shr 8) and 0xFF; val b = c and 0xFF
+        return r >= cfg.skinMinR && g >= cfg.skinMinG && r - b >= cfg.skinMinRB && r - g >= cfg.skinMinRG
+    }
+    /**
+     * v3.4.3 BODY-FIRST: (1) 3-px grid CC over DARK pixels inside headBox → torso candidates with human proportions
+     * (w/h limits, taller than wide), excluding the own-character box; pick the one nearest the crosshair (continuity with
+     * the previous head wins). (2) Full-resolution scan of the rows directly above the torso top, centred on the torso,
+     * collecting skin-like rows (tolerant rule — any skin tone) → topmost skin row + mean x of the first topRows rows.
+     * Falls back to the torso centre-top when the head is hidden (still far better than the body centre).
+     */
+    private fun findHeadBodyFirst(bmp: Bitmap, cfg: Config, prev: Pair<Float, Float>?): Pair<Float, Float>? {
+        val step = 3; val b = cfg.headBox; val ex = cfg.excludeBox
+        val x0 = b.x.coerceIn(0, bmp.width - 1); val y0 = b.y.coerceIn(0, bmp.height - 1)
+        val w = min(b.w, bmp.width - x0).coerceAtMost(rowBuf.size); val h = min(b.h, bmp.height - y0); if (w <= 0 || h <= 0) return null
+        val gw = (w + step - 1) / step; val gh = (h + step - 1) / step
+        val mask = BooleanArray(gw * gh)
+        var gy = 0
+        while (gy < gh) {
+            bmp.getPixels(rowBuf, 0, w, x0, y0 + gy * step, w, 1)
+            var gx = 0
+            while (gx < gw) { val c = rowBuf[gx * step]; val m = max(max((c shr 16) and 0xFF, (c shr 8) and 0xFF), c and 0xFF); if (m <= cfg.bodyMaxLum) mask[gy * gw + gx] = true; gx++ }
+            gy++
+        }
+        val seen = BooleanArray(gw * gh); val stack = IntArray(gw * gh)
+        var best = -1.0; var bx = 0; var bTop = 0; var bw = 0; var found = false
+        for (i in mask.indices) {
+            if (!mask[i] || seen[i]) continue
+            var sp = 0; stack[sp++] = i; seen[i] = true
+            var n = 0; var minX = gw; var maxX = -1; var minY = gh; var maxY = -1
+            while (sp > 0) {
+                val k = stack[--sp]; val kx = k % gw; val ky = k / gw
+                n++; if (kx < minX) minX = kx; if (kx > maxX) maxX = kx; if (ky < minY) minY = ky; if (ky > maxY) maxY = ky
+                if (kx > 0 && mask[k - 1] && !seen[k - 1]) { seen[k - 1] = true; stack[sp++] = k - 1 }
+                if (kx < gw - 1 && mask[k + 1] && !seen[k + 1]) { seen[k + 1] = true; stack[sp++] = k + 1 }
+                if (ky > 0 && mask[k - gw] && !seen[k - gw]) { seen[k - gw] = true; stack[sp++] = k - gw }
+                if (ky < gh - 1 && mask[k + gw] && !seen[k + gw]) { seen[k + gw] = true; stack[sp++] = k + gw }
+            }
+            val pw = (maxX - minX + 1) * step; val ph = (maxY - minY + 1) * step
+            if (pw < cfg.bodyMinW || pw > cfg.bodyMaxW || ph < cfg.bodyMinH || ph > cfg.bodyMaxH) continue
+            if (ph < pw) continue                                            // torsos are taller than wide
+            val fill = n.toFloat() / ((maxX - minX + 1) * (maxY - minY + 1)); if (fill < 0.35f) continue   // not a thin line/edge
+            val cxp = x0 + (minX + maxX + 1) * step / 2f; val topY = y0 + minY * step
+            if (ex.w > 0 && cxp >= ex.x && cxp < ex.x + ex.w && topY >= ex.y - 40 && topY < ex.y + ex.h) continue   // own character
+            val dCross = Math.hypot((cxp - cfg.crosshairX).toDouble(), (topY - cfg.crosshairY).toDouble())
+            if (dCross > cfg.lockRange) continue
+            var score = 1.0 / (1.0 + dCross / 100.0) + n / 4000.0          // near the crosshair + big torso
+            if (prev != null) { val dp = Math.hypot((cxp - prev.first).toDouble(), (topY - prev.second).toDouble()); if (dp < 60) score += 1.0 }  // tracking continuity
+            if (score > best) { best = score; bx = cxp.toInt(); bTop = topY; bw = pw; found = true }
+        }
+        if (!found) return null
+        // ---- head: skin-like rows straight above the torso (full resolution)
+        val half = (bw / 2 + 8).coerceIn(10, 40)
+        val rx0 = (bx - half).coerceAtLeast(0); val rx1 = (bx + half + 1).coerceAtMost(bmp.width); val rw = rx1 - rx0
+        val yStart = (bTop + 3).coerceAtMost(bmp.height - 1); val yEnd = (bTop - cfg.headSearchUp).coerceAtLeast(0)
+        var topY = -1; var lastSkinY = -1; var gap = 0
+        val rowHits = IntArray(cfg.headSearchUp + 4); val rowSum = DoubleArray(cfg.headSearchUp + 4)
+        var y = yStart; var idx = 0
+        while (y >= yEnd && idx < rowHits.size) {
+            bmp.getPixels(rowBuf, 0, rw, rx0, y, rw, 1)
+            var hits = 0; var sum = 0.0
+            for (x in 0 until rw) if (skinLike(rowBuf[x] and 0xFFFFFF, cfg)) { hits++; sum += rx0 + x }
+            rowHits[idx] = hits; rowSum[idx] = sum
+            if (hits >= 3) { lastSkinY = y; topY = y; gap = 0 } else if (lastSkinY >= 0) { gap++; if (gap >= 4) break }   // head ended (neck→hair→air)
+            y--; idx++
+        }
+        if (topY < 0) return bx.toFloat() to (bTop - 8).toFloat()           // head hidden: aim just above the torso
+        // mean x over the first topRows skin rows below the top edge
+        var sx = 0.0; var cnt = 0; var used = 0
+        var yy = topY; var k = yStart - topY
+        while (yy <= yStart && k >= 0 && used < cfg.headTopRows) { if (rowHits[k] >= 3) { sx += rowSum[k]; cnt += rowHits[k]; used++ }; yy++; k-- }
+        val hx = if (cnt > 0) (sx / cnt).toFloat() else bx.toFloat()
+        return hx to (topY + cfg.headTopOffset).toFloat()
     }
 
     /**
