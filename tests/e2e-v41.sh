@@ -17,7 +17,7 @@ call '{"name":"game_profile","arguments":{"delete":true}}' >/dev/null
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version / schema"
-check version '"version":"4.4.0"' "$(curl -s $U/api/health)"
+check version '"version":"4.5.0"' "$(curl -s $U/api/health)"
 check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 SCHEMA=$(curl -s "$U/api/tools/schema?format=raw")
 check schema-play 'play' "$(echo "$SCHEMA" | j '[t["name"] for t in d if t["name"]=="play"][0]')"
@@ -27,7 +27,7 @@ check schema-react-required 'rules' "$(echo "$SCHEMA" | j '[t for t in d if t["n
 check schema-no-internal '0' "$(echo "$SCHEMA" | j 'len([t for t in d if t["name"].startswith("_")])')"
 
 echo "== play (no profile)"
-R=$(call '{"name":"play","arguments":{"objects":[{"name":"enemy","color":"#ff0000","minSize":6}],"ocr":[{"name":"score","region":{"x":0,"y":0,"w":400,"h":150},"number":true}],"pixels":[{"x":10,"y":1500}]}}')
+R=$(call '{"name":"play","arguments":{"objects":[{"name":"enemy","color":"#ff0000","minSize":6}],"ocr":[{"name":"score","region":{"x":0,"y":0,"w":400,"h":150},"number":true}],"pixels":[{"x":10,"y":1500}],"reset":true}}')
 check play-ok '"ok":true' "$R"
 check play-app '"app":"com.example.spacerunner"' "$R"
 check play-objects '"enemy":{"count":3' "$R"

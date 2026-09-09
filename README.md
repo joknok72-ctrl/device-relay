@@ -35,6 +35,12 @@
 
 ## المميزات المنجزة ✅
 
+**⚡ v4.5 — من الصفر للعب في نداءين + إدراك أدق**
+- **سياسة افتراضية مولّدة**: `play_loop {strategy:"default"}` يبني سياسة من نوع اللعبة + أسماء الألوان/الأزرار (تهديد → تجنّب/ضرب، عملة → جمع، hp منخفض → انسحاب، قائمة → إغلاق)؛ `strategy:"best"` يستخدمها تلقائيًا لو ما فيش استراتيجية متعلّمة؛ `game_setup` يرجع `suggestedPolicy`. لعبة مجهولة = `game_setup {}` ثم `play_loop {strategy:"default"}`.
+- **تتبع متعدد الأجسام** (`tracks`): حتى 4 أجسام لكل لون تُطابق بين الـ ticks (أقرب جار) فيبقى لكل جسم سرعته واتجاهه و eta — التهديدات بقت لكل جسم مش لكل لون.
+- **أشرطة القياس** (`bars`): منطقة اسمها hp/energy/shield… ولها لون بنفس الاسم → نسبة الامتلاء % (`hp=60%`)، تدخل في deltas/events/valueBelow بدون OCR.
+- رموز جديدة لأفعال play_loop: `@threat.x/y`، `@away.x` (الجهة المعاكسة للتهديد)، `@center.x/y`. اختبارات **868/868** ✅.
+
 **🎓 v4.4 — التعلّم من التجربة (learned strategies)**
 - كل تشغيل لـ `play_loop` يتم تقييمه تلقائيًا (مكاسب السكور/العملات لكل tick × نسبة النجاة) ويُحفظ كـ **strategy** باسم على بروفايل اللعبة (أفضل 5، مرتبة بالـ fitness، نفس السياسة تتجمع في سجل واحد).
 - `play_loop {strategy:"best"}` يعيد تشغيل أفضل سياسة متعلّمة بدون كتابتها؛ `strategy:"v2"` بالاسم؛ `name/note/learn:false`. النتيجة ترجع `learned:{rank, of, fitness, gained, died}` فيقول للـ AI هل نسخته الجديدة تغلبت على القديمة.
@@ -466,6 +472,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-10 (v4.4 — learned strategies: play_loop runs scored & ranked per game, strategy:"best" replay) · (v4.3 — play_loop autopilot policy engine, threats/velocity/eta, autoMenu, session memory on tick 1; 83 tools) · previously (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 83 tools; Android 4.1.1 connect fix)
+- **Last Updated**: 2026-09-10 (v4.5 — default policy synthesis, multi-object tracks, bar gauges, @threat/@away tokens) · (v4.4 — learned strategies: play_loop runs scored & ranked per game, strategy:"best" replay) · (v4.3 — play_loop autopilot policy engine, threats/velocity/eta, autoMenu, session memory on tick 1; 83 tools) · previously (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 83 tools; Android 4.1.1 connect fix)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.

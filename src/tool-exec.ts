@@ -459,7 +459,7 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   if (Array.isArray(args.objects)) frame.objects = args.objects
   else if (profile && Object.keys(profile.colors).length) frame.objects = Object.entries(profile.colors).slice(0, 8).map(([name, c]) => ({ name, color: c.hex, tolerance: c.tolerance ?? 28, minSize: 6, max: 6 }))
   if (Array.isArray(args.ocr)) frame.ocr = args.ocr
-  else if (profile) { const regs = Object.entries(profile.regions).filter(([n]) => NUMERIC_REGION.test(n)).slice(0, 4); if (regs.length) frame.ocr = regs.map(([name, g]) => ({ name, region: { x: g.x, y: g.y, w: g.w, h: g.h }, number: true })) }
+  else if (profile) { const regs = Object.entries(profile.regions).filter(([n]) => NUMERIC_REGION.test(n) && !(profile.colors[n] && /hp|health|life|energy|shield|armor|stamina|mana|fuel|boost|progress|charge|power/i.test(n))).slice(0, 4); if (regs.length) frame.ocr = regs.map(([name, g]) => ({ name, region: { x: g.x, y: g.y, w: g.w, h: g.h }, number: true })) }
   if (Array.isArray(args.pixels)) frame.pixels = args.pixels
   const shot = await executeTool(env, deviceId, '_play_frame', { frame }, { ...opts, internal: true, depth: (opts.depth ?? 0) + 1 })
   if (!shot.ok) return { ok: false, error: shot.error ?? 'play_frame failed (needs app v4.1+)', action: action ? { ...action, image: undefined } : undefined }
@@ -535,7 +535,7 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   }
   const numeric: [string, number][] = []
   if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number') numeric.push([k, (v as { value: number }).value])
-  for (const [k, pct] of Object.entries(bars)) if (!numeric.some(([n]) => n === k)) numeric.push([k, pct])
+  for (const [k, pct] of Object.entries(bars)) { const i = numeric.findIndex(([n]) => n === k); if (i >= 0) numeric[i] = [k, pct]; else numeric.push([k, pct]) } // a bar gauge beats OCR of the same region
   for (const [k, val] of numeric) {
     state.values[k] = val
     const p = prev?.values[k]
@@ -562,7 +562,7 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   // compact summary line the model can read without the image
   const summary: string[] = []
   if (objs) for (const [k, v] of Object.entries(objs)) if (v.count) { const mv = deltas[`@${k}`] as { dir?: string } | undefined; summary.push(`@${k}×${v.count}${v.objects[0] ? ` nearest(${v.objects[0].cx},${v.objects[0].cy})` : ''}${mv?.dir ? ` →${mv.dir}` : ''}`) }
-  for (const [k, val] of numeric) { const dv = deltas[k]; summary.push(`${k}=${val}${bars[k] !== undefined && !(ocr && ocr[k]) ? '%' : ''}${typeof dv === 'number' ? ` (${dv > 0 ? '+' : ''}${dv})` : ''}`) }
+  for (const [k, val] of numeric) { const dv = deltas[k]; summary.push(`${k}=${val}${bars[k] !== undefined ? '%' : ''}${typeof dv === 'number' ? ` (${dv > 0 ? '+' : ''}${dv})` : ''}`) }
   if (changed >= 0) summary.push(`changed ${changed}%`)
   if (threats.length) summary.push(`THREAT @${threats[0].name}${threats[0].etaMs !== undefined ? ` ${threats[0].etaMs}ms` : ''}`)
   if (stuck) summary.push(`STATIC×${(stuck.staticTicks as number)} ${stuck.kind}`)
@@ -687,7 +687,8 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
     lastTick = r
     if (!r.ok && !r.frame) { stoppedBy = 'error'; log.push({ tick: i, error: r.error }); break }
     const objs = (r.frame as { objects?: Record<string, { count: number; objects: { cx: number; cy: number }[] }> } | undefined)?.objects ?? {}
-    const values = Object.fromEntries(Object.entries(((r.frame as { ocr?: Record<string, { value?: number } | unknown[]> }).ocr ?? {})).filter(([, v]) => v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number').map(([k, v]) => [k, (v as { value: number }).value]))
+    const values: Record<string, number> = Object.fromEntries(Object.entries(((r.frame as { ocr?: Record<string, { value?: number } | unknown[]> }).ocr ?? {})).filter(([, v]) => v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number').map(([k, v]) => [k, (v as { value: number }).value]))
+    for (const [k, v] of Object.entries((r.bars as Record<string, number> | undefined) ?? {})) values[k] = v // v4.5 bar gauges count as values
     const threats = (r.threats as { name: string; cx: number; cy: number }[] | undefined) ?? []
     const fr = r.frame as { w?: number; h?: number } | undefined; if (fr?.w) W = fr.w; if (fr?.h) H = fr.h
     const stuck = r.stuck as { kind?: string } | undefined
