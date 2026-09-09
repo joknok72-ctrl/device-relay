@@ -210,6 +210,15 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
     }
     case 'bot_stop': return { action: { type: 'bot_stop' } }
     case 'bot_status': return { action: { type: 'bot_status' } }
+    case 'aim_config': {
+      const aim = a.aim as Record<string, unknown> | undefined
+      if (!aim || typeof aim !== 'object' || typeof aim.app !== 'string') return { error: 'aim_config requires aim:{app,...}' }
+      return { action: { type: 'aim_config', aim: aim as unknown as Action extends { type: 'aim_config'; aim: infer C } ? C : never } }
+    }
+    case 'aim_start': return { action: { type: 'aim_start' } }
+    case 'aim_stop': return { action: { type: 'aim_stop' } }
+    case 'aim_status': return { action: { type: 'aim_status' } }
+    case 'aim_clear': return { action: { type: 'aim_clear' } }
     // ---- v2.5 multi-touch
     case 'finger_down': {
       if (!isNum(a.x) || !isNum(a.y)) return { error: 'finger_down requires x, y' }

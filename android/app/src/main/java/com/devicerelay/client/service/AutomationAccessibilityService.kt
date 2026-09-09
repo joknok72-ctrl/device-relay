@@ -36,7 +36,9 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
 import com.google.mlkit.vision.common.InputImage
@@ -100,8 +102,8 @@ class AutomationAccessibilityService : AccessibilityService() {
         if (event.action != android.view.KeyEvent.ACTION_DOWN) return false
         val now = android.os.SystemClock.elapsedRealtime()
         when (event.keyCode) {
-            android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> { if (now - lastVolDownAt < 500 && BotEngine.status.running) { lastVolDownAt = 0; BotEngine.stop("volume"); return true }; lastVolDownAt = now }
-            android.view.KeyEvent.KEYCODE_VOLUME_UP -> { if (now - lastVolUpAt < 500 && !BotEngine.status.running) { lastVolUpAt = 0; onBotStartRequest?.invoke("volume"); return true }; lastVolUpAt = now }
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> { if (now - lastVolDownAt < 500 && (BotEngine.status.running || AimEngine.status.running)) { lastVolDownAt = 0; BotEngine.stop("volume"); AimEngine.stop("volume"); return true }; lastVolDownAt = now }
+            android.view.KeyEvent.KEYCODE_VOLUME_UP -> { if (now - lastVolUpAt < 500 && !BotEngine.status.running && !AimEngine.status.running) { lastVolUpAt = 0; onBotStartRequest?.invoke("volume"); return true }; lastVolUpAt = now }
         }
         return false
     }
@@ -914,6 +916,11 @@ class AutomationAccessibilityService : AccessibilityService() {
     fun scanColorPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?, mode: String = "rgb"): JsonObject = scanColor(bmp, hex, tol, region, mode)
     fun scanObjectsPublic(bmp: Bitmap, hex: String, tol: Int, region: Region?, minSize: Int, maxResults: Int, mode: String = "rgb"): JsonObject = scanObjects(bmp, hex, tol, region, minSize, maxResults, mode)
     fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString() ?: lastPackage
+    // ---------------------------------------------------------------- v3.3 AimEngine hooks
+    /** raw frame for the native aim loop (caller recycles) */
+    suspend fun captureForEngine(): Bitmap? = captureBitmap()
+    /** dispatch one stroke; true when the system accepted and completed/continued it */
+    suspend fun dispatchForEngine(s: GestureDescription.StrokeDescription): Boolean = withContext(Dispatchers.Main) { dispatchStrokes(listOf(s)) is Outcome.Ok }
     /** OCR lines as (text, centre) for bot conditions; latin recognizer, reused across ticks. */
     private val botRecognizer by lazy { recognizerFor(null) }
     suspend fun readTextPublic(bmp0: Bitmap, region: Region?): List<Pair<String, Pair<Int, Int>>> {

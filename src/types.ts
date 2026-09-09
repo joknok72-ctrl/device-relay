@@ -70,6 +70,12 @@ export type Action =
   | { type: 'bot_start'; botId: string }
   | { type: 'bot_stop' }
   | { type: 'bot_status' }
+  // v3.3 native aim engine (AimEngine.kt)
+  | { type: 'aim_config'; aim: AimConfig }
+  | { type: 'aim_start' }
+  | { type: 'aim_stop' }
+  | { type: 'aim_status' }
+  | { type: 'aim_clear' }
   // v2.1
   | { type: 'sample_colors'; region?: Region; maxColors?: number; quant?: number; ignoreGrey?: boolean }
   | { type: 'track_object'; color: string; tolerance?: number; region?: Region; minCount?: number; samples?: number; intervalMs?: number; predictMs?: number }
@@ -230,13 +236,14 @@ export const ACTION_TYPES = [
   'find_objects', 'auto_react', 'sample_colors', 'track_object',
   'finger_down', 'finger_move', 'finger_up', 'joystick', 'aim', 'fire_burst', 'combo',
   'bot_sync', 'bot_start', 'bot_stop', 'bot_status',
+  'aim_config', 'aim_start', 'aim_stop', 'aim_status', 'aim_clear',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */
 export const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'screenshot', 'ping', 'ui_dump', 'list_apps', 'current_app', 'get_notifications', 'device_info',
   'pixel', 'find_color', 'screen_hash', 'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
-  'read_text', 'find_colors', 'stream', 'find_objects', 'sample_colors', 'track_object', 'bot_status',
+  'read_text', 'find_colors', 'stream', 'find_objects', 'sample_colors', 'track_object', 'bot_status', 'aim_status',
 ])
 
 /** Message sent server -> phone */
@@ -277,7 +284,26 @@ export interface HelloMessage {
 /** Live preview frame pushed by the phone while streaming is enabled (monitor page only). */
 export interface FrameMessage { kind: 'frame'; data: string; mime: string; ts: number }
 
-export type PhoneMessage = ResultMessage | HelloMessage | FrameMessage | BotStatusMessage | { kind: 'pong' }
+/** v3.3 native aim engine config (mirrors AimEngine.Config on the phone; all fields optional → phone defaults) */
+export interface AimBox { x: number; y: number; w: number; h: number }
+export interface AimConfig {
+  app: string; name?: string
+  fireX?: number; fireY?: number
+  trigger?: 'reticle' | 'target' | 'both'
+  reticleColor?: string; reticleTol?: number; reticleMin?: number; reticleBox?: AimBox
+  targetColor?: string; targetTol?: number; targetMin?: number; targetBox?: AimBox
+  armFrames?: number; releaseFrames?: number; maxHoldMs?: number
+  aimEnabled?: boolean; aimColor?: string; aimTol?: number; aimMinSize?: number; aimMaxSize?: number; aimBox?: AimBox
+  crosshairX?: number; crosshairY?: number; lookX?: number; lookY?: number
+  aimGain?: number; aimMaxStep?: number; aimDeadzone?: number; aimRange?: number; aimOffsetY?: number
+  reloadEnabled?: boolean; reloadColor?: string; reloadTol?: number; reloadMin?: number; reloadBox?: AimBox; reloadX?: number; reloadY?: number
+  fps?: number; autoStart?: boolean; stopOnAppChange?: boolean
+  /** relay-side bookkeeping */
+  updatedAt?: number
+}
+export interface AimStatusMessage { kind: 'aim_status'; running: boolean; name?: string; app?: string; startedAt?: number; frames?: number; fps?: number; holding?: boolean; holdCount?: number; heldMs?: number; aimMoves?: number; reloads?: number; lastTrigger?: string; stoppedBy?: string; error?: string; startedBy?: string; ts: number }
+
+export type PhoneMessage = ResultMessage | HelloMessage | FrameMessage | BotStatusMessage | AimStatusMessage | { kind: 'pong' }
 
 export interface DeviceInfo {
   deviceId: string

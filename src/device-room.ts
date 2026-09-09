@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, Bot, BotStatusMessage, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, Recording, ScreenLabel, SessionReport } from './types'
+import type { Action, AimConfig, AimStatusMessage, Bindings, Bot, BotStatusMessage, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, Recording, ScreenLabel, SessionReport } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
@@ -59,6 +59,9 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private currentApp = ''
   /** v2.6 bots (rule-based automations that run ON the phone). */
   private bots: Bot[] = []
+  /** v3.3 native aim engine: one config per app + last status */
+  private aims: Record<string, AimConfig> = {}
+  private aimStatus: AimStatusMessage | null = null
   private botStatus: BotStatusMessage | null = null
 
   private inputBusy = false
@@ -88,6 +91,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (sessions) this.sessions = sessions
       const bots = await ctx.storage.get<Bot[]>('bots')
       if (bots) this.bots = bots
+      const aims = await ctx.storage.get<Record<string, AimConfig>>('aims')
+      if (aims) this.aims = aims
     })
   }
 
@@ -116,6 +121,14 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private pushBots(target?: WebSocket) {
     const sockets = target ? [target] : this.phoneSockets()
     const msg = JSON.stringify({ kind: 'command', id: crypto.randomUUID(), ts: Date.now(), action: { type: 'bot_sync', bots: this.bots } })
+    for (const ws of sockets) { try { ws.send(msg) } catch { /* ignore */ } }
+  }
+  /** v3.3: send the aim config (the one for the current app, else the newest) to the phone so it survives reinstall/reconnect */
+  private pushAim(target?: WebSocket, app?: string) {
+    const list = Object.values(this.aims); if (!list.length) return
+    const cfg = (app && this.aims[app]) || (this.currentApp && this.aims[this.currentApp]) || list.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0]
+    const sockets = target ? [target] : this.phoneSockets()
+    const msg = JSON.stringify({ kind: 'command', id: crypto.randomUUID(), ts: Date.now(), action: { type: 'aim_config', aim: cfg } })
     for (const ws of sockets) { try { ws.send(msg) } catch { /* ignore */ } }
   }
   /** v2.3: extend the open session for this app or start a new one (gap > 10 min or app changed). */
@@ -171,6 +184,7 @@ export class DeviceRoom extends DurableObject<Bindings> {
         if (!wasOnline) this.webhook('online')
         // v2.6: push bot definitions so the phone notification can start them without the AI
         if (this.bots.length) this.pushBots(server)
+        this.pushAim(server)
       } else {
         server.send(JSON.stringify({ kind: 'snapshot', info: this.snapshotInfo(), logs: this.logs, screenshot: this.lastScreenshot, recording: this.recording ? { active: true, name: this.recording.name, steps: this.recording.steps.length } : { active: false } }))
       }
@@ -362,6 +376,28 @@ export class DeviceRoom extends DurableObject<Bindings> {
       }
     }
     if (url.pathname.endsWith('/bot-status')) return Response.json({ status: this.botStatus, online: this.phoneSockets().length > 0 })
+    // ---------- v3.3 aim engine configs ----------
+    if (url.pathname.endsWith('/aims')) {
+      const app = url.searchParams.get('app')
+      if (request.method === 'GET') return Response.json({ aims: app ? (this.aims[app] ? [this.aims[app]] : []) : Object.values(this.aims), status: this.aimStatus, online: this.phoneSockets().length > 0 })
+      if (request.method === 'POST') {
+        const cfg = (await request.json()) as AimConfig
+        if (!cfg.app) return Response.json({ ok: false, error: 'app required' }, { status: 400 })
+        cfg.updatedAt = Date.now()
+        this.aims[cfg.app] = cfg
+        await this.ctx.storage.put('aims', this.aims)
+        this.pushAim(undefined, cfg.app)
+        this.broadcastViewers({ kind: 'aims', count: Object.keys(this.aims).length })
+        return Response.json({ ok: true, aim: cfg })
+      }
+      if (request.method === 'DELETE') {
+        const before = Object.keys(this.aims).length
+        if (app) delete this.aims[app]; else this.aims = {}
+        await this.ctx.storage.put('aims', this.aims)
+        return Response.json({ ok: true, removed: before - Object.keys(this.aims).length })
+      }
+    }
+    if (url.pathname.endsWith('/aim-status')) return Response.json({ status: this.aimStatus, online: this.phoneSockets().length > 0 })
     if (url.pathname.endsWith('/session-report') && request.method === 'POST') {
       const b = (await request.json()) as Partial<SessionReport> & { app?: string; label?: string }
       const app = String(b.app ?? this.currentApp ?? '').trim()
@@ -642,6 +678,11 @@ export class DeviceRoom extends DurableObject<Bindings> {
           if (changed) this.pushBots()
         }
         this.broadcastViewers({ ...msg, kind: 'bot_status' })
+        break
+      }
+      case 'aim_status': {
+        this.aimStatus = msg
+        this.broadcastViewers({ ...msg, kind: 'aim_status' })
         break
       }
       case 'frame': {

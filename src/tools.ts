@@ -587,6 +587,28 @@ export const TOOLS: ToolDef[] = [
       required: ['action'],
     },
   },
+  // ---------------------------------------------------------------- v3.3 native aim engine (shooters)
+  {
+    name: 'aim_engine',
+    description:
+      'NATIVE SHOOTER AIMBOT/TRIGGERBOT (app v3.3+) — the right tool for Free Fire / PUBG / CODM. Unlike game_bot (rules + one screenshot per tick + separate taps), aim_engine is a compiled loop inside the app: ~30 fps frame analysis and ONE real finger that stays pressed on the fire button for as long as the trigger holds (continuous auto-fire, exactly like a human holding the button) and lifts the instant it clears. ' +
+      'TRIGGERS: trigger=reticle (DEFAULT, recommended): fire while the GAME\'s own crosshair is red (reticleColor inside reticleBox around the crosshair) — the game itself confirms an enemy is under the crosshair → never shoots at air. trigger=target: fire while targetColor (enemy/head marker colour) is inside the small targetBox under the crosshair. trigger=both. ' +
+      'Hysteresis: armFrames (default 1) positive frames to press, releaseFrames (default 3) negative frames to lift — detector flicker never interrupts the burst. maxHoldMs safety (default 8000) lifts and re-arms. ' +
+      'AIM ASSIST (optional, aimEnabled:true): nearest blob of aimColor (enemy head/skin) to the crosshair within aimRange → proportional camera drag on the look area (aimGain px-per-px, aimMaxStep, aimDeadzone, aimOffsetY to lift onto the head). Off while the trigger is already firing. ' +
+      'RELOAD: when reloadColor appears in reloadBox (ammo counter turns red) the finger lifts, reload is tapped, and firing resumes when the reticle is red again. ' +
+      'HANDS-FREE: autoStart (default true) starts it ~2 s after the game opens; the floating bubble / notification 🎯 button / Volume-Up×2 start it, Volume-Down×2 or ■ stop it. Config is stored on the phone and on the relay (survives reconnects). ' +
+      'SETUP FOR A NEW PHONE/GAME: capture_screen → find the fire button, the crosshair centre, the look area; sample the red reticle colour (aim at an enemy, get_pixels on the ring) → action=set with those values → action=start → watch action=status (holding/holdCount/heldMs/fps) while the user plays → tune tolerances. Defaults are calibrated for Free Fire on a 1600x720 landscape frame. ' +
+      'action: set (save config, {aim:{...}} or top-level fields) | start | stop | status | get | clear.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'set | start | stop | status | get | clear' },
+        app: { type: 'string', description: 'Game package (default current app)' },
+        aim: { type: 'object', description: 'action=set: config fields (any subset). Keys: name, fireX, fireY, trigger(reticle|target|both), reticleColor, reticleTol, reticleMin, reticleBox{x,y,w,h}, targetColor, targetTol, targetMin, targetBox, armFrames, releaseFrames, maxHoldMs, aimEnabled, aimColor, aimTol, aimMinSize, aimMaxSize, aimBox, crosshairX, crosshairY, lookX, lookY, aimGain, aimMaxStep, aimDeadzone, aimRange, aimOffsetY, reloadEnabled, reloadColor, reloadTol, reloadMin, reloadBox, reloadX, reloadY, fps, autoStart, stopOnAppChange. Colours/points accept @names from game_profile.' },
+      },
+      required: ['action'],
+    },
+  },
   // ---------------------------------------------------------------- v2.5 multi-touch engine (shooters / action games)
   {
     name: 'joystick',
@@ -1012,14 +1034,20 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'game_bot'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'game_bot' | 'aim_engine'; error?: string } {
   switch (name) {
     case 'session_report': return { special: 'session_report' }
     case 'game_bot': return { special: 'game_bot' }
     // v2.6 raw bot actions (internal: used by game_bot run/stop/status — not in the catalogue)
     case 'bot_start': return { action: { type: 'bot_start', botId: args.botId } }
+    case 'aim_config': return { action: { type: 'aim_config', aim: args.aim } }
+    case 'aim_start': return { action: { type: 'aim_start' } }
+    case 'aim_stop': return { action: { type: 'aim_stop' } }
+    case 'aim_status': return { action: { type: 'aim_status' } }
+    case 'aim_clear': return { action: { type: 'aim_clear' } }
     case 'bot_stop': return { action: { type: 'bot_stop' } }
     case 'bot_status': return { action: { type: 'bot_status' } }
+    case 'aim_engine': return { special: 'aim_engine' }
     case 'joystick': return { action: { type: 'joystick', x: args.x, y: args.y, angle: args.angle, direction: args.direction, distance: args.distance, duration: args.duration, finger: args.finger, release: args.release } }
     case 'aim': return { action: { type: 'aim', x: args.x, y: args.y, dx: args.dx, dy: args.dy, duration: args.duration, steps: args.steps, finger: args.finger, release: args.release } }
     case 'fire_burst': return { action: { type: 'fire_burst', x: args.x, y: args.y, count: args.count, intervalMs: args.intervalMs, holdMs: args.holdMs } }
@@ -1192,7 +1220,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '3.2.0',
+      version: '3.3.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
@@ -1209,7 +1237,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
-  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile',
+  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile', 'aim_engine',
   'game_bot', // list/get/status only — write actions are refused inside gameBot() for read-only tokens
 ])
 

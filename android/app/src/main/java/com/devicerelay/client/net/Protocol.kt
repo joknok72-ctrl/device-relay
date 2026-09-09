@@ -97,6 +97,8 @@ data class Action(
     // v2.6 bots
     val bots: JsonArray? = null,         // bot_sync: raw bot definitions (interpreted by BotEngine)
     val botId: String? = null,           // bot_start
+    // v3.3 native aim engine
+    val aim: JsonObject? = null,         // aim_config: AimEngine.Config as raw json
 )
 
 @Serializable
@@ -108,6 +110,15 @@ data class BotStatusMessage(
     val ruleHits: Map<String, Int>? = null, val avgTickMs: Int? = null,
     val learned: Map<String, Float>? = null, val startedBy: String? = null,
     val ts: Long,
+)
+
+@Serializable
+data class AimStatusMessage(
+    val kind: String = "aim_status",
+    val running: Boolean, val name: String? = null, val app: String? = null, val startedAt: Long? = null,
+    val frames: Int? = null, val fps: Int? = null, val holding: Boolean? = null, val holdCount: Int? = null, val heldMs: Long? = null,
+    val aimMoves: Int? = null, val reloads: Int? = null, val lastTrigger: String? = null, val stoppedBy: String? = null,
+    val error: String? = null, val startedBy: String? = null, val ts: Long,
 )
 
 @Serializable

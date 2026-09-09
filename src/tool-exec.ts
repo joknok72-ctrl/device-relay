@@ -59,7 +59,7 @@ function room(env: Bindings, deviceId: string) {
   return env.DEVICE_ROOM.get(env.DEVICE_ROOM.idFromName(deviceId))
 }
 /** Input tools that must not be captured by record_macro (meta / non-replayable). */
-const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report', 'game_bot'])
+const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report', 'game_bot', 'aim_engine'])
 
 /** Push a visual event to /monitor viewers (fire-and-forget). */
 function overlay(env: Bindings, deviceId: string, o: Record<string, unknown>) {
@@ -130,10 +130,10 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
     if (typeof v === 'string' && v.startsWith('@')) {
       const r = look(v); if (!r) return v
       const k = (key ?? '').toLowerCase()
-      if (k === 'color' || k === 'stopcolor' || k === 'colors' || k === 'hex') { const c = p.colors[r.name]; if (!c) { error = `unknown color @${r.name} (known: ${Object.keys(p.colors).join(', ') || 'none'})`; return v } used.push('@' + r.name); return c.hex }
-      if (k === 'region' || k === 'stopregion') { const g = p.regions[r.name]; if (!g) { error = `unknown region @${r.name} (known: ${Object.keys(p.regions).join(', ') || 'none'})`; return v } used.push('@' + r.name); return { x: g.x, y: g.y, w: g.w, h: g.h } }
-      if (/^(x|x1|x2|tapx|cx|crosshairx|nearx)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.x + r.dx }
-      if (/^(y|y1|y2|tapy|cy|crosshairy|neary)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.y + (r.dx || 0) } // for y fields the single offset applies to y
+      if (k === 'color' || k === 'stopcolor' || k === 'colors' || k === 'hex' || k === 'reticlecolor' || k === 'targetcolor' || k === 'aimcolor' || k === 'reloadcolor') { const c = p.colors[r.name]; if (!c) { error = `unknown color @${r.name} (known: ${Object.keys(p.colors).join(', ') || 'none'})`; return v } used.push('@' + r.name); return c.hex }
+      if (k === 'region' || k === 'stopregion' || k === 'reticlebox' || k === 'targetbox' || k === 'aimbox' || k === 'reloadbox') { const g = p.regions[r.name]; if (!g) { error = `unknown region @${r.name} (known: ${Object.keys(p.regions).join(', ') || 'none'})`; return v } used.push('@' + r.name); return { x: g.x, y: g.y, w: g.w, h: g.h } }
+      if (/^(x|x1|x2|tapx|cx|crosshairx|nearx|firex|lookx|reloadx)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.x + r.dx }
+      if (/^(y|y1|y2|tapy|cy|crosshairy|neary|firey|looky|reloady)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.y + (r.dx || 0) } // for y fields the single offset applies to y
       // colors arrays
       const c = p.colors[r.name]; if (c) { used.push('@' + r.name); return c.hex }
       const s = p.settings[r.name]; if (s !== undefined) { used.push('@' + r.name); return s }
@@ -150,7 +150,7 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
 export async function executeTool(env: Bindings, deviceId: string, name: string, args: Record<string, unknown>, opts: ExecOptions = {}): Promise<ToolResult> {
   // v2.3: resolve @names (controls / colours / regions / settings from game_profile) anywhere in the arguments
   let usedRefs: string[] | undefined
-  if (args && hasRef(args) && name !== 'game_profile' && name !== 'remember' && name !== 'record_macro' && name !== 'save_macro' && name !== 'game_bot') {
+  if (args && hasRef(args) && name !== 'game_profile' && name !== 'remember' && name !== 'record_macro' && name !== 'save_macro' && name !== 'game_bot' && name !== 'aim_engine') {
     const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
     if (!profile) return { ok: false, error: `arguments use @names but no game_profile exists for ${app || 'the current app'} — save one with game_profile set:{...} first` }
     const r = resolveRefs(args, profile)
@@ -202,6 +202,11 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
     const act = String(args.action ?? 'list').toLowerCase()
     if (opts.readOnly && !['list', 'get', 'status', 'templates'].includes(act)) return { ok: false, error: `token is read-only: game_bot ${act} not allowed` }
     return gameBot(env, deviceId, args)
+  }
+  if (mapped.special === 'aim_engine') {
+    const act = String(args.action ?? 'status').toLowerCase()
+    if (opts.readOnly && !['status', 'get'].includes(act)) return { ok: false, error: `token is read-only: aim_engine ${act} not allowed` }
+    return aimEngine(env, deviceId, args)
   }
   if (mapped.special === 'game_profile') {
     if (opts.readOnly && (args.set || args.unset || args.delete || args.label || args.genre)) return { ok: false, error: 'token is read-only: game_profile can only be read' }
@@ -723,6 +728,66 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
   }
   return { rules: out }
 }
+// ---------------------------------------------------------------- v3.3 native aim engine (AimEngine.kt on the phone)
+const AIM_NUM: Record<string, [number, number]> = { fireX: [0, 4000], fireY: [0, 4000], reticleTol: [0, 128], reticleMin: [1, 100000], targetTol: [0, 128], targetMin: [1, 100000], armFrames: [1, 30], releaseFrames: [1, 60], maxHoldMs: [500, 60000], aimTol: [0, 128], aimMinSize: [1, 2000], aimMaxSize: [0, 4000], crosshairX: [0, 4000], crosshairY: [0, 4000], lookX: [0, 4000], lookY: [0, 4000], aimGain: [0.05, 5], aimMaxStep: [5, 1500], aimDeadzone: [0, 200], aimRange: [10, 4000], aimOffsetY: [-500, 500], reloadTol: [0, 128], reloadMin: [1, 100000], reloadX: [0, 4000], reloadY: [0, 4000], fps: [5, 60] }
+const AIM_BOOL = new Set(['aimEnabled', 'reloadEnabled', 'autoStart', 'stopOnAppChange'])
+const AIM_COLOR = new Set(['reticleColor', 'targetColor', 'aimColor', 'reloadColor'])
+const AIM_BOX = new Set(['reticleBox', 'targetBox', 'aimBox', 'reloadBox'])
+function validateAim(raw: Record<string, unknown>, app: string): { cfg?: import('./types').AimConfig; error?: string } {
+  const out: Record<string, unknown> = { app }
+  for (const [k, v] of Object.entries(raw)) {
+    if (k === 'app' || k === 'updatedAt') continue
+    if (k === 'name') { if (typeof v === 'string' && v.trim()) out.name = v.trim().slice(0, 40); continue }
+    if (k === 'trigger') { if (v !== 'reticle' && v !== 'target' && v !== 'both') return { error: 'trigger must be reticle|target|both' }; out.trigger = v; continue }
+    if (k in AIM_NUM) { if (typeof v !== 'number' || !Number.isFinite(v)) return { error: `${k} must be a number` }; const [lo, hi] = AIM_NUM[k]; out[k] = k === 'aimGain' ? Math.min(Math.max(v, lo), hi) : Math.round(Math.min(Math.max(v, lo), hi)); continue }
+    if (AIM_BOOL.has(k)) { if (typeof v !== 'boolean') return { error: `${k} must be boolean` }; out[k] = v; continue }
+    if (AIM_COLOR.has(k)) { if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) return { error: `${k} must be #rrggbb (or an @colour name)` }; out[k] = v.toLowerCase(); continue }
+    if (AIM_BOX.has(k)) { const b = v as Record<string, unknown>; if (!b || typeof b !== 'object' || ![b.x, b.y, b.w, b.h].every((n) => typeof n === 'number' && Number.isFinite(n))) return { error: `${k} must be {x,y,w,h} (or an @region name)` }; out[k] = { x: Math.round(b.x as number), y: Math.round(b.y as number), w: Math.max(1, Math.round(b.w as number)), h: Math.max(1, Math.round(b.h as number)) }; continue }
+    return { error: `unknown aim field ${k}` }
+  }
+  return { cfg: out as unknown as import('./types').AimConfig }
+}
+async function aimEngine(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const act = String(args.action ?? 'status').toLowerCase()
+  const r = room(env, deviceId)
+  const { app, profile } = await loadProfile(env, deviceId, typeof args.app === 'string' ? args.app : undefined)
+  const stored = async () => ((await (await r.fetch(`https://do/aims?deviceId=${deviceId}${app ? `&app=${encodeURIComponent(app)}` : ''}`)).json()) as { aims: import('./types').AimConfig[]; status: unknown; online: boolean })
+  if (act === 'get') { const s = await stored(); return { ok: true, app, aim: s.aims[0] ?? null, lastStatus: s.status, online: s.online, hint: s.aims[0] ? undefined : 'no aim config for this app — aim_engine action=set' } }
+  if (act === 'status') {
+    const s = await stored()
+    const live = await executeTool(env, deviceId, 'aim_status' as string, {}, { internal: true }).catch(() => null)
+    return { ok: true, app, aimStatus: live?.ok ? live.data : s.status, configured: !!s.aims[0], online: s.online, hint: live?.ok ? undefined : 'phone did not answer aim_status (needs app v3.3+); showing last known' }
+  }
+  if (act === 'clear') {
+    await r.fetch(`https://do/aims?deviceId=${deviceId}${app ? `&app=${encodeURIComponent(app)}` : ''}`, { method: 'DELETE' })
+    const res = await executeTool(env, deviceId, 'aim_clear' as string, {}, { internal: true }).catch(() => null)
+    return { ok: true, app, cleared: true, phone: res?.ok ? 'cleared' : 'offline or old app' }
+  }
+  if (act === 'stop') { const res = await executeTool(env, deviceId, 'aim_stop' as string, {}, { internal: true }); return { ...res, hint: res.ok ? 'aim engine stopped' : 'phone did not accept aim_stop (needs app v3.3+)' } }
+  if (act === 'start') {
+    const s = await stored(); if (!s.aims[0]) return { ok: false, error: `no aim config for ${app || 'this app'} — aim_engine action=set first` }
+    // make sure the phone has the latest config, then start
+    await executeTool(env, deviceId, 'aim_config' as string, { aim: s.aims[0] }, { internal: true }).catch(() => null)
+    const res = await executeTool(env, deviceId, 'aim_start' as string, {}, { internal: true })
+    return { ...res, hint: res.ok ? 'aim engine running — watch action=status (holding/holdCount/fps). The user can also start/stop it from the bubble, the 🎯 notification button or Volume keys.' : 'phone did not accept aim_start (needs app v3.3+ and the game in the foreground)' }
+  }
+  if (act === 'set') {
+    if (!app) return { ok: false, error: 'app unknown — open the game or pass app' }
+    let raw: Record<string, unknown> = { ...((args.aim as Record<string, unknown>) ?? {}) }
+    for (const [k, v] of Object.entries(args)) if (k !== 'action' && k !== 'app' && k !== 'aim') raw[k] = v
+    if (profile) { const rr = resolveRefs(raw, profile); if (rr.error) return { ok: false, error: rr.error }; raw = rr.args }
+    const cur = (await stored()).aims[0]
+    const merged = { ...(cur ?? {}), ...raw }
+    delete (merged as Record<string, unknown>).updatedAt
+    const v = validateAim(merged as Record<string, unknown>, app); if (v.error || !v.cfg) return { ok: false, error: v.error }
+    if (!v.cfg.name) v.cfg.name = `${profile?.label ?? app.split('.').pop()} Aim`
+    const saved = (await (await r.fetch(`https://do/aims?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(v.cfg) })).json()) as { ok: boolean; aim: import('./types').AimConfig }
+    const phone = await executeTool(env, deviceId, 'aim_config' as string, { aim: saved.aim }, { internal: true }).catch(() => null)
+    return { ok: true, app, aim: saved.aim, phone: phone?.ok ? 'synced' : 'offline or old app (<3.3) — will sync on next connect', hint: 'aim_engine action=start to run it now; autoStart launches it when the game opens.' }
+  }
+  return { ok: false, error: `unknown aim_engine action '${act}' (set|start|stop|status|get|clear)` }
+}
+
 async function gameBot(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
   const act = String(args.action ?? 'list').toLowerCase()
   const r = room(env, deviceId)
