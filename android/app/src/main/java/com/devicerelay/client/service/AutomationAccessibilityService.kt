@@ -775,7 +775,10 @@ class AutomationAccessibilityService : AccessibilityService() {
                 val bmp = captureBitmap() ?: run { stoppedBy = "screenshot failed"; null } ?: break
                 frames++; ocrCache.clear()
                 val now = android.os.SystemClock.elapsedRealtime()
-                a.stopRules?.let { srs -> for (sr in srs) if (cond(bmp, sr).first) { stoppedBy = "stop:" + sr.type + (sr.text?.let { " $it" } ?: sr.color?.let { " $it" } ?: ""); break@outer } }
+                val srs = a.stopRules ?: emptyList()
+                var stopHit = false
+                for (sr in srs) if (cond(bmp, sr).first) { stoppedBy = "stop:" + sr.type + (sr.text?.let { " $it" } ?: sr.color?.let { " $it" } ?: ""); stopHit = true; break }
+                if (stopHit) break@outer
                 var firedThisFrame = false
                 for (ri in order) {
                     val r = rules[ri]
