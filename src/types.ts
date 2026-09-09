@@ -300,7 +300,7 @@ export interface AimConfig {
   fps?: number; autoStart?: boolean; stopOnAppChange?: boolean
   /** v3.4 HeadLock (user fires, engine locks the crosshair on the head via the Shizuku touch proxy) */
   mode?: 'auto' | 'headlock'; fireRadius?: number
-  headColor?: string; headTol?: number; headMinSize?: number; headMaxSize?: number; headBox?: AimBox
+  headColor?: string; headTol?: number; headMinSize?: number; headMaxSize?: number; headBox?: AimBox; excludeBox?: AimBox
   headTopOffset?: number; headTopRows?: number; bodyColor?: string; bodyTol?: number
   lockRange?: number; headGain?: number; headMaxStep?: number; headDeadzone?: number; headLead?: number; lookTravel?: number; stickyMs?: number
   /** relay-side bookkeeping */

@@ -77,6 +77,7 @@ object AimEngine {
         val fireRadius: Int = 70,                         // a real finger within this radius of (fireX,fireY) = user is firing
         val headColor: String = "#e6a68a", val headTol: Int = 30, val headMinSize: Int = 6, val headMaxSize: Int = 140,
         val headBox: Box = Box(330, 60, 1000, 440),
+        val excludeBox: Box = Box(655, 290, 95, 100),      // own character's head (3rd person) — never lock on it
         val headTopOffset: Int = 5,                       // px below the topmost skin pixel = centre of the head
         val headTopRows: Int = 6,                         // rows under the top used for the x-centre of the head
         val bodyColor: String = "", val bodyTol: Int = 28, // optional: enemy cloth colour to prefer blobs sitting on a body
@@ -295,7 +296,7 @@ object AimEngine {
                 val bmp = svc.captureForEngine()
                 if (bmp == null) { delay(frameMs); continue }
                 frames++; fpsFrames++
-                val head = findHead(bmp, headRgb, cfg.headTol, bodyRgb, cfg.bodyTol, cfg.headBox, cfg.headMinSize, cfg.headMaxSize, cfg.crosshairX, cfg.crosshairY, cfg.lockRange, cfg.headTopOffset, cfg.headTopRows, lastHead)
+                val head = findHead(bmp, headRgb, cfg.headTol, bodyRgb, cfg.bodyTol, cfg.headBox, cfg.excludeBox, cfg.headMinSize, cfg.headMaxSize, cfg.crosshairX, cfg.crosshairY, cfg.lockRange, cfg.headTopOffset, cfg.headTopRows, lastHead)
                 bmp.recycle()
                 val now = SystemClock.elapsedRealtime()
                 var target: Pair<Float, Float>? = null
@@ -361,7 +362,7 @@ object AimEngine {
      * FULL-RESOLUTION pass over the blob's bounding box finds the topmost skin row and the mean x of the first
      * `topRows` rows → head centre with sub-pixel x. Returns display px (floats).
      */
-    private fun findHead(bmp: Bitmap, skin: Int, tol: Int, body: Int, bodyTol: Int, b: Box, minSize: Int, maxSize: Int, cx: Int, cy: Int, range: Int, topOffset: Int, topRows: Int, prev: Pair<Float, Float>?): Pair<Float, Float>? {
+    private fun findHead(bmp: Bitmap, skin: Int, tol: Int, body: Int, bodyTol: Int, b: Box, ex: Box, minSize: Int, maxSize: Int, cx: Int, cy: Int, range: Int, topOffset: Int, topRows: Int, prev: Pair<Float, Float>?): Pair<Float, Float>? {
         val step = 3
         val x0 = b.x.coerceIn(0, bmp.width - 1); val y0 = b.y.coerceIn(0, bmp.height - 1)
         val w = min(b.w, bmp.width - x0).coerceAtMost(rowBuf.size); val h = min(b.h, bmp.height - y0); if (w <= 0 || h <= 0) return null
@@ -392,6 +393,7 @@ object AimEngine {
             if (bw < minSize && bh < minSize) continue
             if (maxSize > 0 && (bw > maxSize || bh > maxSize)) continue
             val px = x0 + (minX + maxX + 1) * step / 2f; val py = y0 + minY * step.toFloat()
+            if (ex.w > 0 && px >= ex.x && px < ex.x + ex.w && py >= ex.y && py < ex.y + ex.h) continue   // own character
             val dCross = Math.hypot((px - cx).toDouble(), (py - cy).toDouble())
             if (dCross > range) continue
             var score = dCross

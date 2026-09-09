@@ -131,7 +131,7 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
       const r = look(v); if (!r) return v
       const k = (key ?? '').toLowerCase()
       if (k === 'color' || k === 'stopcolor' || k === 'colors' || k === 'hex' || k === 'reticlecolor' || k === 'targetcolor' || k === 'aimcolor' || k === 'reloadcolor' || k === 'headcolor' || k === 'bodycolor') { const c = p.colors[r.name]; if (!c) { error = `unknown color @${r.name} (known: ${Object.keys(p.colors).join(', ') || 'none'})`; return v } used.push('@' + r.name); return c.hex }
-      if (k === 'region' || k === 'stopregion' || k === 'reticlebox' || k === 'targetbox' || k === 'aimbox' || k === 'reloadbox' || k === 'headbox') { const g = p.regions[r.name]; if (!g) { error = `unknown region @${r.name} (known: ${Object.keys(p.regions).join(', ') || 'none'})`; return v } used.push('@' + r.name); return { x: g.x, y: g.y, w: g.w, h: g.h } }
+      if (k === 'region' || k === 'stopregion' || k === 'reticlebox' || k === 'targetbox' || k === 'aimbox' || k === 'reloadbox' || k === 'headbox' || k === 'excludebox') { const g = p.regions[r.name]; if (!g) { error = `unknown region @${r.name} (known: ${Object.keys(p.regions).join(', ') || 'none'})`; return v } used.push('@' + r.name); return { x: g.x, y: g.y, w: g.w, h: g.h } }
       if (/^(x|x1|x2|tapx|cx|crosshairx|nearx|firex|lookx|reloadx)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.x + r.dx }
       if (/^(y|y1|y2|tapy|cy|crosshairy|neary|firey|looky|reloady)$/.test(k)) { const c = p.controls[r.name]; if (!c) { error = `unknown control @${r.name}`; return v } used.push('@' + r.name); return c.y + (r.dx || 0) } // for y fields the single offset applies to y
       // colors arrays
@@ -732,7 +732,7 @@ function validateRules(rules: unknown): { rules?: import('./types').BotRule[]; e
 const AIM_NUM: Record<string, [number, number]> = { fireX: [0, 4000], fireY: [0, 4000], reticleTol: [0, 128], reticleMin: [1, 100000], targetTol: [0, 128], targetMin: [1, 100000], armFrames: [1, 30], releaseFrames: [1, 60], maxHoldMs: [500, 60000], aimTol: [0, 128], aimMinSize: [1, 2000], aimMaxSize: [0, 4000], crosshairX: [0, 4000], crosshairY: [0, 4000], lookX: [0, 4000], lookY: [0, 4000], aimGain: [0.05, 5], aimMaxStep: [5, 1500], aimDeadzone: [0, 200], aimRange: [10, 4000], aimOffsetY: [-500, 500], reloadTol: [0, 128], reloadMin: [1, 100000], reloadX: [0, 4000], reloadY: [0, 4000], fps: [5, 60], fireRadius: [10, 400], headTol: [0, 128], headMinSize: [1, 2000], headMaxSize: [0, 4000], headTopOffset: [-40, 80], headTopRows: [1, 40], bodyTol: [0, 128], lockRange: [10, 4000], headGain: [0.05, 5], headMaxStep: [1, 1500], headDeadzone: [0, 100], headLead: [0, 3], lookTravel: [20, 2000], stickyMs: [0, 5000] }
 const AIM_BOOL = new Set(['aimEnabled', 'reloadEnabled', 'autoStart', 'stopOnAppChange'])
 const AIM_COLOR = new Set(['reticleColor', 'targetColor', 'aimColor', 'reloadColor', 'headColor', 'bodyColor'])
-const AIM_BOX = new Set(['reticleBox', 'targetBox', 'aimBox', 'reloadBox', 'headBox'])
+const AIM_BOX = new Set(['reticleBox', 'targetBox', 'aimBox', 'reloadBox', 'headBox', 'excludeBox'])
 function validateAim(raw: Record<string, unknown>, app: string): { cfg?: import('./types').AimConfig; error?: string } {
   const out: Record<string, unknown> = { app }
   for (const [k, v] of Object.entries(raw)) {
