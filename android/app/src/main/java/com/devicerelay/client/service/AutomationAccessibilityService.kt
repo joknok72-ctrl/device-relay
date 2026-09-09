@@ -29,7 +29,10 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.devicerelay.client.net.Action
+import com.devicerelay.client.net.ComboStep
+import com.devicerelay.client.net.FrameSpec
 import com.devicerelay.client.net.ReactLane
+import com.devicerelay.client.net.ReactWhen
 import com.devicerelay.client.net.Region
 import com.devicerelay.client.net.SeqPoint
 import java.io.ByteArrayOutputStream
@@ -139,6 +142,8 @@ class AutomationAccessibilityService : AccessibilityService() {
         // v1.9
         "find_objects" -> findObjects(action)
         "auto_react" -> autoReact(action)
+        "react_script" -> reactScript(action)
+        "play_frame" -> playFrame(action)
         // v2.1
         "sample_colors" -> sampleColors(action)
         "track_object" -> trackObject(action)
@@ -710,6 +715,149 @@ class AutomationAccessibilityService : AccessibilityService() {
         return Outcome.Ok(data = buildJsonObject { put("triggers", triggers); put("taps", tapsJson); put("polls", polls); put("lanes", lanes.size); put("stoppedBy", stoppedBy); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0) })
     }
 
+    // ---------------------------------------------------------------- v4.1 live-play primitives
+    /**
+     * react_script: the AI's on-device reflex engine. Rules = WHEN [conditions on the live frame] → THEN [combo steps].
+     * Evaluated every frame (~15-30 fps) for up to 60 s with no network in the loop. Priority + cooldown + exclusive
+     * + maxFires per rule; stopRules end the script early. Steps may use op "tap_found" / "aim_found" (finger 1 drag
+     * from x,y by (found - crosshair) * sensitivity) with the blob matched by the rule's first color_present condition.
+     * Fingers left down by joystick(release:false) are lifted at the end.
+     */
+    private suspend fun reactScript(a: Action): Outcome {
+        val rules = a.rules?.takeIf { it.isNotEmpty() } ?: return Outcome.Fail("react_script requires rules[]")
+        if (rules.size > 12) return Outcome.Fail("max 12 rules")
+        val timeout = (a.timeoutMs ?: 15_000L).coerceIn(500, 60_000)
+        val maxTriggers = (a.maxTriggers ?: 100).coerceIn(1, 500)
+        val interval = (a.intervalMs ?: 40L).coerceIn(15, 2000)
+        val order = rules.indices.sortedByDescending { rules[it].priority ?: 0 }
+        val readyAt = LongArray(rules.size); val fires = IntArray(rules.size); val holdSince = LongArray(rules.size) { 0L }
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        var frames = 0; var triggers = 0; var stoppedBy = "timeout"; var lastRule: String? = null
+        val log = ArrayList<JsonObject>()
+        val ocrCache = HashMap<String, List<Pair<String, Pair<Int, Int>>>>()
+        suspend fun cond(bmp: Bitmap, w: ReactWhen): Pair<Boolean, JsonObject?> {
+            return when (w.type) {
+                "always" -> true to null
+                "color_present", "color_absent" -> {
+                    val c = w.color ?: return false to null
+                    val tol = (w.tolerance ?: 24).coerceIn(0, 128)
+                    if ((w.minSize ?: 0) > 0 || (w.maxSize ?: 0) > 0) {
+                        val objs = scanObjects(bmp, c, tol, w.region, (w.minSize ?: 1).coerceAtLeast(1), 6)
+                        val arr = objs["objects"] as? kotlinx.serialization.json.JsonArray
+                        val pick = arr?.map { it as JsonObject }?.firstOrNull { o -> val mx = w.maxSize ?: 0; mx <= 0 || ((o["bounds"] as? JsonObject)?.let { b -> (b["w"]?.toString()?.toIntOrNull() ?: 0) <= mx && (b["h"]?.toString()?.toIntOrNull() ?: 0) <= mx } ?: true) }
+                        val present = pick != null
+                        (if (w.type == "color_present") present else !present) to pick
+                    } else {
+                        val r = scanColor(bmp, c, tol, w.region)
+                        val present = (r["count"]?.toString()?.toLongOrNull() ?: 0L) >= (w.minCount ?: 20).coerceAtLeast(1)
+                        (if (w.type == "color_present") present else !present) to (if (present) r else null)
+                    }
+                }
+                "pixel_is", "pixel_not" -> {
+                    val x = w.x?.toInt()?.coerceIn(0, bmp.width - 1) ?: return false to null; val y = w.y?.toInt()?.coerceIn(0, bmp.height - 1) ?: return false to null
+                    val c = w.color ?: return false to null
+                    val m = ColorMatcher(c, (w.tolerance ?: 24).coerceIn(0, 128), "rgb")
+                    val hit = m.matches(bmp.getPixel(x, y))
+                    (if (w.type == "pixel_is") hit else !hit) to null
+                }
+                "text_present", "text_absent" -> {
+                    val needle = w.text?.lowercase() ?: return false to null
+                    val key = "${w.region?.x}:${w.region?.y}:${w.region?.w}:${w.region?.h}"
+                    val lines = ocrCache.getOrPut(key) { readTextPublic(bmp, w.region) }
+                    val found = lines.firstOrNull { it.first.lowercase().contains(needle) }
+                    (if (w.type == "text_present") found != null else found == null) to (found?.let { buildJsonObject { put("text", it.first); put("cx", it.second.first); put("cy", it.second.second) } })
+                }
+                else -> false to null
+            }
+        }
+        try {
+            outer@ while (android.os.SystemClock.elapsedRealtime() - t0 < timeout) {
+                val bmp = captureBitmap() ?: run { stoppedBy = "screenshot failed"; null } ?: break
+                frames++; ocrCache.clear()
+                val now = android.os.SystemClock.elapsedRealtime()
+                a.stopRules?.let { srs -> for (sr in srs) if (cond(bmp, sr).first) { stoppedBy = "stop:" + sr.type + (sr.text?.let { " $it" } ?: sr.color?.let { " $it" } ?: ""); break@outer } }
+                var firedThisFrame = false
+                for (ri in order) {
+                    val r = rules[ri]
+                    if (firedThisFrame && (r.exclusive != false)) continue
+                    if (now < readyAt[ri]) continue
+                    if ((r.maxFires ?: 0) > 0 && fires[ri] >= r.maxFires!!) continue
+                    var ok = true; var found: JsonObject? = null
+                    for (w in r.`when`) { val (h, f) = cond(bmp, w); if (!h) { ok = false; break }; if (found == null && f != null && (f.containsKey("cx"))) found = f }
+                    if (!ok) { holdSince[ri] = 0; continue }
+                    val need = r.`when`.maxOfOrNull { it.forMs ?: 0L } ?: 0L
+                    if (need > 0) { if (holdSince[ri] == 0L) holdSince[ri] = now; if (now - holdSince[ri] < need) continue }
+                    val fx = found?.get("cx")?.toString()?.toFloatOrNull(); val fy = found?.get("cy")?.toString()?.toFloatOrNull()
+                    // execute THEN steps (found-relative ops resolved here)
+                    val steps = r.then.map { st ->
+                        when (st.op) {
+                            "tap_found" -> ComboStep(op = "tap", x = (fx ?: 0f) + (st.dx ?: 0f), y = (fy ?: 0f) + (st.dy ?: 0f), duration = st.duration)
+                            "aim_found" -> { val cx = st.x ?: (bmp.width / 2f); val cy = st.y ?: (bmp.height / 2f); val sens = st.distance ?: 1f; val ex = ((fx ?: cx) - cx) * sens; val ey = ((fy ?: cy) + (st.dy ?: 0f) - cy) * sens
+                                val ms = (st.count ?: 220).toFloat(); ComboStep(op = "aim", x = st.dx ?: (bmp.width * 0.66f), y = st.holdMs?.toFloat() ?: (bmp.height * 0.4f), dx = ex.coerceIn(-ms, ms), dy = ey.coerceIn(-ms, ms), finger = st.finger ?: 1, duration = st.duration ?: 60, release = st.release ?: true) }
+                            else -> st
+                        }
+                    }
+                    if (fx == null && r.then.any { it.op == "tap_found" || it.op == "aim_found" }) continue
+                    val res = combo(Action(type = "combo", steps2 = steps))
+                    fires[ri]++; triggers++; firedThisFrame = true; lastRule = r.name ?: "rule$ri"
+                    readyAt[ri] = android.os.SystemClock.elapsedRealtime() + (r.cooldownMs ?: 250L).coerceIn(0, 10_000)
+                    if (log.size < 60) log.add(buildJsonObject { put("t", now - t0); put("rule", lastRule); put("ok", res is Outcome.Ok); if (fx != null) { put("fx", fx.toInt()); put("fy", fy!!.toInt()) } })
+                    if (triggers >= maxTriggers) { stoppedBy = "maxTriggers"; break@outer }
+                }
+                if (!firedThisFrame) delay(interval)
+            }
+        } finally { if (a.release != false) fingerUp(Action(type = "finger_up", finger = -1)) }
+        return Outcome.Ok(data = buildJsonObject {
+            put("triggers", triggers); put("frames", frames); put("stoppedBy", stoppedBy); put("elapsedMs", android.os.SystemClock.elapsedRealtime() - t0)
+            lastRule?.let { put("lastRule", it) }
+            put("fires", buildJsonObject { for (i in rules.indices) put(rules[i].name ?: "rule$i", fires[i]) })
+            put("log", buildJsonArray { for (l in log) add(l) })
+        })
+    }
+
+    /**
+     * play_frame: ONE capture → everything the AI needs to decide: scaled JPEG, blobs per colour (objects), OCR/number
+     * per region, exact pixels, changed% since the last play_frame. Replaces 3-5 separate round trips.
+     */
+    private suspend fun playFrame(a: Action): Outcome {
+        val spec = a.frame ?: FrameSpec()
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val bmp = captureBitmap() ?: return Outcome.Fail("screenshot failed")
+        val data = buildJsonObject {
+            put("w", bmp.width); put("h", bmp.height)
+            spec.objects?.let { list -> put("objects", buildJsonObject { for ((i, o) in list.take(8).withIndex()) {
+                val r = scanObjects(bmp, o.color, (o.tolerance ?: 24).coerceIn(0, 128), o.region, (o.minSize ?: 8).coerceIn(1, 2000), (o.max ?: 6).coerceIn(1, 20), o.match ?: "rgb")
+                val arr = (r["objects"] as? kotlinx.serialization.json.JsonArray)?.map { it as JsonObject } ?: emptyList()
+                val filtered = if ((o.maxSize ?: 0) > 0) arr.filter { ob -> (ob["bounds"] as? JsonObject)?.let { b -> (b["w"]?.toString()?.toIntOrNull() ?: 0) <= o.maxSize!! && (b["h"]?.toString()?.toIntOrNull() ?: 0) <= o.maxSize!! } ?: true } else arr
+                put(o.name ?: "c$i", buildJsonObject { put("count", filtered.size); put("objects", buildJsonArray { for (ob in filtered) add(buildJsonObject { put("cx", ob["cx"]!!); put("cy", ob["cy"]!!); put("area", ob["area"]!!); (ob["bounds"] as? JsonObject)?.let { b -> put("w", b["w"]!!); put("h", b["h"]!!); put("top", b["y"]!!) } }) }) })
+            } }) }
+            spec.pixels?.let { pts -> put("pixels", buildJsonArray { for (p in pts.take(24)) { val x = p.x.toInt().coerceIn(0, bmp.width - 1); val y = p.y.toInt().coerceIn(0, bmp.height - 1); val c = bmp.getPixel(x, y); add(buildJsonObject { put("x", x); put("y", y); put("hex", String.format("#%06x", c and 0xFFFFFF)) }) } }) }
+            if (spec.diff == true) {
+                val cell = 60; val cols = (bmp.width + cell - 1) / cell; val rows = (bmp.height + cell - 1) / cell
+                val small = Bitmap.createScaledBitmap(bmp, cols, rows, true); val px = IntArray(cols * rows); small.getPixels(px, 0, cols, 0, 0, cols, rows)
+                val grey = IntArray(cols * rows) { val c = px[it]; (((c shr 16) and 0xFF) * 3 + ((c shr 8) and 0xFF) * 6 + (c and 0xFF)) / 10 }
+                val prev = diffPrev; diffPrev = grey; diffPrevCols = cols; diffPrevRows = rows
+                put("changedPct", if (prev == null || prev.size != grey.size) -1.0 else Math.round(grey.indices.count { Math.abs(grey[it] - prev[it]) >= 32 } * 1000.0 / grey.size) / 10.0)
+            }
+        }
+        // OCR (suspending) after the sync part
+        val ocr = spec.ocr?.let { list -> buildJsonObject { for ((i, o) in list.take(6).withIndex()) {
+            val lines = readTextPublic(bmp, o.region)
+            if (o.number == true) { val n = lines.map { it.first }.firstNotNullOfOrNull { t -> Regex("-?\\d[\\d,.]*").find(t)?.value?.replace(",", "")?.toDoubleOrNull() }; put(o.name ?: "n$i", buildJsonObject { n?.let { put("value", it) }; put("text", lines.joinToString(" ") { it.first }) }) }
+            else put(o.name ?: "t$i", buildJsonArray { for (l in lines.take(20)) add(buildJsonObject { put("text", l.first); put("cx", l.second.first); put("cy", l.second.second) }) })
+        } } }
+        val maxW = spec.maxWidth ?: 640
+        var img: String? = null; var scale = 1f
+        if (maxW > 0) {
+            scale = (maxW.toFloat() / bmp.width).coerceAtMost(1f)
+            val scaled = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
+            val out = java.io.ByteArrayOutputStream(); scaled.compress(Bitmap.CompressFormat.JPEG, (spec.quality ?: 60).coerceIn(10, 100), out)
+            img = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        }
+        val merged = buildJsonObject { for ((k, v) in data) put(k, v); ocr?.let { put("ocr", it) }; put("scale", scale.toDouble()); put("ms", android.os.SystemClock.elapsedRealtime() - t0) }
+        return Outcome.Ok(screenshotBase64 = img, data = merged, mime = if (img != null) "image/jpeg" else null)
+    }
+
     private suspend fun watchColor(a: Action): Outcome {
         val color = a.color ?: return Outcome.Fail("watch_color requires color")
         val tol = (a.tolerance ?: 24).coerceIn(0, 128); val appear = a.appear != false
@@ -881,6 +1029,23 @@ class AutomationAccessibilityService : AccessibilityService() {
     }
 
     fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString() ?: lastPackage
+
+    private val liveRecognizer by lazy { recognizerFor(null) }
+    /** OCR lines as (text, centre) — shared by react_script / play_frame. */
+    suspend fun readTextPublic(bmp0: Bitmap, region: Region?): List<Pair<String, Pair<Int, Int>>> {
+        var bmp = bmp0; var ox = 0; var oy = 0
+        region?.let { r ->
+            val x = r.x.coerceIn(0, bmp.width - 1); val y = r.y.coerceIn(0, bmp.height - 1)
+            val w = r.w.coerceIn(8, bmp.width - x); val h = r.h.coerceIn(8, bmp.height - y)
+            bmp = Bitmap.createBitmap(bmp, x, y, w, h); ox = x; oy = y
+        }
+        return try {
+            val result: Text = liveRecognizer.process(InputImage.fromBitmap(bmp, 0)).await()
+            val out = ArrayList<Pair<String, Pair<Int, Int>>>()
+            for (block: Text.TextBlock in result.textBlocks) for (line: Text.Line in block.lines) { val b: Rect = line.boundingBox ?: continue; out.add(line.text to ((b.centerX() + ox) to (b.centerY() + oy))) }
+            out
+        } catch (e: Exception) { emptyList() }
+    }
 
     private suspend fun findColors(a: Action): Outcome {
         val colors = a.colors?.take(8) ?: return Outcome.Fail("find_colors requires colors")

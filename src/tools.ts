@@ -548,6 +548,56 @@ export const TOOLS: ToolDef[] = [
       required: ['enabled'],
     },
   },
+  // ---------------------------------------------------------------- v4.1 live play: the AI is the player
+  {
+    name: 'play',
+    description:
+      'THE game-play primitive (v4.1): one round trip = ACT + WAIT + SEE. Runs an optional action (combo steps: joystick/aim/fire/tap/down/move/up/wait — or a single tool call), waits `waitMs` (default 250), then returns a play_frame: JPEG (maxWidth default 640) + blobs of the colours you name (objects) + OCR/numbers of regions + exact pixels + changedPct. ' +
+      'Profile-aware: with a game_profile, `objects` defaults to every @colour of the profile and `ocr` to every numeric @region (score/hp/ammo), so play {} alone = full situational awareness. All coordinates/colours/regions accept @names. ' +
+      'Use it as your heartbeat: play {act:[...]} → decide → play {act:[...]} … Typical shooter tick: play {act:[{op:"joystick",at:"@stick",direction:"up",duration:600,release:false},{op:"aim",at:"@look",dx:40}], objects:[{name:"enemy",color:"@enemy"}]}. Never call capture_screen + find_objects + read_text separately.',
+    parameters: {
+      type: 'object',
+      properties: {
+        act: { type: 'array', description: 'combo steps to run first (same schema as combo.steps; ops: down|move|up|tap|wait|joystick|aim|fire). Empty/omitted = just look.', items: { type: 'object' } },
+        tool: { type: 'object', description: 'Alternative to act: any single tool {name, arguments} (e.g. tap_element, press_back, run_macro).' },
+        waitMs: { type: 'integer', description: 'ms to wait after acting before the frame (default 250)', minimum: 0, maximum: 5000 },
+        maxWidth: { type: 'integer', description: 'frame image width (default 640; 0 = no image, data only)', minimum: 0, maximum: 2160 },
+        quality: { type: 'integer', description: 'JPEG quality (default 60)', minimum: 10, maximum: 100 },
+        objects: { type: 'array', description: 'colours to locate: [{name, color(#hex or @name), tolerance, region, minSize, maxSize, max, match:rgb|hue}]. Default: all profile colours.', items: { type: 'object' } },
+        ocr: { type: 'array', description: 'regions to read: [{name, region(@name or {x,y,w,h}), number:true}]. Default: numeric profile regions (score/hp/ammo/coins/time…).', items: { type: 'object' } },
+        pixels: { type: 'array', description: 'points to sample exact colours [{x,y}] (or @control names)', items: { type: 'object' } },
+        diff: { type: 'boolean', description: 'include changedPct vs the previous play frame (default true)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'react_script',
+    description:
+      'ON-DEVICE REFLEX ENGINE (v4.1, app 4.1+): hand the phone a small rule set and let it play the next 1-60 seconds at frame rate (~20-30 fps, ~50 ms reaction) while you think. rules[]: {name, when:[conditions], then:[combo steps], cooldownMs (250), priority, maxFires, exclusive}. ' +
+      'Conditions: color_present/color_absent {color, region, minCount | minSize/maxSize (object mode → the matched blob is available to then-steps)}, pixel_is/pixel_not {x,y,color}, text_present/text_absent {text, region} (OCR ~150 ms — use for GAME OVER / popups only), always; forMs = must hold that long. ' +
+      'then-steps = combo ops PLUS tap_found {dx,dy offset} (tap the matched blob) and aim_found {x,y = crosshair, distance = sensitivity px/px, count = max step px, dy = vertical offset e.g. -12 for the head, dx/holdMs = look-area start x/y} (drag the camera so the crosshair lands on the blob). ' +
+      'stopRules[] end the script early (e.g. text_present "GAME OVER", color_present @deathRed). Returns triggers, frames, fires per rule, a timeline log, stoppedBy. All fingers are lifted at the end (release:false to keep them). ' +
+      'Patterns — runner: rules per lane {color_present @obstacle region @laneMid → swipe up}. Shooter: [{name:"track", when:[{type:"color_present",color:"@enemy",minSize:8,maxSize:120}], then:[{op:"aim_found",x:"@crosshair"...,distance:1.4,dy:-10}], cooldownMs:60}, {name:"fire", priority:1, when:[{type:"color_present",color:"@ring",region:"@reticle"}], then:[{op:"fire",at:"@fire",holdMs:350}], cooldownMs:80}]. Clicker: {color_present @target minSize → tap_found}. ' +
+      'Replaces auto_react/game_loop for anything with more than one reaction. Chain: react_script (10 s) → play {} → adjust rules → react_script …',
+    parameters: {
+      type: 'object',
+      properties: {
+        rules: { type: 'array', description: 'rules [{name, when:[{type,color,region,minCount,minSize,maxSize,x,y,text,forMs}], then:[combo steps], cooldownMs, priority, maxFires, exclusive}]', items: { type: 'object' } },
+        stopRules: { type: 'array', description: 'conditions that stop the script when true', items: { type: 'object' } },
+        timeoutMs: { type: 'integer', description: 'max run time (default 15000, max 60000)', minimum: 500, maximum: 60000 },
+        maxTriggers: { type: 'integer', description: 'stop after this many rule fires (default 100)', minimum: 1, maximum: 500 },
+        intervalMs: { type: 'integer', description: 'idle frame interval ms (default 40)', minimum: 15, maximum: 2000 },
+        release: { type: 'boolean', description: 'lift all fingers at the end (default true)' },
+      },
+      required: ['rules'],
+    },
+  },
+  {
+    name: 'play_frame',
+    description: 'Perception only (v4.1): one capture → image + objects + ocr + pixels + changedPct. Same fields as play without act. Prefer play (it can also act).',
+    parameters: { type: 'object', properties: { maxWidth: { type: 'integer', description: 'image width (0 = none)' }, quality: { type: 'integer', description: 'JPEG quality' }, objects: { type: 'array', description: 'colours to locate (see play)', items: { type: 'object' } }, ocr: { type: 'array', description: 'regions to read (see play)', items: { type: 'object' } }, pixels: { type: 'array', description: 'points to sample', items: { type: 'object' } }, diff: { type: 'boolean', description: 'changedPct vs previous frame' } }, required: [] },
+  },
   // ---------------------------------------------------------------- v2.5 multi-touch engine (shooters / action games)
   {
     name: 'joystick',
@@ -973,7 +1023,7 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'play' | 'play_frame'; error?: string } {
   switch (name) {
     case 'session_report': return { special: 'session_report' }
     case 'joystick': return { action: { type: 'joystick', x: args.x, y: args.y, angle: args.angle, direction: args.direction, distance: args.distance, duration: args.duration, finger: args.finger, release: args.release } }
@@ -987,6 +1037,9 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
       return { error: 'finger op must be down|move|up' }
     }
     case 'combo': return { action: { type: 'combo', combo: args.steps ?? args.combo } }
+    case 'react_script': return { action: { type: 'react_script', rules: args.rules, stopRules: args.stopRules, timeoutMs: args.timeoutMs, maxTriggers: args.maxTriggers, intervalMs: args.intervalMs, release: args.release } }
+    case 'play': return { special: 'play' }
+    case 'play_frame': return { special: 'play_frame' }
     case 'game_profile': return { special: 'game_profile' }
     case 'sample_colors': return { action: { type: 'sample_colors', region: args.region, maxColors: args.maxColors, quant: args.quant, ignoreGrey: args.ignoreGrey } }
     case 'track_object': return { action: { type: 'track_object', color: args.color, tolerance: args.tolerance, region: args.region, minCount: args.minCount, samples: args.samples, intervalMs: args.intervalMs, predictMs: args.predictMs } }
@@ -1148,7 +1201,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '4.0.0',
+      version: '4.1.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
@@ -1165,7 +1218,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
-  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile',
+  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile', 'play_frame',
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */

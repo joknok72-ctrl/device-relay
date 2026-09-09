@@ -1,4 +1,4 @@
-import type { Action, ComboStep, Point, ReactLane, Region, SeqPoint } from './types'
+import type { Action, ComboStep, Point, ReactLane, Region, SeqPoint , ReactWhen, ReactRule, FrameSpec, FrameColor, FrameOcr} from './types'
 
 const HEX = /^#?[0-9a-fA-F]{6}$/
 const normHex = (c: string) => '#' + c.trim().replace('#', '').toLowerCase()
@@ -232,7 +232,7 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
     case 'combo': {
       const raw = a.combo ?? a.steps
       if (!Array.isArray(raw) || raw.length === 0 || raw.length > 40) return { error: 'combo requires steps[1..40] of {op,...}' }
-      const ops = new Set(['down', 'move', 'up', 'tap', 'wait', 'joystick', 'aim', 'fire'])
+      const ops = new Set(['down', 'move', 'up', 'tap', 'wait', 'joystick', 'aim', 'fire', 'tap_found', 'aim_found'])
       const combo: ComboStep[] = []
       for (let i = 0; i < raw.length; i++) {
         const s = raw[i] as Record<string, unknown>
@@ -245,6 +245,69 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
         combo.push(st)
       }
       return { action: { type: 'combo', combo } }
+    }
+    case 'react_script': {
+      const rulesRaw = a.rules
+      if (!Array.isArray(rulesRaw) || rulesRaw.length === 0 || rulesRaw.length > 12) return { error: 'react_script requires rules[1..12] of {when:[...], then:[...]}' }
+      const whenTypes = new Set(['color_present', 'color_absent', 'pixel_is', 'pixel_not', 'text_present', 'text_absent', 'always'])
+      const parseWhen = (w: Record<string, unknown>, where: string): { when?: ReactWhen; error?: string } => {
+        if (!w || typeof w !== 'object' || typeof w.type !== 'string' || !whenTypes.has(w.type)) return { error: `${where}.type must be one of ${[...whenTypes].join('|')}` }
+        const out: ReactWhen = { type: w.type as ReactWhen['type'] }
+        if ((w.type.startsWith('color') || w.type.startsWith('pixel'))) { if (typeof w.color !== 'string' || !HEX.test(w.color.trim())) return { error: `${where}.color must be #rrggbb` }; out.color = normHex(w.color) }
+        if (w.type.startsWith('text')) { if (typeof w.text !== 'string' || !w.text.trim()) return { error: `${where}.text required` }; out.text = w.text.trim() }
+        if (w.type.startsWith('pixel')) { if (!isNum(w.x) || !isNum(w.y)) return { error: `${where} requires x,y` }; out.x = Math.round(w.x as number); out.y = Math.round(w.y as number) }
+        const region = parseRegion(w.region); if (region) out.region = region
+        for (const k of ['tolerance', 'minCount', 'minSize', 'maxSize', 'forMs'] as const) if (isNum(w[k])) out[k] = Math.round(w[k] as number)
+        return { when: out }
+      }
+      const rules: ReactRule[] = []
+      for (let i = 0; i < rulesRaw.length; i++) {
+        const r = rulesRaw[i] as Record<string, unknown>
+        if (!r || typeof r !== 'object' || !Array.isArray(r.when) || !Array.isArray(r.then) || r.then.length === 0) return { error: `rules[${i}] requires when[] and then[1..]` }
+        const when: ReactWhen[] = []
+        for (let c = 0; c < r.when.length; c++) { const pw = parseWhen(r.when[c] as Record<string, unknown>, `rules[${i}].when[${c}]`); if (pw.error) return { error: pw.error }; when.push(pw.when!) }
+        if (when.length === 0) when.push({ type: 'always' })
+        const combo = parseAction({ type: 'combo', steps: r.then })
+        if (combo.error || !combo.action || combo.action.type !== 'combo') return { error: `rules[${i}].then: ${combo.error}` }
+        const rule: ReactRule = { when, then: combo.action.combo }
+        if (typeof r.name === 'string') rule.name = r.name.slice(0, 40)
+        for (const k of ['cooldownMs', 'priority', 'maxFires'] as const) if (isNum(r[k])) rule[k] = Math.round(r[k] as number)
+        if (typeof r.exclusive === 'boolean') rule.exclusive = r.exclusive
+        rules.push(rule)
+      }
+      const action: Action = { type: 'react_script', rules }
+      if (Array.isArray(a.stopRules)) { const srs: ReactWhen[] = []; for (let c = 0; c < a.stopRules.length; c++) { const pw = parseWhen(a.stopRules[c] as Record<string, unknown>, `stopRules[${c}]`); if (pw.error) return { error: pw.error }; srs.push(pw.when!) }; action.stopRules = srs }
+      if (isNum(a.timeoutMs)) action.timeoutMs = clamp(Math.round(a.timeoutMs), 500, 60_000)
+      if (isNum(a.maxTriggers)) action.maxTriggers = clamp(Math.round(a.maxTriggers), 1, 500)
+      if (isNum(a.intervalMs)) action.intervalMs = clamp(Math.round(a.intervalMs), 15, 2000)
+      if (typeof a.release === 'boolean') action.release = a.release
+      return { action }
+    }
+    case 'play_frame': {
+      const f = (a.frame ?? a) as Record<string, unknown>
+      const frame: FrameSpec = {}
+      if (isNum(f.maxWidth)) frame.maxWidth = clamp(Math.round(f.maxWidth), 0, 2160)
+      if (isNum(f.quality)) frame.quality = clamp(Math.round(f.quality), 10, 100)
+      if (f.diff === true) frame.diff = true
+      if (Array.isArray(f.objects)) {
+        frame.objects = []
+        for (let i = 0; i < Math.min(f.objects.length, 8); i++) {
+          const o = f.objects[i] as Record<string, unknown>
+          if (!o || typeof o.color !== 'string' || !HEX.test(o.color.trim())) return { error: `frame.objects[${i}].color must be #rrggbb` }
+          const fc: FrameColor = { color: normHex(o.color) }
+          if (typeof o.name === 'string') fc.name = o.name.slice(0, 32)
+          for (const k of ['tolerance', 'minSize', 'maxSize', 'max'] as const) if (isNum(o[k])) fc[k] = Math.round(o[k] as number)
+          const region = parseRegion(o.region); if (region) fc.region = region
+          if (o.match === 'hue') fc.match = 'hue'
+          frame.objects.push(fc)
+        }
+      }
+      if (Array.isArray(f.ocr)) {
+        frame.ocr = []
+        for (let i = 0; i < Math.min(f.ocr.length, 6); i++) { const o = f.ocr[i] as Record<string, unknown>; const fo: FrameOcr = {}; if (typeof o?.name === 'string') fo.name = o.name.slice(0, 32); const region = parseRegion(o?.region); if (region) fo.region = region; if (o?.number === true) fo.number = true; frame.ocr.push(fo) }
+      }
+      if (Array.isArray(f.pixels)) frame.pixels = (f.pixels as Record<string, unknown>[]).filter((p) => p && isNum(p.x) && isNum(p.y)).slice(0, 24).map((p) => ({ x: Math.round(p.x as number), y: Math.round(p.y as number) }))
+      return { action: { type: 'play_frame', frame } }
     }
     case 'sample_colors': {
       const action: Action = { type: 'sample_colors', maxColors: isNum(a.maxColors) ? clamp(Math.round(a.maxColors), 1, 24) : 8, quant: isNum(a.quant) ? clamp(Math.round(a.quant), 8, 64) : 32, ignoreGrey: a.ignoreGrey !== false }

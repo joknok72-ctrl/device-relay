@@ -94,6 +94,10 @@ data class Action(
     val dy: Float? = null,               // aim
     val steps: Int? = null,              // aim: intermediate points
     @SerialName("combo") val steps2: List<ComboStep>? = null, // combo steps
+    // v4.1 live-play primitives
+    val rules: List<ReactRule>? = null,      // react_script: on-device reflex rules
+    val stopRules: List<ReactWhen>? = null,  // react_script: any true → stop
+    val frame: FrameSpec? = null,            // play_frame: what to extract
 )
 
 @Serializable
@@ -178,3 +182,38 @@ data class PongMessage(@SerialName("kind") val kind: String = "pong")
 fun peekKind(raw: String): String? = runCatching {
     RelayJson.parseToJsonElement(raw).jsonObject["kind"]?.jsonPrimitive?.content
 }.getOrNull()
+
+/** v4.1 react_script: a condition on the live frame */
+@Serializable
+data class ReactWhen(
+    val type: String,                 // color_present | color_absent | pixel_is | pixel_not | text_present | text_absent | always
+    val color: String? = null, val tolerance: Int? = null, val region: Region? = null, val minCount: Int? = null,
+    val x: Float? = null, val y: Float? = null,           // pixel_*
+    val text: String? = null,                             // text_* (OCR of region, ~150ms — use sparingly)
+    val minSize: Int? = null, val maxSize: Int? = null,   // color_present as OBJECT: blob size gate (0 = any)
+    val forMs: Long? = null,                              // must hold continuously this long
+)
+
+/** v4.1 react_script: a rule = WHEN all conditions → THEN combo steps (tap_found / aim_found use the matched blob) */
+@Serializable
+data class ReactRule(
+    val name: String? = null,
+    val `when`: List<ReactWhen>,
+    val then: List<ComboStep>,
+    val cooldownMs: Long? = null,      // default 250
+    val priority: Int? = null,         // higher first; default 0
+    val maxFires: Int? = null,         // stop firing this rule after N (0 = unlimited)
+    val exclusive: Boolean? = null,    // default true: when this rule fires, lower-priority rules skip this frame
+)
+
+/** v4.1 play_frame: what to extract from ONE capture */
+@Serializable
+data class FrameSpec(
+    val maxWidth: Int? = null, val quality: Int? = null,            // image (default 640 / 60); maxWidth 0 = no image
+    val objects: List<FrameColor>? = null,                          // blobs per colour
+    val ocr: List<FrameOcr>? = null,                                // text per region (each ~100-200 ms)
+    val pixels: List<SeqPoint>? = null,                             // exact colours at points
+    val diff: Boolean? = null,                                      // changed % vs previous play_frame
+)
+@Serializable data class FrameColor(val name: String? = null, val color: String, val tolerance: Int? = null, val region: Region? = null, val minSize: Int? = null, val maxSize: Int? = null, val max: Int? = null, val match: String? = null)
+@Serializable data class FrameOcr(val name: String? = null, val region: Region? = null, val number: Boolean? = null)

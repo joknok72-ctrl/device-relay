@@ -65,6 +65,9 @@ export type Action =
   | { type: 'aim'; x: number; y: number; dx: number; dy: number; duration: number; finger: number; steps: number; release: boolean }
   | { type: 'fire_burst'; x: number; y: number; count: number; intervalMs: number; holdMs: number }
   | { type: 'combo'; combo: ComboStep[] }
+  // v4.1 live play
+  | { type: 'react_script'; rules: ReactRule[]; stopRules?: ReactWhen[]; timeoutMs?: number; maxTriggers?: number; intervalMs?: number; release?: boolean }
+  | { type: 'play_frame'; frame: FrameSpec }
   // v2.1
   | { type: 'sample_colors'; region?: Region; maxColors?: number; quant?: number; ignoreGrey?: boolean }
   | { type: 'track_object'; color: string; tolerance?: number; region?: Region; minCount?: number; samples?: number; intervalMs?: number; predictMs?: number }
@@ -78,8 +81,14 @@ export interface SeqPoint extends Point { delayMs?: number; durationMs?: number 
 export interface Region { x: number; y: number; w: number; h: number }
 export interface Note { text: string; ts: number; /** package name of the app open when the note was saved */ app?: string }
 /** v2.5 combo step (executed on the phone) */
-export interface ComboStep { op: 'down' | 'move' | 'up' | 'tap' | 'wait' | 'joystick' | 'aim' | 'fire'; finger?: number; x?: number; y?: number; dx?: number; dy?: number; angle?: number; distance?: number; duration?: number; delayMs?: number; count?: number; intervalMs?: number; holdMs?: number; release?: boolean }
+export interface ComboStep { op: 'down' | 'move' | 'up' | 'tap' | 'wait' | 'joystick' | 'aim' | 'fire' | 'tap_found' | 'aim_found'; finger?: number; x?: number; y?: number; dx?: number; dy?: number; angle?: number; distance?: number; duration?: number; delayMs?: number; count?: number; intervalMs?: number; holdMs?: number; release?: boolean }
 /** One auto_react lane: colour trigger → tap or swipe. */
+/** v4.1 react_script */
+export interface ReactWhen { type: 'color_present' | 'color_absent' | 'pixel_is' | 'pixel_not' | 'text_present' | 'text_absent' | 'always'; color?: string; tolerance?: number; region?: Region; minCount?: number; x?: number; y?: number; text?: string; minSize?: number; maxSize?: number; forMs?: number }
+export interface ReactRule { name?: string; when: ReactWhen[]; then: ComboStep[]; cooldownMs?: number; priority?: number; maxFires?: number; exclusive?: boolean }
+export interface FrameColor { name?: string; color: string; tolerance?: number; region?: Region; minSize?: number; maxSize?: number; max?: number; match?: 'rgb' | 'hue' }
+export interface FrameOcr { name?: string; region?: Region; number?: boolean }
+export interface FrameSpec { maxWidth?: number; quality?: number; objects?: FrameColor[]; ocr?: FrameOcr[]; pixels?: { x: number; y: number }[]; diff?: boolean }
 export interface ReactLane { color: string; tolerance?: number; region?: Region; minCount?: number; tapX?: number; tapY?: number; tapOffsetX?: number; tapOffsetY?: number; swipe?: { dx: number; dy: number; durationMs?: number }; cooldownMs?: number; name?: string }
 /** Named screen fingerprint: 112-bit perceptual hash (hex) + a few OCR words, used by identify_screen. */
 export interface ScreenLabel { name: string; hash: string; words: string[]; app?: string; ts: number }
@@ -136,15 +145,15 @@ export const ACTION_TYPES = [
   'tap_sequence', 'multi_tap', 'swipe_path', 'repeat_tap', 'pixel', 'find_color', 'screen_hash',
   'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
   'read_text', 'find_colors', 'stream',
-  'find_objects', 'auto_react', 'sample_colors', 'track_object',
-  'finger_down', 'finger_move', 'finger_up', 'joystick', 'aim', 'fire_burst', 'combo',
+  'find_objects', 'auto_react', 'sample_colors', 'track_object', 'play_frame',
+  'finger_down', 'finger_move', 'finger_up', 'joystick', 'aim', 'fire_burst', 'combo', 'react_script', 'play_frame',
 ] as const
 
 /** Read-only actions may bypass the serialized input queue (safe to run concurrently). */
 export const READ_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'screenshot', 'ping', 'ui_dump', 'list_apps', 'current_app', 'get_notifications', 'device_info',
   'pixel', 'find_color', 'screen_hash', 'screen_diff', 'watch_color', 'find_image', 'wait_pixel',
-  'read_text', 'find_colors', 'stream', 'find_objects', 'sample_colors', 'track_object',
+  'read_text', 'find_colors', 'stream', 'find_objects', 'sample_colors', 'track_object', 'play_frame',
 ])
 
 /** Message sent server -> phone */

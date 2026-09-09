@@ -13,8 +13,8 @@ android {
         applicationId = "com.devicerelay.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "4.0.0"
+        versionCode = 19
+        versionName = "4.1.0"
     }
 
     buildTypes {

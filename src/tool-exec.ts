@@ -180,6 +180,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'wait_for') return waitForElement(env, deviceId, args)
   if (mapped.special === 'find_tap') return findAndTap(env, deviceId, args)
   if (mapped.special === 'act_and_see') return actAndSee(env, deviceId, args, opts)
+  if (mapped.special === 'play' || mapped.special === 'play_frame') return play(env, deviceId, args, opts, mapped.special === 'play_frame')
   if (mapped.special === 'wait_for_screen') return waitForScreen(env, deviceId, args)
   if (mapped.special === 'remember') return remember(env, deviceId, args)
   if (mapped.special === 'recall') return recall(env, deviceId, args)
@@ -362,6 +363,59 @@ async function actAndSee(env: Bindings, deviceId: string, args: Record<string, u
   const shot = a.ok ? await executeTool(env, deviceId, 'capture_screen', shotArgs, opts) : { ok: false, error: 'skipped (action failed)' }
   const { image, ...shotRest } = shot
   return { ok: a.ok && shot.ok, action: { name: act.name, ...a }, screenshot: shotRest, image, screen: shot.screen, durationMs: Date.now() - t0 }
+}
+
+// ---------------------------------------------------------------- v4.1 play: act + wait + perceive in one trip
+const NUMERIC_REGION = /score|hp|health|ammo|coin|gold|gem|time|timer|kill|level|lvl|dist|point|money|cash|energy|xp/i
+async function play(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions, frameOnly: boolean): Promise<ToolResult> {
+  const t0 = Date.now()
+  const { app, profile } = await loadProfile(env, deviceId, undefined).catch(() => ({ app: '', profile: null as ProfileRec | null }))
+  // 1. act
+  let action: ToolResult | undefined
+  if (!frameOnly) {
+    const act = args.act
+    const tool = args.tool as { name?: string; arguments?: Record<string, unknown> } | undefined
+    if (Array.isArray(act) && act.length) action = await executeTool(env, deviceId, 'combo', { steps: act }, { ...opts, depth: (opts.depth ?? 0) + 1 })
+    else if (tool && typeof tool.name === 'string') {
+      if (['play', 'act_and_see', 'batch', 'react_script'].includes(tool.name)) return { ok: false, error: `tool '${tool.name}' not allowed inside play` }
+      action = await executeTool(env, deviceId, tool.name, tool.arguments ?? {}, { ...opts, depth: (opts.depth ?? 0) + 1 })
+    }
+    if (action) {
+      const waitMs = Math.min(Math.max(Number(args.waitMs ?? 250) || 0, 0), 5000)
+      if (waitMs) await new Promise((r) => setTimeout(r, waitMs))
+    }
+  }
+  // 2. frame spec (profile-aware defaults)
+  const frame: Record<string, unknown> = {}
+  if (args.maxWidth !== undefined) frame.maxWidth = args.maxWidth
+  if (args.quality !== undefined) frame.quality = args.quality
+  frame.diff = args.diff !== false
+  if (Array.isArray(args.objects)) frame.objects = args.objects
+  else if (profile && Object.keys(profile.colors).length) frame.objects = Object.entries(profile.colors).slice(0, 8).map(([name, c]) => ({ name, color: c.hex, tolerance: c.tolerance ?? 28, minSize: 6, max: 6 }))
+  if (Array.isArray(args.ocr)) frame.ocr = args.ocr
+  else if (profile) { const regs = Object.entries(profile.regions).filter(([n]) => NUMERIC_REGION.test(n)).slice(0, 4); if (regs.length) frame.ocr = regs.map(([name, g]) => ({ name, region: { x: g.x, y: g.y, w: g.w, h: g.h }, number: true })) }
+  if (Array.isArray(args.pixels)) frame.pixels = args.pixels
+  const shot = await executeTool(env, deviceId, 'play_frame' as string, { frame }, { ...opts, internal: true })
+  if (!shot.ok) return { ok: false, error: shot.error ?? 'play_frame failed (needs app v4.1+)', action: action ? { ...action, image: undefined } : undefined }
+  const d = (shot.data ?? {}) as Record<string, unknown>
+  const image = shot.image
+  // compact summary line the model can read without the image
+  const objs = d.objects as Record<string, { count: number; objects: { cx: number; cy: number; area: number; w?: number; h?: number }[] }> | undefined
+  const summary: string[] = []
+  if (objs) for (const [k, v] of Object.entries(objs)) if (v.count) summary.push(`@${k}×${v.count}${v.objects[0] ? ` nearest(${v.objects[0].cx},${v.objects[0].cy})` : ''}`)
+  const ocr = d.ocr as Record<string, { value?: number; text?: string } | unknown[]> | undefined
+  if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && (v as { value?: number }).value !== undefined) summary.push(`${k}=${(v as { value: number }).value}`)
+  if (typeof d.changedPct === 'number' && d.changedPct >= 0) summary.push(`changed ${d.changedPct}%`)
+  return {
+    ok: !action || action.ok,
+    app: app || undefined,
+    ...(action ? { action: { ok: action.ok, error: action.error, data: action.data } } : {}),
+    frame: { w: d.w, h: d.h, scale: d.scale, objects: d.objects, ocr: d.ocr, pixels: d.pixels, changedPct: d.changedPct, ms: d.ms },
+    summary: summary.join(' · ') || 'nothing of interest detected',
+    image,
+    durationMs: Date.now() - t0,
+    hint: !profile ? 'no game_profile for this app yet — save @colours/@regions once (game_profile set) and play {} will auto-detect them every tick' : undefined,
+  }
 }
 
 /** Poll cheap on-device frame hashes until the screen changes or stabilises. */
