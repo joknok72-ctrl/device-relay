@@ -578,7 +578,7 @@ export const TOOLS: ToolDef[] = [
     name: 'play_loop',
     description:
       'AUTOPILOT (v4.3, learning v4.4): give the relay a POLICY (or strategy:"best" to replay the top learned one) and it plays up to 40 ticks (~0.3-0.6 s each, max 25 s) by itself using the full play() perception (objects, deltas, threats, values, stuck) — one action per tick, first matching rule wins (order = priority). ' +
-      'policy:[{name, if:{threat:"@enemy"|true, present:"@coin", absent:"@enemy", stuck:"menu|game_over|any", valueBelow:{name:"hp",value:30}, valueAbove:{...}, everyTicks:3}, do:[combo steps — may use x:"@found.x", y:"@found.y", y:"@found.y-40" = nearest matched object] | tool:{name,arguments}, cooldownTicks, waitMs}]. ' +
+      'policy:[{name, if:{threat:"@enemy"|true, present:"@coin", absent:"@enemy", stuck:"menu|game_over|any", valueBelow:{name:"hp",value:30}, valueAbove:{...}, everyTicks:3}, do:[combo steps — tokens: x:"@found.x", y:"@found.y-40" (nearest matched object), "@threat.x/y" (most urgent threat), "@away.x" (side opposite the threat = dodge), "@center.x/y"] | tool:{name,arguments}, cooldownTicks, waitMs}]. valueBelow/valueAbove also work on bar gauges (profile region + same-named colour → fill %). ' +
       'stopOn:{stuck:"game_over"|"any", event:"hp dropping", valueBelow:{name,value}, valueAbove:{...}}; autoMenu (default true) taps PLAY/CONTINUE/RETRY/× when a menu blocks the game. Returns per-tick log (rule fired, summary), fires per rule, stoppedBy, last frame. ' +
       'Examples — clicker: [{if:{present:"@coin"},do:[{op:"tap",x:"@found.x",y:"@found.y"}]}]. Runner: [{name:"dodge",if:{threat:true},do:[{op:"swipe",x1:540,y1:1700,x2:540,y2:1100,duration:120}]},{if:{present:"@coin"},do:[{op:"tap",x:"@found.x",y:"@found.y"}]}]. Shooter: [{if:{valueBelow:{name:"hp",value:25}},do:[{op:"joystick",at:"@stick",direction:"down",duration:600}]},{if:{present:"@enemy"},do:[{op:"aim",at:"@look",dx:"@found.x-540",dy:0},{op:"fire",at:"@fire",count:4}]},{if:{everyTicks:2},do:[{op:"joystick",at:"@stick",direction:"up",duration:400}]}]. ' +
       'Use play_loop for strategy-level autonomy (seconds), react_script for reflexes (< 100 ms), plain play when you want to think every tick.',
@@ -586,7 +586,7 @@ export const TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         policy: { type: 'array', description: 'ordered rules [{name, if:{...}, do:[steps] | tool:{name,arguments}, cooldownTicks, waitMs}] (omit when using strategy)', items: { type: 'object' } },
-        strategy: { type: 'string', description: 'v4.4: replay a LEARNED policy from the game profile: "best" or a strategy name (see 5f). Skips policy.' },
+        strategy: { type: 'string', description: 'v4.4: replay a LEARNED policy from the game profile: "best" or a strategy name (see 5f). v4.5: "default" = synthesize a starter policy from the genre + colour/control names (also used by "best" when nothing was learned yet). Skips policy.' },
         name: { type: 'string', description: 'v4.4: name to save this policy under (e.g. "v2"); runs are scored (score gain/tick × survival) and ranked per game' },
         learn: { type: 'boolean', description: 'v4.4: record this run into the game\'s strategies (default true)' },
         note: { type: 'string', description: 'v4.4: short note stored with the strategy' },
@@ -1242,7 +1242,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '4.4.0',
+      version: '4.5.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

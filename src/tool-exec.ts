@@ -127,7 +127,7 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
       }
       return out
     }
-    if (typeof v === 'string' && v.startsWith('@found.')) return v // v4.3 runtime token substituted per tick by play_loop
+    if (typeof v === 'string' && /^@(found|threat|away|center)\./.test(v)) return v // v4.3/4.5 runtime tokens substituted per tick by play_loop
     if (typeof v === 'string' && v.startsWith('@')) {
       const r = look(v); if (!r) return v
       const k = (key ?? '').toLowerCase()
@@ -424,11 +424,12 @@ async function gameSetup(env: Bindings, deviceId: string, args: Record<string, u
     ok: true, app, genre, created: !profile,
     profile: res.profile,
     found: { colors: Object.keys(set.colors).length, regions: Object.keys(set.regions).length, controls: Object.keys(set.controls).length },
+    suggestedPolicy: defaultPolicy(res.profile ?? null)?.policy,
     ocrLines: ocr.lines.slice(0, 15).map((l) => ({ text: l.text, cx: l.cx, cy: l.cy })),
     notes: notes.length ? notes : undefined,
     image: shot?.image,
     durationMs: Date.now() - t0,
-    next: 'play {} now auto-tracks these @colours and reads the numeric @regions. Rename what matters (game_profile set:{colors:{enemy:{hex:"@red"}}}, unset:{colors:["red"]}) and drop noise. For a shooter also save @stick/@look/@fire/@crosshair with calibrate.',
+    next: 'play {} now auto-tracks these @colours and reads the numeric @regions; play_loop {strategy:"default"} starts playing with suggestedPolicy right away. Rename what matters (game_profile set:{colors:{enemy:{hex:"@red"}}}, unset:{colors:["red"]}) and drop noise. For a shooter also save @stick/@look/@fire/@crosshair with calibrate.',
   }
 }
 
@@ -477,35 +478,65 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   const state: PlayState = { ts: Date.now(), objects: {}, values: {}, staticTicks: 0, tick: (prev?.tick ?? 0) + 1 }
   const dtMs = prev ? Math.max(50, Date.now() - prev.ts) : 0
   const W = Number(d.w) || 1080, H = Number(d.h) || 2400
-  const threats: { name: string; cx: number; cy: number; approach: number; etaMs?: number; area: number }[] = []
+  const threats: { name: string; cx: number; cy: number; approach: number; etaMs?: number; area: number; vx?: number; vy?: number }[] = []
+  const tracks: Record<string, { cx: number; cy: number; vx: number; vy: number; dir: string; growth?: number; etaMs?: number }[]> = {}
+  // v4.5 multi-object tracking: greedy nearest-neighbour match of up to 4 blobs per colour against the previous tick
+  const motion = (n: { cx: number; cy: number; area?: number }, p: { cx: number; cy: number; area?: number }) => {
+    const dx = n.cx - p.cx, dy = n.cy - p.cy
+    const vx = dtMs ? Math.round(dx * 1000 / dtMs) : 0, vy = dtMs ? Math.round(dy * 1000 / dtMs) : 0
+    const growth = p.area && n.area ? Number((n.area / p.area).toFixed(2)) : undefined
+    const towardY = dy > 0 && n.cy < H * 0.85, distY = H * 0.8 - n.cy
+    let etaMs = towardY && vy > 0 && distY > 0 ? Math.round(distY / vy * 1000) : undefined
+    if (etaMs !== undefined && etaMs > 10_000) etaMs = undefined // crawling: not a threat signal
+    const approach = (towardY && (etaMs !== undefined || dy >= H * 0.05) ? 1 : 0) + (growth && growth > 1.15 ? 1 : 0)
+    return { dx, dy, vx, vy, growth, etaMs, approach, dir: Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up') }
+  }
   if (objs) for (const [k, v] of Object.entries(objs)) {
     const n = v.objects[0]
-    state.objects[k] = { count: v.count, cx: n?.cx, cy: n?.cy, area: n?.area }
+    state.objects[k] = { count: v.count, cx: n?.cx, cy: n?.cy, area: n?.area, all: v.objects.slice(0, 4).map((o) => ({ cx: o.cx, cy: o.cy, area: o.area })) }
     const p = prev?.objects[k]
     if (p) {
       if (v.count && !p.count) events.push(`@${k} appeared`)
       else if (!v.count && p.count) events.push(`@${k} vanished`)
       else if (v.count && p.count && n && p.cx !== undefined && p.cy !== undefined) {
-        const dx = n.cx - p.cx, dy = n.cy - p.cy
-        if (Math.abs(dx) + Math.abs(dy) >= 6) {
-          // v4.3 velocity (px/s) + growth + approach towards the player zone (bottom-centre for runners/shooters: y ≥ 70%)
-          const vx = dtMs ? Math.round(dx * 1000 / dtMs) : 0, vy = dtMs ? Math.round(dy * 1000 / dtMs) : 0
-          const growth = p.area && n.area ? Number((n.area / p.area).toFixed(2)) : undefined
-          const towardY = dy > 0 && n.cy < H * 0.85, distY = H * 0.8 - n.cy
-          let etaMs = towardY && vy > 0 && distY > 0 ? Math.round(distY / vy * 1000) : undefined
-          if (etaMs !== undefined && etaMs > 10_000) etaMs = undefined // crawling: not a threat signal
-          const approach = (towardY && (etaMs !== undefined || dy >= H * 0.05) ? 1 : 0) + (growth && growth > 1.15 ? 1 : 0)
-          deltas[`@${k}`] = { dx, dy, dir: Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'), vx, vy, ...(growth !== undefined ? { growth } : {}), ...(etaMs !== undefined ? { etaMs } : {}) }
-          if (approach) threats.push({ name: k, cx: n.cx, cy: n.cy, approach, etaMs, area: n.area })
+        // nearest-object motion (backwards compatible deltas)
+        const m = motion(n, { cx: p.cx, cy: p.cy, area: p.area })
+        if (Math.abs(m.dx) + Math.abs(m.dy) >= 6) {
+          deltas[`@${k}`] = { dx: m.dx, dy: m.dy, dir: m.dir, vx: m.vx, vy: m.vy, ...(m.growth !== undefined ? { growth: m.growth } : {}), ...(m.etaMs !== undefined ? { etaMs: m.etaMs } : {}) }
         }
+        // per-object tracks: match each current blob to the closest previous blob (≤ 35% of screen height apart)
+        const prevAll = (p.all ?? [{ cx: p.cx, cy: p.cy, area: p.area }]).slice()
+        const list: typeof tracks[string] = []
+        for (const o of v.objects.slice(0, 4)) {
+          let best = -1, bd = Infinity
+          prevAll.forEach((q, qi) => { const dd = Math.hypot(o.cx - q.cx, o.cy - q.cy); if (dd < bd) { bd = dd; best = qi } })
+          if (best < 0 || bd > H * 0.35) { list.push({ cx: o.cx, cy: o.cy, vx: 0, vy: 0, dir: 'new' }); continue }
+          const q = prevAll.splice(best, 1)[0]
+          const mm = motion(o, q)
+          list.push({ cx: o.cx, cy: o.cy, vx: mm.vx, vy: mm.vy, dir: Math.abs(mm.dx) + Math.abs(mm.dy) >= 6 ? mm.dir : 'still', ...(mm.growth !== undefined ? { growth: mm.growth } : {}), ...(mm.etaMs !== undefined ? { etaMs: mm.etaMs } : {}) })
+          if (mm.approach && Math.abs(mm.dx) + Math.abs(mm.dy) >= 6) threats.push({ name: k, cx: o.cx, cy: o.cy, approach: mm.approach, etaMs: mm.etaMs, area: o.area, vx: mm.vx, vy: mm.vy })
+        }
+        if (list.length > 1 || list.some((t) => t.dir !== 'still')) tracks[`@${k}`] = list
       }
       if (v.count - p.count >= 2) events.push(`@${k} +${v.count - p.count}`)
     }
   }
   threats.sort((a, b) => (b.approach - a.approach) || ((a.etaMs ?? 1e9) - (b.etaMs ?? 1e9)))
   for (const t of threats.slice(0, 2)) events.push(`⚠ @${t.name} approaching${t.etaMs !== undefined ? ` eta ${t.etaMs}ms` : ''} at (${t.cx},${t.cy})`)
-  if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number') {
-    const val = (v as { value: number }).value
+  // v4.5 bars: profile regions named like a gauge (hp/health/energy/shield/stamina/mana/fuel/boost/progress) that have a same-named @colour
+  // → fill % = share of that colour along the region (find_colors count / region area). Works for any game with a coloured bar.
+  const bars: Record<string, number> = {}
+  if (profile && args.bars !== false) {
+    const barRegs = Object.entries(profile.regions).filter(([n]) => /hp|health|life|energy|shield|armor|stamina|mana|fuel|boost|progress|charge|power/i.test(n) && profile.colors[n]).slice(0, 4)
+    if (barRegs.length) {
+      const rs = await Promise.all(barRegs.map(([n, g]) => executeTool(env, deviceId, 'find_color', { color: profile.colors[n].hex, tolerance: profile.colors[n].tolerance ?? 40, region: { x: g.x, y: g.y, w: g.w, h: g.h } }, { ...opts, internal: true, depth: (opts.depth ?? 0) + 1 }).catch(() => null)))
+      barRegs.forEach(([n, g], i) => { const r = rs[i]; const c = (r?.data as { count?: number; bounds?: { w?: number } } | undefined); if (r?.ok && c) { const byWidth = c.bounds?.w && g.w ? c.bounds.w / g.w : undefined; const byArea = typeof c.count === 'number' && g.w * g.h ? c.count / (g.w * g.h) : undefined; const fill = byWidth ?? byArea; if (fill !== undefined) bars[n] = Math.round(Math.min(1, Math.max(0, fill)) * 100) } })
+    }
+  }
+  const numeric: [string, number][] = []
+  if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number') numeric.push([k, (v as { value: number }).value])
+  for (const [k, pct] of Object.entries(bars)) if (!numeric.some(([n]) => n === k)) numeric.push([k, pct])
+  for (const [k, val] of numeric) {
     state.values[k] = val
     const p = prev?.values[k]
     if (typeof p === 'number' && p !== val) { const diff = val - p; deltas[k] = diff; events.push(`${k} ${diff > 0 ? '+' : ''}${diff}`); if (/hp|health|life|lives|shield|armor|energy/i.test(k) && diff < 0) events.push(`⚠ ${k} dropping`) }
@@ -531,7 +562,7 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
   // compact summary line the model can read without the image
   const summary: string[] = []
   if (objs) for (const [k, v] of Object.entries(objs)) if (v.count) { const mv = deltas[`@${k}`] as { dir?: string } | undefined; summary.push(`@${k}×${v.count}${v.objects[0] ? ` nearest(${v.objects[0].cx},${v.objects[0].cy})` : ''}${mv?.dir ? ` →${mv.dir}` : ''}`) }
-  if (ocr) for (const [k, v] of Object.entries(ocr)) if (v && !Array.isArray(v) && (v as { value?: number }).value !== undefined) { const dv = deltas[k]; summary.push(`${k}=${(v as { value: number }).value}${typeof dv === 'number' ? ` (${dv > 0 ? '+' : ''}${dv})` : ''}`) }
+  for (const [k, val] of numeric) { const dv = deltas[k]; summary.push(`${k}=${val}${bars[k] !== undefined && !(ocr && ocr[k]) ? '%' : ''}${typeof dv === 'number' ? ` (${dv > 0 ? '+' : ''}${dv})` : ''}`) }
   if (changed >= 0) summary.push(`changed ${changed}%`)
   if (threats.length) summary.push(`THREAT @${threats[0].name}${threats[0].etaMs !== undefined ? ` ${threats[0].etaMs}ms` : ''}`)
   if (stuck) summary.push(`STATIC×${(stuck.staticTicks as number)} ${stuck.kind}`)
@@ -543,6 +574,8 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
     app: app || undefined,
     tick: state.tick,
     ...(threats.length ? { threats: threats.slice(0, 3) } : {}),
+    ...(Object.keys(tracks).length ? { tracks } : {}),
+    ...(Object.keys(bars).length ? { bars } : {}),
     ...(memory ? { memory } : {}),
     ...(action ? { action: { ok: action.ok, error: action.error, data: action.data } } : {}),
     frame: { w: d.w, h: d.h, scale: d.scale, objects: d.objects, ocr: d.ocr, pixels: d.pixels, changedPct: d.changedPct, ms: d.ms },
@@ -563,6 +596,42 @@ async function play(env: Bindings, deviceId: string, args: Record<string, unknow
  * Rule `do`: combo steps (same as play.act; steps may use "@found" tokens: x:"@found.x", y:"@found.y" → nearest object of the rule's colour) or tool {name, arguments}
  * Stops on: maxTicks, stopOn (stuck kind / event text / value condition), or `until` value reached. Returns a compact per-tick log.
  */
+/**
+ * v4.5 starter policy from a profile: genre + colour/control names → sensible rules for play_loop.
+ * Colour roles: enemy/obstacle/danger/red → threat; coin/gem/star/collect/green/yellow → collect; controls stick/look/fire/jump/gas → shooter/runner/racing moves.
+ */
+function defaultPolicy(p: ProfileRec | null): { policy: Record<string, unknown>[]; stopOn: Record<string, unknown> } | null {
+  if (!p) return null
+  const colors = Object.keys(p.colors), controls = p.controls
+  if (!colors.length && !Object.keys(controls).length) return null
+  const pick = (re: RegExp) => colors.find((c) => re.test(c))
+  const enemy = pick(/enemy|obstacle|danger|bomb|spike|car|red/i), coin = pick(/coin|gem|star|collect|gold|money|fruit|green|yellow|blue/i)
+  const has = (n: string) => n in controls
+  const genre = (p.genre ?? '').toLowerCase()
+  const policy: Record<string, unknown>[] = []
+  const stopOn: Record<string, unknown> = { stuck: 'game_over' }
+  const hpName = Object.keys(p.regions).find((r) => /hp|health|life|lives/i.test(r))
+  if (hpName) policy.push({ name: 'retreat', if: { valueBelow: { name: hpName, value: 25 } }, do: has('stick') ? [{ op: 'joystick', at: '@stick', direction: 'down', duration: 500 }] : has('heal') ? [{ op: 'tap', at: '@heal' }] : [{ op: 'wait', ms: 50 }], cooldownTicks: 2 })
+  if (genre === 'shooter' || (has('fire') && (has('look') || has('stick')))) {
+    if (enemy) policy.push({ name: 'engage', if: { present: `@${enemy}` }, do: [...(has('look') ? [{ op: 'aim', at: '@look', dx: '@found.x-540', dy: '@found.y-960', duration: 80 }] : []), ...(has('fire') ? [{ op: 'fire', at: '@fire', count: 4, intervalMs: 80 }] : [{ op: 'tap', x: '@found.x', y: '@found.y' }])], cooldownTicks: 0 })
+    if (has('stick')) policy.push({ name: 'roam', if: { everyTicks: 2 }, do: [{ op: 'joystick', at: '@stick', direction: 'up', duration: 450 }] })
+  } else if (genre === 'runner' || has('jump')) {
+    policy.push({ name: 'dodge', if: { threat: true }, do: has('jump') ? [{ op: 'tap', at: '@jump' }] : [{ op: 'swipe', x1: '@center.x', y1: 1700, x2: '@away.x', y2: 1700, duration: 120 }] })
+    if (coin) policy.push({ name: 'collect', if: { present: `@${coin}` }, do: [{ op: 'swipe', x1: '@center.x', y1: 1700, x2: '@found.x', y2: 1700, duration: 120 }], cooldownTicks: 1 })
+  } else if (genre === 'racing' || has('gas')) {
+    policy.push({ name: 'gas', if: { everyTicks: 1 }, do: [{ op: 'down', finger: 0, at: has('gas') ? '@gas' : '@center.x' }] })
+    if (enemy) policy.push({ name: 'steer', if: { threat: true }, do: [{ op: 'tap', at: has('left') && has('right') ? '@left' : '@center.x' }] })
+  } else {
+    // casual / clicker / puzzle / unknown: dodge threats, tap collectibles, otherwise tap the biggest target
+    if (enemy) policy.push({ name: 'avoid', if: { threat: `@${enemy}` }, do: [{ op: 'tap', x: '@away.x', y: '@threat.y' }] })
+    if (coin) policy.push({ name: 'collect', if: { present: `@${coin}` }, do: [{ op: 'tap', x: '@found.x', y: '@found.y' }] })
+    const other = colors.find((c) => c !== enemy && c !== coin)
+    if (other && !coin) policy.push({ name: 'tap', if: { present: `@${other}` }, do: [{ op: 'tap', x: '@found.x', y: '@found.y' }], cooldownTicks: 1 })
+  }
+  policy.push({ name: 'menu', if: { stuck: 'menu' }, tool: { name: 'dismiss_popups', arguments: {} } })
+  return { policy, stopOn }
+}
+
 async function playLoop(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
   const t0 = Date.now()
   const ticks = Math.min(Math.max(Math.round(Number(args.ticks) || 10), 1), 40)
@@ -574,9 +643,16 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
   const strategies = ((prof as unknown as { strategies?: { name: string; policy: unknown[]; stopOn?: unknown; fitness: number; runs: number }[] } | null)?.strategies) ?? []
   let strategyName: string | undefined = typeof args.name === 'string' ? args.name.slice(0, 40) : undefined
   if (typeof args.strategy === 'string' && !policy.length) {
-    const s = args.strategy === 'best' ? strategies[0] : strategies.find((x) => x.name === args.strategy)
-    if (!s) return { ok: false, error: strategies.length ? `no strategy '${args.strategy}' (known: ${strategies.map((x) => `${x.name} f=${x.fitness}`).join(', ')})` : 'no learned strategies for this game yet — run play_loop with a policy first' }
-    policy = s.policy as Record<string, unknown>[]; if (s.stopOn && !args.stopOn) stopOn = s.stopOn as typeof stopOn; strategyName = s.name
+    if (args.strategy === 'default' || (args.strategy === 'best' && !strategies.length && prof)) {
+      // v4.5 synthesize a starter policy from the genre + colour/control names of the profile
+      const gen = defaultPolicy(prof)
+      if (!gen) return { ok: false, error: 'cannot build a default policy: profile has no colours — run game_setup first' }
+      policy = gen.policy; stopOn = { ...(gen.stopOn as typeof stopOn), ...stopOn }; strategyName = strategyName ?? 'default'
+    } else {
+      const s = args.strategy === 'best' ? strategies[0] : strategies.find((x) => x.name === args.strategy)
+      if (!s) return { ok: false, error: strategies.length ? `no strategy '${args.strategy}' (known: ${strategies.map((x) => `${x.name} f=${x.fitness}`).join(', ')})` : 'no learned strategies for this game yet — run play_loop with a policy first (or strategy:"default")' }
+      policy = s.policy as Record<string, unknown>[]; if (s.stopOn && !args.stopOn) stopOn = s.stopOn as typeof stopOn; strategyName = s.name
+    }
   }
   if (!policy.length) return { ok: false, error: 'play_loop requires policy:[{if:{...}, do:[combo steps] | tool:{name,arguments}, name?, cooldownTicks?}] (or strategy:"best")' }
   const frameArgs: Record<string, unknown> = { maxWidth: 0 }
@@ -589,12 +665,19 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
   let lastTick: ToolResult | undefined
   let gained = 0, died = false
   const inner = { ...opts, depth: (opts.depth ?? 0) + 1 }
-  const sub = (v: unknown, found?: { cx: number; cy: number }): unknown => {
-    if (typeof v === 'string' && found) { if (v === '@found.x') return found.cx; if (v === '@found.y') return found.cy; const m = /^@found\.(x|y)([+-]\d+)$/.exec(v); if (m) return (m[1] === 'x' ? found.cx : found.cy) + Number(m[2]) }
-    if (Array.isArray(v)) return v.map((x) => sub(x, found))
-    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, sub(x, found)]))
+  const sub = (v: unknown, found?: { cx: number; cy: number }, threat?: { cx: number; cy: number }): unknown => {
+    if (typeof v === 'string') {
+      const m = /^@(found|threat)\.(x|y)([+-]\d+)?$/.exec(v)
+      if (m) { const src = m[1] === 'found' ? found : threat; if (!src) return v; return (m[2] === 'x' ? src.cx : src.cy) + Number(m[3] ?? 0) }
+      // v4.5 side tokens: "@away.x" = the side of the screen opposite to the threat (dodge), "@center.x/y"
+      if (v === '@away.x' && threat) return threat.cx < W / 2 ? Math.round(W * 0.75) : Math.round(W * 0.25)
+      if (v === '@center.x') return Math.round(W / 2); if (v === '@center.y') return Math.round(H / 2)
+    }
+    if (Array.isArray(v)) return v.map((x) => sub(x, found, threat))
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, sub(x, found, threat)]))
     return v
   }
+  let W = 1080, H = 2400
   let pendingAct: Record<string, unknown> | undefined
   for (let i = 1; i <= ticks; i++) {
     if (Date.now() - t0 > budgetMs) { stoppedBy = 'maxMs'; break }
@@ -606,6 +689,7 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
     const objs = (r.frame as { objects?: Record<string, { count: number; objects: { cx: number; cy: number }[] }> } | undefined)?.objects ?? {}
     const values = Object.fromEntries(Object.entries(((r.frame as { ocr?: Record<string, { value?: number } | unknown[]> }).ocr ?? {})).filter(([, v]) => v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number').map(([k, v]) => [k, (v as { value: number }).value]))
     const threats = (r.threats as { name: string; cx: number; cy: number }[] | undefined) ?? []
+    const fr = r.frame as { w?: number; h?: number } | undefined; if (fr?.w) W = fr.w; if (fr?.h) H = fr.h
     const stuck = r.stuck as { kind?: string } | undefined
     const events = (r.events as string[] | undefined) ?? []
     const entry: Record<string, unknown> = { tick: i, summary: r.summary }
@@ -638,8 +722,9 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
       if (!ok) continue
       fires[name] = (fires[name] ?? 0) + 1; lastFire[name] = i
       entry.rule = name
-      if (Array.isArray(rule.do) && rule.do.length) pendingAct = { act: sub(rule.do, found), waitMs: rule.waitMs ?? args.waitMs ?? 150 }
-      else if (rule.tool && typeof (rule.tool as { name?: unknown }).name === 'string') pendingAct = { tool: sub(rule.tool, found), waitMs: rule.waitMs ?? args.waitMs ?? 250 }
+      const th = threats[0] ? { cx: threats[0].cx, cy: threats[0].cy } : undefined
+      if (Array.isArray(rule.do) && rule.do.length) pendingAct = { act: sub(rule.do, found, th), waitMs: rule.waitMs ?? args.waitMs ?? 150 }
+      else if (rule.tool && typeof (rule.tool as { name?: unknown }).name === 'string') pendingAct = { tool: sub(rule.tool, found, th), waitMs: rule.waitMs ?? args.waitMs ?? 250 }
       if (found) entry.at = found
       break
     }
