@@ -134,8 +134,12 @@ export class DeviceRoom extends DurableObject<Bindings> {
   /** v2.3: extend the open session for this app or start a new one (gap > 10 min or app changed). */
   private touchSession(app: string, label?: string, patch?: { commands?: number; failed?: number; screenshots?: number }) {
     const now = Date.now()
-    const cur = this.sessions[0]
-    if (cur && cur.app === app && now - cur.end < 10 * 60_000) {
+    // v3.3: resume the most recent open session of this app (within 10 min) even if another app was touched in between
+    let idx = -1
+    for (let i = 0; i < Math.min(this.sessions.length, 5); i++) { const s = this.sessions[i]; if (s.app === app && now - s.end < 10 * 60_000) { idx = i; break } }
+    if (idx >= 0) {
+      const cur = this.sessions[idx]
+      if (idx > 0) { this.sessions.splice(idx, 1); this.sessions.unshift(cur) }
       cur.end = now; if (label && !cur.label) cur.label = label
       if (patch) { cur.commands += patch.commands ?? 0; cur.failed += patch.failed ?? 0; cur.screenshots += patch.screenshots ?? 0 }
     } else {
@@ -404,7 +408,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (!app) return Response.json({ ok: false, error: 'no current app' }, { status: 400 })
       const summary = String(b.summary ?? '').trim().slice(0, 600)
       if (!summary) return Response.json({ ok: false, error: 'summary required' }, { status: 400 })
-      const cur = this.sessions[0]
       const rep: SessionReport = {
         ts: Date.now(), summary,
         outcome: (['win', 'loss', 'progress', 'stuck', 'other'] as const).find((o) => o === b.outcome),
@@ -413,9 +416,10 @@ export class DeviceRoom extends DurableObject<Bindings> {
         learned: Array.isArray(b.learned) ? b.learned.filter((x) => typeof x === 'string').map((x) => x.slice(0, 200)).slice(0, 10) : undefined,
         nextTime: typeof b.nextTime === 'string' ? b.nextTime.slice(0, 400) : undefined,
         blockers: Array.isArray(b.blockers) ? b.blockers.filter((x) => typeof x === 'string').map((x) => x.slice(0, 200)).slice(0, 5) : undefined,
-        durationMs: cur && cur.app === app ? cur.end - cur.start : undefined,
+        durationMs: undefined,
       }
-      if (cur && cur.app === app && Date.now() - cur.end < 10 * 60_000) cur.report = rep
+      const open = this.sessions.slice(0, 5).find((s) => s.app === app && Date.now() - s.end < 10 * 60_000)
+      if (open) { open.report = rep; rep.durationMs = open.end - open.start }
       else { this.sessions.unshift({ app, label: b.label, start: Date.now(), end: Date.now(), commands: 0, failed: 0, screenshots: 0, report: rep }); if (this.sessions.length > 100) this.sessions.length = 100 }
       const p: GameProfile = this.profiles[app] ?? { app, controls: {}, colors: {}, regions: {}, settings: {}, ts: Date.now() }
       if (b.label && !p.label) p.label = b.label.slice(0, 64)
