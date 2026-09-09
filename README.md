@@ -35,6 +35,17 @@
 
 ## المميزات المنجزة ✅
 
+**🕹️ v4.1 — AI-direct play: `play` + `react_script` + `play_frame` (الـ AI هو اللاعب، بدون بوتات)**
+- **`play`** = ACT + WAIT + SEE في نداء واحد: خطوات combo (joystick/aim/fire/tap/down/move/up) أو أداة واحدة → انتظار `waitMs` → **إطار لعب**: صورة JPEG مضغوطة + كل الأجسام لكل لون (`objects{name:{count,objects[{cx,cy,area,w,h,top}]}}`) + أرقام OCR لكل منطقة (`ocr{score:{value,text}}`) + بكسلات محددة + `changedPct` + سطر `summary` مقروء بدون الصورة (`@enemy×3 nearest(540,1500) · score=1250 · changed 7.5%`).
+- **Profile-aware**: مع `game_profile` محفوظ، `play {}` وحدها تكشف تلقائيًا كل ألوان البروفايل وتقرأ كل المناطق الرقمية (score/hp/ammo/coins/time/kills…) — وعي كامل بالموقف كل tick.
+- **`react_script`** — محرك ردود فعل على الجهاز نفسه (~50ms، 20-30 fps) لمدة تصل 60s بينما الـ AI يفكر: قواعد `{when:[conditions], then:[combo steps], cooldownMs, priority, maxFires, exclusive}`؛ شروط `color_present/absent` (مع `minSize/maxSize` = وضع أجسام)، `pixel_is/not`، `text_present/absent` (OCR)، `always`، `forMs`؛ خطوات إضافية **`tap_found`** (المس الجسم المكتشف) و **`aim_found`** (اسحب الكاميرا حتى يقف الـ crosshair على الجسم: `x,y` crosshair، `lookX/lookY` منطقة النظر، `sensitivity`، `maxStep`، `dy` للرأس)؛ `stopRules` لإيقاف مبكر (GAME OVER). يرجع `triggers/frames/fires/log/stoppedBy` ويرفع كل الأصابع في النهاية.
+- **`play_frame`** — إدراك فقط (نفس الإطار بدون فعل)، مسموح للتوكن read-only.
+- كل الإحداثيات/الألوان/المناطق تقبل `@names` من البروفايل (`at:"@crosshair"`, `lookX:"@look"`, `color:"@enemy"`).
+- Bootstrap 7a محدَّث: الحلقة `play {} → قرار → play {act} أو react_script → play {}`؛ playbook الشوتر بمرحلتين (Find & engage / Reactive).
+- `phone.sh play ['steps'] [waitMs] ['{objects,ocr}']` (يحفظ `play.jpg`)، `phone.sh frame`, `phone.sh rules '<rules>' [ms] ['<stopRules>']`.
+- Android **4.1.0**: تنفيذ `react_script` و `play_frame` على الجهاز (capture واحد → أجسام + OCR + بكسلات + diff).
+- 81 أداة، اختبارات: suite جديد `tests/e2e-v41.sh` (81 فحص) — الإجمالي **713/713** ✅.
+
 **السيرفر (Worker) — v1.4**
 - 🔐 **توكن لكل جهاز** (`/api/admin/tokens`): توكن محدود بجهاز واحد، خيار `readOnly` (مراقبة فقط)، إلغاء فوري. التوكنات تُخزَّن كـ SHA-256 فقط
 - 🚦 **Rate limiting** لكل توكن (120 طلب / 10 ثوانٍ) مع `X-RateLimit-Remaining` و `Retry-After`
@@ -132,7 +143,7 @@
 **🎮 v4.0 — الرجوع للأصل: الـ AI هو اللاعب (بدون بوتات)**
 - بعد تجربة v2.6→v3.4 (بوتات قواعد على الهاتف، AimEngine، HeadLock عبر Shizuku) قرّر المستخدم الرجوع للنموذج الأصلي: **الـ AI يتحكم ويلعب مباشرة** من أي محادثة. تمت إزالة كل ما يخص البوتات بالكامل: أدوات `game_bot`/`aim_engine`، قوالب البوتات، صفحة صانع البوتات `/builder`، تخزين `bots/aims` في الـ Durable Object، أوامر `bot_*`/`aim_*` في البروتوكول، ومن التطبيق: `BotEngine`، `AimEngine`، `BotOverlay` (الفقاعة)، أزرار الصوت، أزرار الإشعار ▶/■، Shizuku/`TouchProxyService`/AIDL. الإصدار Android **4.0.0** خفيف: اتصال + إمكانية الوصول + الأدوات فقط.
 - **تطوير اللعب المباشر** — قسم جديد في الـ bootstrap **7a. HOW TO PLAY LIVE, FAST**: الاختناق هو عدد الرحلات لا التفكير؛ لا `capture_screen` منفردة أبدًا (كل فعل عبر `act_and_see`/`observe` في رحلة واحدة)، تفويض ردود الفعل للهاتف (`auto_react` ~80ms، `game_loop`، `do_until`، `wait_pixel`/`watch_color`/`wait_for_text` بلا polling)، `combo` واحد لكل اشتباك (حركة+تصويب+ضرب بأصابع منفصلة)، توقّع الحركة بـ `track_object`، معايرة مرة واحدة وحفظ في `game_profile`، وللشوترز: `auto_react` على لون الشعيرة الحمراء داخل `@reticle` = ضرب لحظة تأكيد اللعبة للهدف بلا طلقات كاذبة.
-- 78 أداة. `phone.sh` بدون أوامر `bot`/`aim set`. الاختبارات: 12 suite (حُذفت suites البوتات v26–v33).
+- 81 أداة. `phone.sh` بدون أوامر `bot`/`aim set`. الاختبارات: 12 suite (حُذفت suites البوتات v26–v33).
 
 **طبقة الـ AI**
 - MCP Server + مواصفات أدوات بـ 4 صيغ + endpoints لكل أداة + لقطة PNG مع معلومات المقياس
@@ -436,6 +447,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-09 (v4.0 — back to AI-direct play: all bot/aim/Shizuku code removed; bootstrap 7a fast live-play loop; 78 tools; Android 4.0.0)
+- **Last Updated**: 2026-09-09 (v4.1 — AI-direct play upgrade: `play` (act+wait+see), `react_script` on-device reflex engine with tap_found/aim_found, `play_frame`; profile-aware defaults; 81 tools; Android 4.1.0; new Cloudflare account secrets applied)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
