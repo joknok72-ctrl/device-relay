@@ -81,7 +81,7 @@ export interface SeqPoint extends Point { delayMs?: number; durationMs?: number 
 export interface Region { x: number; y: number; w: number; h: number }
 export interface Note { text: string; ts: number; /** package name of the app open when the note was saved */ app?: string }
 /** v2.5 combo step (executed on the phone) */
-export interface ComboStep { op: 'down' | 'move' | 'up' | 'tap' | 'wait' | 'joystick' | 'aim' | 'fire' | 'tap_found' | 'aim_found'; finger?: number; x?: number; y?: number; dx?: number; dy?: number; angle?: number; distance?: number; duration?: number; delayMs?: number; count?: number; intervalMs?: number; holdMs?: number; release?: boolean }
+export interface ComboStep { op: 'down' | 'move' | 'up' | 'tap' | 'wait' | 'joystick' | 'aim' | 'fire' | 'tap_found' | 'aim_found'; finger?: number; x?: number; y?: number; dx?: number; dy?: number; angle?: number; distance?: number; duration?: number; delayMs?: number; count?: number; intervalMs?: number; holdMs?: number; release?: boolean; lookX?: number; lookY?: number; sensitivity?: number; maxStep?: number }
 /** One auto_react lane: colour trigger → tap or swipe. */
 /** v4.1 react_script */
 export interface ReactWhen { type: 'color_present' | 'color_absent' | 'pixel_is' | 'pixel_not' | 'text_present' | 'text_absent' | 'always'; color?: string; tolerance?: number; region?: Region; minCount?: number; x?: number; y?: number; text?: string; minSize?: number; maxSize?: number; forMs?: number }

@@ -110,6 +110,8 @@ data class ComboStep(
     val duration: Long? = null, val delayMs: Long? = null,
     val count: Int? = null, val intervalMs: Long? = null, val holdMs: Long? = null,
     val release: Boolean? = null,
+    // v4.1 aim_found
+    val lookX: Float? = null, val lookY: Float? = null, val sensitivity: Float? = null, val maxStep: Float? = null,
 )
 
 @Serializable

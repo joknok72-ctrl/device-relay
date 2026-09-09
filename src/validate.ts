@@ -238,10 +238,11 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
         const s = raw[i] as Record<string, unknown>
         if (!s || typeof s !== 'object' || typeof s.op !== 'string' || !ops.has(s.op)) return { error: `combo[${i}].op must be one of ${[...ops].join('|')}` }
         const st: ComboStep = { op: s.op as ComboStep['op'] }
-        for (const k of ['finger', 'x', 'y', 'dx', 'dy', 'angle', 'distance', 'duration', 'delayMs', 'count', 'intervalMs', 'holdMs'] as const) if (isNum(s[k])) (st as unknown as Record<string, unknown>)[k] = Math.round(s[k] as number)
+        for (const k of ['finger', 'x', 'y', 'dx', 'dy', 'angle', 'distance', 'duration', 'delayMs', 'count', 'intervalMs', 'holdMs', 'lookX', 'lookY', 'maxStep'] as const) if (isNum(s[k])) (st as unknown as Record<string, unknown>)[k] = Math.round(s[k] as number)
+        if (isNum(s.sensitivity)) st.sensitivity = Math.min(Math.max(s.sensitivity as number, 0.05), 5)
         if (typeof s.release === 'boolean') st.release = s.release
         if (st.op === 'joystick' && st.angle === undefined && typeof s.direction === 'string') { const m: Record<string, number> = { right: 0, 'down-right': 45, down: 90, 'down-left': 135, left: 180, 'up-left': 225, up: 270, 'up-right': 315 }; st.angle = m[s.direction.toLowerCase()] }
-        if (['down', 'tap', 'joystick', 'aim', 'fire'].includes(st.op) && (st.x === undefined || st.y === undefined)) return { error: `combo[${i}] (${st.op}) requires x, y` }
+        if (['down', 'tap', 'joystick', 'aim', 'fire', 'aim_found'].includes(st.op) && (st.x === undefined || st.y === undefined)) return { error: `combo[${i}] (${st.op}) requires x, y` }
         combo.push(st)
       }
       return { action: { type: 'combo', combo } }

@@ -792,8 +792,8 @@ class AutomationAccessibilityService : AccessibilityService() {
                     val steps = r.then.map { st ->
                         when (st.op) {
                             "tap_found" -> ComboStep(op = "tap", x = (fx ?: 0f) + (st.dx ?: 0f), y = (fy ?: 0f) + (st.dy ?: 0f), duration = st.duration)
-                            "aim_found" -> { val cx = st.x ?: (bmp.width / 2f); val cy = st.y ?: (bmp.height / 2f); val sens = st.distance ?: 1f; val ex = ((fx ?: cx) - cx) * sens; val ey = ((fy ?: cy) + (st.dy ?: 0f) - cy) * sens
-                                val ms = (st.count ?: 220).toFloat(); ComboStep(op = "aim", x = st.dx ?: (bmp.width * 0.66f), y = st.holdMs?.toFloat() ?: (bmp.height * 0.4f), dx = ex.coerceIn(-ms, ms), dy = ey.coerceIn(-ms, ms), finger = st.finger ?: 1, duration = st.duration ?: 60, release = st.release ?: true) }
+                            "aim_found" -> { val cx = st.x ?: (bmp.width / 2f); val cy = st.y ?: (bmp.height / 2f); val sens = st.sensitivity ?: 1f; val ex = ((fx ?: cx) + (st.dx ?: 0f) - cx) * sens; val ey = ((fy ?: cy) + (st.dy ?: 0f) - cy) * sens
+                                val ms = st.maxStep ?: 220f; ComboStep(op = "aim", x = st.lookX ?: (bmp.width * 0.66f), y = st.lookY ?: (bmp.height * 0.4f), dx = ex.coerceIn(-ms, ms), dy = ey.coerceIn(-ms, ms), finger = st.finger ?: 1, duration = st.duration ?: 60, release = st.release ?: true) }
                             else -> st
                         }
                     }
