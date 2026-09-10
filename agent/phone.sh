@@ -28,6 +28,7 @@
 #   ./phone.sh memory | memory wipe <package|all> | memory export   # v2.2 what the AI remembers, grouped per game (wipe needs admin token)
 #   ./phone.sh profile | profile set '<json {controls,colors,regions,settings}>' | profile unset '<json>' | profile delete | sessions [n]   # v2.3 @names
 #   ./phone.sh report "summary" [win|loss|progress|stuck] [score] ["next time advice"]   # v2.4 end-of-session handover (mandatory)
+#   ./phone.sh playbook [app] | playbook merge '<json {overview,strategy[],procedure[],tricks[],mistakes[],screens[],facts[],skill}>' [app] | playbook delete [app]   # v4.7.3 YOUR expertise file per game ('*' = all games) — read at the start of every chat, update every session
 #   ./phone.sh verify                                    # v2.4 check the profile against the live screen (stale @names)
 #   ./phone.sh stick <X Y|@stick> <up|down|left|right|up-left|...|angle> [ms] [dist] [hold]   # v2.5 joystick (hold = keep finger down)
 #   ./phone.sh aim <X Y|@look> DX DY [ms] | fire <X Y|@fire> [count] [ms] | fireh <X Y|@fire> HOLDMS | fingers up   # v2.5 shooter controls
@@ -281,6 +282,17 @@ if len(sys.argv)>2 and sys.argv[2]: a["outcome"]=sys.argv[2]
 if len(sys.argv)>3 and sys.argv[3]: a["score"]=float(sys.argv[3])
 if len(sys.argv)>4 and sys.argv[4]: a["nextTime"]=sys.argv[4]
 print(json.dumps(a))' "${1:?summary}" "${2:-}" "${3:-}" "${4:-}")" | pretty ;;
+  playbook) sub="${1:-get}"; case "$sub" in
+             merge)  call playbook "$(python3 -c 'import json,sys; a={"merge":json.loads(sys.argv[1])}
+if len(sys.argv)>2 and sys.argv[2]: a["app"]=sys.argv[2]
+print(json.dumps(a))' "$2" "${3:-}")" | pretty ;;
+             delete) call playbook "$(python3 -c 'import json,sys; a={"delete":True}
+if len(sys.argv)>1 and sys.argv[1]: a["app"]=sys.argv[1]
+print(json.dumps(a))' "${2:-}")" | pretty ;;
+             *)      call playbook "$(python3 -c 'import json,sys; a={}
+if len(sys.argv)>1 and sys.argv[1] and sys.argv[1]!="get": a["app"]=sys.argv[1]
+print(json.dumps(a))' "$sub")" | pretty ;;
+           esac ;;
   verify)  call game_profile '{"verify":true}' | python3 -c '
 import json,sys; r=json.load(sys.stdin)
 if not r.get("ok"): print(r); sys.exit(1)
@@ -349,5 +361,5 @@ for a in d.get("actions",[]):
 import json,sys
 for a in json.load(sys.stdin).get("data",[]): print("  %-30s %s" % (a["label"], a["package"]))' ;;
   call)    call "$1" "${2:-{\}}" | pretty ;;
-  *) sed -n '2,56p' "$0" ;;
+  *) sed -n '2,57p' "$0" ;;
 esac

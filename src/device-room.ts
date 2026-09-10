@@ -470,7 +470,7 @@ export class DeviceRoom extends DurableObject<Bindings> {
       })
     }
     if (url.pathname.endsWith('/memory/full') && request.method === 'POST') {
-      const b = (await request.json()) as Partial<{ label: string; notes: Note[]; macros: Macro[]; screens: ScreenLabel[]; apps: typeof this.apps; profiles: typeof this.profiles; sessions: PlaySession[]; playbooks: typeof this.playbooks; mode: 'merge' | 'replace' }>
+      const b = (await request.json()) as Partial<{ label: string; notes: Note[]; macros: Macro[]; screens: ScreenLabel[]; apps: Record<string, { label?: string; first: number; last: number; n: number }>; profiles: Record<string, GameProfile>; sessions: PlaySession[]; playbooks: Record<string, Playbook>; mode: 'merge' | 'replace' }>
       const replace = b.mode === 'replace'
       const dedupe = <T>(arr: T[], key: (x: T) => string) => { const seen = new Set<string>(); return arr.filter((x) => { const k = key(x); if (seen.has(k)) return false; seen.add(k); return true }) }
       if (Array.isArray(b.notes)) this.notes = replace ? b.notes : dedupe([...this.notes, ...b.notes], (n) => `${n.app ?? ''}|${n.text}`).slice(0, 500)

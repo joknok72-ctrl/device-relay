@@ -17,7 +17,7 @@ call '{"name":"get_current_app"}' >/dev/null   # registers current app + opens a
 
 echo "== version"
 check version '"version":"4.7.3"' "$(curl -s $U/api/health)"
-check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check tap-at-param '"at":{"type":"string"' "$(curl -s "$U/api/tools/schema?format=raw" | j 'json.dumps([t for t in d if t["name"]=="tap"][0]["parameters"]["properties"]).replace(" ","")')"
 
 echo "== no profile yet"
@@ -94,7 +94,7 @@ check bs-known 'You already know this game' "$B"
 check bs-controls '@jump=(950,2100)' "$B"
 check bs-colors '@enemy=#ff0000' "$B"
 check bs-5f '## 5f. GAME PROFILES' "$B"
-check bs-5g '## 5g. Play history' "$B"
+check bs-5g '## 5i. Play history' "$B"
 check bs-rule0 'use its @names immediately' "$B"
 check bs-suggest 'Suggested first call:  ./phone.sh look' "$B"
 memdel 'kind=profiles' >/dev/null

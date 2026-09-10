@@ -15,7 +15,7 @@ call '{"name":"open_recents"}' >/dev/null
 
 echo "== version"
 check version '"version":"4.7.3"' "$(curl -s $U/api/health)"
-check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check bootstrap-5e '## 5e. Memory hygiene' "$(curl -s $U/agent/$T)"
 check bootstrap-forget-app 'recall forget="app"' "$(curl -s $U/agent/$T)"
 
@@ -69,7 +69,7 @@ check export-header 'attachment; filename="device-relay-memory-test-phone-' "$(c
 check export-body '"exportedAt"' "$EXP"
 check export-version '"version": "4.7.3"' "$EXP"
 memdel 'kind=all' >/dev/null
-check import '"imported":{"notes":1,"macros":2,"screens":1,"profiles":0}' "$(curl -s "${A[@]}" -d "$EXP" $U/api/admin/devices/$D/memory/import)"
+check import '"imported":{"notes":1,"macros":2,"screens":1,"profiles":0,"playbooks":0}' "$(curl -s "${A[@]}" -d "$EXP" $U/api/admin/devices/$D/memory/import)"
 check import-restored '"notes": 1, "macros": 2, "screens": 1' "$(mem '' | j 'json.dumps(d["totals"])')"
 check import-badjson 'invalid JSON' "$(curl -s "${A[@]}" -d 'nope' $U/api/admin/devices/$D/memory/import)"
 

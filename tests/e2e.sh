@@ -92,7 +92,7 @@ echo "== macro continueOnError"
 check macro-cont '"action":"home","id":"' "$(curl -s "${A[@]}" -d '{"continueOnError":true,"steps":[{"type":"tap_element","text":"NOPE"},{"type":"home"}]}' $U/api/devices/$D/macro)"
 
 echo "== schema"
-check schema-count '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check schema-count '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check openapi-logs 'yes' "$(curl -s "$U/api/tools/schema?format=openapi" | j '"yes" if "/api/devices/{deviceId}/logs" in d["paths"] else "no"')"
 
 echo "== rate limit (130 fast requests on the read-only token)"

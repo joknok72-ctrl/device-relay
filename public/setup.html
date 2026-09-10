@@ -216,14 +216,17 @@
     const el = $('#mem-groups'); el.innerHTML = ''
     const t = m.totals || {}
     $('#mem-totals').innerHTML = `📝 ${t.notes || 0} ملاحظة · ⏯️ ${t.macros || 0} ماكرو · 🖼️ ${t.screens || 0} شاشة مسمّاة · 🎯 ${t.profiles || 0} بروفايل لعبة · 🕒 ${t.sessions || 0} جلسة لعب · 🎮 ${t.apps || 0} تطبيق شوهد${t.recording ? ' · <span class="text-rose-300">⏺ تسجيل ماكرو جارٍ</span> <button class="btn btn-s !py-0 !px-2" data-mem="recording">إلغاء التسجيل</button>' : ''}`
-    const groups = (m.groups || []).filter(g => g.notes.length || g.macros.length || g.screens.length || g.profile || g.app)
+    const groups = (m.groups || []).filter(g => g.notes.length || g.macros.length || g.screens.length || g.profile || g.playbook || g.app)
+    if (m.generalPlaybook) groups.unshift({ app: '*', label: 'مهارات عامة (كل الألعاب)', notes: [], macros: [], screens: [], playbook: m.generalPlaybook, sessions: 0 })
     const sessionsByApp = {}; for (const s of (m.sessions || [])) (sessionsByApp[s.app] ??= []).push(s)
     $('#mem-empty').classList.toggle('hidden', groups.length > 0)
     for (const g of groups) {
       const isGeneral = !g.app
-      const title = isGeneral ? 'عام (بدون تطبيق محدد)' : `${esc(g.label || g.app.split('.').pop())} <span class="text-slate-500 font-normal mono text-xs ltr">${esc(g.app)}</span>`
+      const title = isGeneral ? 'عام (بدون تطبيق محدد)' : g.app === '*' ? esc(g.label) : `${esc(g.label || g.app.split('.').pop())} <span class="text-slate-500 font-normal mono text-xs ltr">${esc(g.app)}</span>`
       const p = g.profile; const pn = p ? Object.keys(p.controls || {}).length + Object.keys(p.colors || {}).length + Object.keys(p.regions || {}).length + Object.keys(p.settings || {}).length : 0
-      const n = g.notes.length + g.macros.length + g.screens.length + pn
+      const pb = g.playbook; const pbn = pb ? ['strategy', 'procedure', 'tricks', 'mistakes', 'screens', 'facts'].reduce((a, k) => a + (pb[k] || []).length, 0) : 0
+      const pbSec = (t, arr, num) => arr && arr.length ? `<div class="mt-1"><div class="text-slate-400">${t}</div><ol class="${num ? 'list-decimal' : 'list-disc'} pr-5 space-y-0.5">${arr.map(x => `<li class="break-words">${esc(x)}</li>`).join('')}</ol></div>` : ''
+      const n = g.notes.length + g.macros.length + g.screens.length + pn + pbn
       const sess = sessionsByApp[g.app] || []
       const card = document.createElement('details')
       card.className = 'bg-slate-800/60 rounded-xl border border-slate-700/60'
@@ -238,6 +241,7 @@
         </summary>
         <div class="px-3 pb-3 space-y-2 text-sm">
           ${p && (p.bestScore !== undefined || p.reports) ? `<div class="text-xs text-emerald-300">🏆 ${p.bestScore !== undefined ? 'أفضل نتيجة: ' + p.bestScore : ''}${p.reports ? ' · ' + p.reports + ' تقرير جلسة' : ''}</div>` : ''}
+          ${pb ? `<div class="bg-fuchsia-950/30 border border-fuchsia-800/40 rounded-lg p-2 text-xs"><div class="flex items-center justify-between mb-1"><span class="text-fuchsia-300 font-semibold">🧠 كتاب الخبرة (Playbook) — اللي الـ AI اتعلمه وبيقرأه كل محادثة جديدة${pb.skill ? ` · مستوى ${pb.skill}/5` : ''} · ${pb.updates} تحديث</span><button class="btn btn-d !py-0 !px-2" data-mem="playbook" data-app="${esc(g.app)}" title="حذف كتاب الخبرة"><i class="fas fa-xmark"></i></button></div>${pb.overview ? `<div class="text-slate-200 mb-1">${esc(pb.overview)}</div>` : ''}${pbSec('الاستراتيجية', pb.strategy, true)}${pbSec('الإجراء (حركة واحدة)', pb.procedure, true)}${pbSec('حيل نجحت', pb.tricks)}${pbSec('أخطاء ممنوع تكرارها', pb.mistakes)}${pbSec('الشاشات', pb.screens)}${pbSec('حقائق', pb.facts)}</div>` : ''}
           ${pn ? `<div><div class="text-xs text-slate-400 mb-1 flex items-center justify-between"><span>🎯 بروفايل اللعبة — أسماء يستخدمها الـ AI مباشرة (@name)</span><button class="btn btn-d !py-0 !px-2" data-mem="profile" data-app="${esc(g.app)}" title="حذف البروفايل فقط"><i class="fas fa-xmark"></i></button></div><div class="grid sm:grid-cols-2 gap-1 text-xs">${Object.entries(p.controls || {}).map(([k, v]) => `<div class="bg-slate-900/60 rounded px-2 py-1 ltr"><span class="text-amber-300 mono">@${esc(k)}</span> <span class="text-slate-500">control</span> (${v.x},${v.y})${v.reactMs ? ` ~${v.reactMs}ms` : ''}${v.note ? ` <span class="text-slate-400">${esc(v.note)}</span>` : ''}</div>`).join('')}${Object.entries(p.colors || {}).map(([k, v]) => `<div class="bg-slate-900/60 rounded px-2 py-1 ltr"><span class="text-amber-300 mono">@${esc(k)}</span> <span class="text-slate-500">color</span> <span class="inline-block w-3 h-3 rounded align-middle" style="background:${esc(v.hex)}"></span> ${esc(v.hex)}${v.tolerance ? ` ±${v.tolerance}` : ''}</div>`).join('')}${Object.entries(p.regions || {}).map(([k, v]) => `<div class="bg-slate-900/60 rounded px-2 py-1 ltr"><span class="text-amber-300 mono">@${esc(k)}</span> <span class="text-slate-500">region</span> {${v.x},${v.y} ${v.w}×${v.h}}</div>`).join('')}${Object.entries(p.settings || {}).map(([k, v]) => `<div class="bg-slate-900/60 rounded px-2 py-1 ltr"><span class="text-amber-300 mono">@${esc(k)}</span> <span class="text-slate-500">setting</span> ${esc(JSON.stringify(v))}</div>`).join('')}</div></div>` : ''}
           ${g.notes.length ? `<div><div class="text-xs text-slate-400 mb-1">📝 ملاحظات (إحداثيات، ألوان، حيل)</div><ul class="space-y-1">${g.notes.map(x => `<li class="flex items-start gap-2 bg-slate-900/60 rounded p-2"><span class="flex-1 whitespace-pre-wrap break-words">${esc(x.text)}</span><span class="text-xs text-slate-500 whitespace-nowrap">${fmtDate(x.ts)}</span><button class="btn btn-d !py-0 !px-2" data-mem="note" data-index="${x.index}" title="حذف هذه الملاحظة"><i class="fas fa-xmark"></i></button></li>`).join('')}</ul></div>` : ''}
           ${g.macros.length ? `<div><div class="text-xs text-slate-400 mb-1">⏯️ ماكروهات (سلاسل محفوظة)</div><ul class="space-y-1">${g.macros.map(x => `<li class="flex items-center gap-2 bg-slate-900/60 rounded p-2"><span class="mono ltr">${esc(x.name)}</span><span class="flex-1 text-slate-400 text-xs">${esc(x.description || '')} · ${x.steps.length} خطوة · شُغّل ${x.runs || 0}×</span><button class="btn btn-d !py-0 !px-2" data-mem="macro" data-name="${esc(x.name)}"><i class="fas fa-xmark"></i></button></li>`).join('')}</ul></div>` : ''}
@@ -269,6 +273,7 @@
     if (k === 'recording') return memDelete('kind=recording', 'تم إلغاء التسجيل')
     if (k === 'profile') return confirm('حذف بروفايل اللعبة (الأزرار/الألوان/المناطق)؟ الـ AI سيعيد اكتشافها.') && memDelete(`kind=profiles&app=${encodeURIComponent(b.dataset.app)}`, 'تم حذف البروفايل')
     if (k === 'sessions') return memDelete(`kind=sessions&app=${encodeURIComponent(b.dataset.app)}`, 'تم مسح سجل اللعب')
+    if (k === 'playbook') return confirm('حذف كتاب الخبرة لهذه اللعبة؟ الـ AI سيبدأ يتعلّمها من الصفر في المحادثة القادمة.') && memDelete(`kind=playbooks&app=${encodeURIComponent(b.dataset.app)}`, 'تم حذف كتاب الخبرة')
     if (k === 'app') return confirm(`مسح كل ما تعلّمه الـ AI عن هذه اللعبة؟\n(ملاحظات + ماكروهات + شاشات) — سيبدأ من الصفر في المحادثة القادمة.`) && memDelete(`kind=all&app=${encodeURIComponent(b.dataset.app)}`, 'تم مسح ذاكرة اللعبة')
     if (k === 'forget-app') return memDelete(`kind=apps&app=${encodeURIComponent(b.dataset.app)}`, 'تمت الإزالة')
   })

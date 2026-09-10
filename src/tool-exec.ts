@@ -59,7 +59,7 @@ function room(env: Bindings, deviceId: string) {
   return env.DEVICE_ROOM.get(env.DEVICE_ROOM.idFromName(deviceId))
 }
 /** Input tools that must not be captured by record_macro (meta / non-replayable). */
-const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report'])
+const NO_RECORD: ReadonlySet<string> = new Set(['record_macro', 'save_macro', 'run_macro', 'remember', 'label_screen', 'game_loop', 'do_until', 'auto_react', 'act_and_see', 'batch', 'dismiss_popups', 'game_profile', 'calibrate', 'session_report', 'playbook'])
 
 /** Push a visual event to /monitor viewers (fire-and-forget). */
 function overlay(env: Bindings, deviceId: string, o: Record<string, unknown>) {
@@ -203,6 +203,10 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'dismiss_popups') return dismissPopups(env, deviceId, args, opts)
   if (mapped.special === 'recent_actions') return recentActions(env, deviceId, args)
   if (mapped.special === 'session_report') return sessionReport(env, deviceId, args)
+  if (mapped.special === 'playbook') {
+    if (opts.readOnly && (args.merge || args.delete || args.remove || args.replace)) return { ok: false, error: 'token is read-only: playbook can only be read' }
+    return playbook(env, deviceId, args)
+  }
   if (mapped.special === 'game_profile') {
     if (opts.readOnly && (args.set || args.unset || args.delete || args.label || args.genre)) return { ok: false, error: 'token is read-only: game_profile can only be read' }
     return gameProfile(env, deviceId, args)
@@ -848,6 +852,11 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
   if (appPkg && args.report !== false && log.length >= 3) {
     const summary = `autopilot ${strategyName ?? 'policy'}: ${log.length} ticks, gained ${gained}, ${died ? 'died' : 'survived'}, stopped by ${stoppedBy}; fires ${JSON.stringify(fires)}`
     room(env, deviceId).fetch(`https://do/session-report?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: appPkg, summary, outcome: died ? 'loss' : gained > 0 ? 'progress' : 'other', learned: advice.slice(0, 4), nextTime: advice[0] }) }).catch(() => {})
+    // v4.7.3 auto-playbook: the self-critique becomes durable expertise (tricks = rules that worked, mistakes = rules that hurt)
+    const tricks: string[] = [], mistakes: string[] = []
+    for (const [k, s] of Object.entries(rules)) { if (s.fires >= 3 && s.good >= 2 && s.bad === 0) tricks.push(`autopilot rule '${k}' works (${s.good} good / 0 bad) — keep it high in the policy`); else if (s.fires >= 2 && s.bad > s.good) mistakes.push(`autopilot rule '${k}' hurt (${s.bad} bad / ${s.good} good) — do not reuse its action as-is`) }
+    if (learned && (learned.rank as number) === 1 && gained > 0) tricks.push(`best learned strategy so far: '${strategyName ?? 'policy'}' (fitness ${learned.fitness}) — play_loop {strategy:"best"} replays it`)
+    if (tricks.length || mistakes.length) room(env, deviceId).fetch(`https://do/playbook?deviceId=${deviceId}&app=${encodeURIComponent(appPkg)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: appPkg, merge: { tricks: tricks.slice(0, 3), mistakes: mistakes.slice(0, 3) } }) }).catch(() => {})
   }
   return {
     ok: true, ticks: log.length, stoppedBy, fires, rules, log: log.slice(-20),
@@ -1213,6 +1222,26 @@ async function sessionReport(env: Bindings, deviceId: string, args: Record<strin
   const out = (await res.json()) as ToolResult
   if (out.ok) out.hint = out.newBest ? 'NEW BEST SCORE saved to the profile' : 'saved; the next session will see this in QUICK START'
   return out
+}
+
+/** v4.7.3 playbook: read / merge / remove / delete the AI's per-game expertise file (see Playbook in types.ts). */
+async function playbook(env: Bindings, deviceId: string, args: Record<string, unknown>): Promise<ToolResult> {
+  let app = typeof args.app === 'string' && args.app.trim() ? args.app.trim() : ''
+  if (!app) {
+    const r = await executeTool(env, deviceId, 'get_current_app', {}, { internal: true })
+    app = (r.data as { package?: string } | undefined)?.package ?? ''
+    if (!app) return { ok: false, error: 'could not determine the current app; pass app=<package> (or "*" for the general playbook)' }
+  }
+  const r = room(env, deviceId)
+  const q = `https://do/playbook?deviceId=${deviceId}&app=${encodeURIComponent(app)}`
+  if (args.delete === true) return { ...((await (await r.fetch(q, { method: 'DELETE' })).json()) as ToolResult), app }
+  if ((args.merge && typeof args.merge === 'object') || (args.remove && typeof args.remove === 'object') || args.replace === true) {
+    const res = (await (await r.fetch(q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app, merge: args.merge ?? {}, remove: args.remove, replace: args.replace === true }) })).json()) as ToolResult
+    if (res.ok) res.hint = 'saved — every new chat will read this playbook in its bootstrap before the first move'
+    return { ...res, app }
+  }
+  const got = (await (await r.fetch(q)).json()) as { playbook: unknown; general: unknown }
+  return { ok: true, app, playbook: got.playbook, general: got.general, ...(got.playbook ? {} : { hint: 'no playbook for this game yet — after your first successful moves call playbook {merge:{overview, strategy:[...], procedure:[...], facts:[...]}}' }) }
 }
 
 // ---------------------------------------------------------------- v2.1 numbers + calibration

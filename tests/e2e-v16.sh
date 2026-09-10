@@ -10,7 +10,7 @@ j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/nul
 
 echo "== version / catalogue"
 check version '"version":"4.7.3"' "$(curl -s $U/api/health)"
-check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== reflexes"
 check watch-appear '"matched":true' "$(call '{"name":"watch_color","arguments":{"color":"#ff0000","timeoutMs":1000}}')"

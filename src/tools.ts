@@ -745,6 +745,25 @@ export const TOOLS: ToolDef[] = [
       required: ['summary'],
     },
   },
+  {
+    name: 'playbook',
+    description:
+      'YOUR EXPERTISE FILE for a game (v4.7.3) — the how-to that makes a brand-new chat play at your current level from turn one. session_report says what happened once; playbook says HOW TO PLAY WELL. It is injected verbatim into the bootstrap of every future chat (per game + a general "*" one). ' +
+      'Read: playbook {} (current app) / {app}. Update: playbook {merge:{overview, strategy:[ordered rules of thumb], procedure:[exact tool steps for one move/turn], tricks:[what worked incl. exact coords/timings], mistakes:[never again], screens:[how to recognise menu/game-over/reward + what to press], facts:[geometry, scoring, piece sizes], skill:1-5}}. ' +
+      'Lists accumulate and dedupe; procedure is ordered so a new list replaces it. remove:{tricks:["substring"]} deletes stale lines. app:"*" = cross-game skills (works for ANY genre). ' +
+      'UPDATE IT EVERY SESSION: after ~10 successful moves (what works), when something fails (mistakes), and before session_report (final state) — a new chat is only as smart as this file.',
+    parameters: {
+      type: 'object',
+      properties: {
+        app: { type: 'string', description: 'Package (default current app). "*" = general cross-game playbook' },
+        merge: { type: 'object', description: '{overview?, strategy?[], procedure?[], tricks?[], mistakes?[], screens?[], facts?[], skill?}' },
+        remove: { type: 'object', description: '{field:[substrings to delete]} e.g. {tricks:["old coordinate"]}' },
+        replace: { type: 'boolean', description: 'true = start from an empty playbook before merging' },
+        delete: { type: 'boolean', description: 'true = delete the playbook of this app' },
+      },
+      required: [],
+    },
+  },
   // ---------------------------------------------------------------- v2.3 game profile (@names) + play history
   {
     name: 'game_profile',
@@ -1066,9 +1085,10 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /** Map AI tool name + args -> relay Action (or special) */
-export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'play' | 'play_frame' | 'game_setup' | 'play_loop'; error?: string } {
+export function toolToAction(name: string, args: Record<string, unknown>): { action?: Record<string, unknown>; special?: 'wait' | 'status' | 'scroll' | 'wait_for' | 'find_tap' | 'batch' | 'act_and_see' | 'wait_for_screen' | 'remember' | 'recall' | 'tap_color' | 'game_loop' | 'save_macro' | 'run_macro' | 'list_macros' | 'tap_text' | 'wait_for_text' | 'session_stats' | 'observe' | 'smart_tap' | 'do_until' | 'dismiss_popups' | 'recent_actions' | 'label_screen' | 'identify_screen' | 'record_macro' | 'read_number' | 'watch_value' | 'calibrate' | 'game_profile' | 'session_report' | 'playbook' | 'play' | 'play_frame' | 'game_setup' | 'play_loop'; error?: string } {
   switch (name) {
     case 'session_report': return { special: 'session_report' }
+    case 'playbook': return { special: 'playbook' }
     case 'joystick': return { action: { type: 'joystick', x: args.x, y: args.y, angle: args.angle, direction: args.direction, distance: args.distance, duration: args.duration, finger: args.finger, release: args.release } }
     case 'aim': return { action: { type: 'aim', x: args.x, y: args.y, dx: args.dx, dy: args.dy, duration: args.duration, steps: args.steps, finger: args.finger, release: args.release } }
     case 'fire_burst': return { action: { type: 'fire_burst', x: args.x, y: args.y, count: args.count, intervalMs: args.intervalMs, holdMs: args.holdMs } }
@@ -1273,7 +1293,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'capture_screen', 'get_ui_elements', 'get_current_app', 'list_apps', 'get_device_status', 'get_notifications', 'get_device_info', 'wait', 'wait_for_element',
   'get_pixels', 'find_color', 'wait_for_screen', 'recall', 'screen_diff', 'watch_color', 'wait_pixel', 'find_image', 'list_macros',
   'read_text', 'wait_for_text', 'find_colors', 'session_stats', 'live_preview',
-  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile', 'play_frame', '_play_frame', 'screen_hash',
+  'observe', 'recent_actions', 'find_objects', 'identify_screen', 'sample_colors', 'track_object', 'read_number', 'watch_value', 'game_profile', 'playbook', 'play_frame', '_play_frame', 'screen_hash',
 ])
 
 /** Observation tools usable as `when`/`stopWhen` in game_loop. */

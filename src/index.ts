@@ -89,10 +89,12 @@ app.get('/agent/:token', async (c) => {
         r.fetch(`https://do/notes?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ notes: import('./types').Note[] }>),
         r.fetch(`https://do/macros?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ macros: import('./types').Macro[] }>),
         r.fetch(`https://do/screens?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ screens: import('./types').ScreenLabel[] }>),
-        r.fetch(`https://do/memory?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ groups: { app: string; label?: string; profile?: import('./types').GameProfile }[]; sessions: import('./types').PlaySession[]; currentApp: string }>),
+        r.fetch(`https://do/memory?deviceId=${target.deviceId}`).then((x) => x.json() as Promise<{ groups: { app: string; label?: string; profile?: import('./types').GameProfile; playbook?: import('./types').Playbook }[]; sessions: import('./types').PlaySession[]; currentApp: string; generalPlaybook?: import('./types').Playbook | null }>),
       ])
       notes = n.notes; macros = m.macros; screens = s.screens
       extras.profiles = mem.groups.map((g) => g.profile).filter((p): p is import('./types').GameProfile => !!p)
+      extras.playbooks = Object.fromEntries(mem.groups.filter((g) => g.playbook).map((g) => [g.app, g.playbook as import('./types').Playbook]))
+      if (mem.generalPlaybook) extras.playbooks['*'] = mem.generalPlaybook
       extras.sessions = mem.sessions; extras.currentApp = mem.currentApp
       extras.appLabels = Object.fromEntries(mem.groups.filter((g) => g.label).map((g) => [g.app, g.label as string]))
     } catch { /* ignore */ }
@@ -279,18 +281,20 @@ admin.delete('/devices/:deviceId/memory', async (c) => {
 admin.post('/devices/:deviceId/memory/import', async (c) => {
   const deviceId = c.req.param('deviceId')
   if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
-  let body: { groups?: { app?: string; notes?: { text: string; app?: string }[]; macros?: Record<string, unknown>[]; screens?: Record<string, unknown>[]; profile?: Record<string, unknown>}[] }
+  let body: { groups?: { app?: string; notes?: { text: string; app?: string }[]; macros?: Record<string, unknown>[]; screens?: Record<string, unknown>[]; profile?: Record<string, unknown>; playbook?: Record<string, unknown> }[]; generalPlaybook?: Record<string, unknown> | null }
   try { body = await c.req.json() } catch { return c.json({ error: 'invalid JSON' }, 400) }
   const r = room(c, deviceId)
   const hdr = { 'Content-Type': 'application/json' }
-  let notes = 0, macros = 0, screens = 0, profiles = 0
+  let notes = 0, macros = 0, screens = 0, profiles = 0, playbooks = 0
+  if (body.generalPlaybook) { const res = await r.fetch(`https://do/playbook?deviceId=${deviceId}&app=*`, { method: 'POST', headers: hdr, body: JSON.stringify({ app: '*', merge: body.generalPlaybook }) }); if (res.ok) playbooks++ }
   for (const g of body.groups ?? []) {
+    if (g.playbook && g.app) { const res = await r.fetch(`https://do/playbook?deviceId=${deviceId}&app=${encodeURIComponent(g.app)}`, { method: 'POST', headers: hdr, body: JSON.stringify({ app: g.app, merge: g.playbook }) }); if (res.ok) playbooks++ }
     if (g.profile && g.app) { const res = await r.fetch(`https://do/profile?deviceId=${deviceId}&app=${encodeURIComponent(g.app)}`, { method: 'POST', headers: hdr, body: JSON.stringify({ replace: g.profile }) }); if (res.ok) profiles++ }
     for (const n of g.notes ?? []) { if (typeof n.text === 'string') { await r.fetch(`https://do/notes?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify({ text: n.text, app: n.app }) }); notes++ } }
     for (const m of g.macros ?? []) { const res = await r.fetch(`https://do/macros?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(m) }); if (res.ok) macros++ }
     for (const s of g.screens ?? []) { const res = await r.fetch(`https://do/screens?deviceId=${deviceId}`, { method: 'POST', headers: hdr, body: JSON.stringify(s) }); if (res.ok) screens++ }
   }
-  return c.json({ ok: true, imported: { notes, macros, screens, profiles } })
+  return c.json({ ok: true, imported: { notes, macros, screens, profiles, playbooks } })
 })
 /** Everything the setup page needs in one call */
 admin.get('/overview', async (c) => {

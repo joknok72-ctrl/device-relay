@@ -10,7 +10,7 @@ j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/nul
 
 echo "== version / catalogue"
 check version '"version":"4.7.3"' "$(curl -s $U/api/health)"
-check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 call '{"name":"open_recents"}' >/dev/null  # fake phone: back to menu screen
 echo "== OCR"

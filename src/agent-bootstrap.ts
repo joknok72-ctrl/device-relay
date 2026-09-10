@@ -1,4 +1,4 @@
-import type { AuthContext, DeviceInfo, GameProfile, Macro, Note, PlaySession, ScreenLabel } from './types'
+import type { AuthContext, DeviceInfo, GameProfile, Macro, Note, Playbook, PlaySession, ScreenLabel } from './types'
 import { TOOLS } from './tools'
 
 /**
@@ -6,7 +6,21 @@ import { TOOLS } from './tools'
  * A human only has to paste ONE url into a new chat:  <origin>/agent/<token>
  * The agent fetches it and gets everything: credentials, commands, tools, rules, live device status.
  */
-export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; }
+export interface BootstrapExtras { profiles?: GameProfile[]; sessions?: PlaySession[]; currentApp?: string; appLabels?: Record<string, string>; playbooks?: Record<string, Playbook>; }
+
+/** v4.7.3 render one playbook (the AI's own expertise file) verbatim so the new chat inherits skill, not just facts. */
+function fmtPlaybook(pb: Playbook, title: string): string {
+  const L: string[] = [`  █ ${title}${pb.skill ? `  — self-rated skill ${pb.skill}/5` : ''}  (${pb.updates} updates, last ${new Date(pb.ts).toISOString().slice(0, 10)})`]
+  if (pb.overview) L.push(`    OVERVIEW: ${pb.overview}`)
+  const sec = (name: string, arr: string[], numbered = false) => { if (arr.length) { L.push(`    ${name}:`); arr.forEach((x, i) => L.push(`      ${numbered ? `${i + 1}.` : '•'} ${x}`)) } }
+  sec('STRATEGY (rules of thumb, in priority order)', pb.strategy, true)
+  sec('PROCEDURE (one move / turn — follow exactly)', pb.procedure, true)
+  sec('TRICKS that worked', pb.tricks)
+  sec('MISTAKES — never repeat', pb.mistakes)
+  sec('SCREENS (recognise + what to press)', pb.screens)
+  sec('FACTS', pb.facts)
+  return L.join('\n')
+}
 
 export function agentBootstrap(origin: string, token: string, devices: DeviceInfo[], auth?: AuthContext & { readOnly?: boolean }, notes: Note[] = [], macros: Macro[] = [], screens: ScreenLabel[] = [], extras: BootstrapExtras = {}): string {
   const profiles = extras.profiles ?? []
@@ -33,18 +47,33 @@ export function agentBootstrap(origin: string, token: string, devices: DeviceInf
     ? '  (no play history yet)'
     : sessions.slice(0, 8).map((s) => `  ${new Date(s.start).toISOString().slice(0, 16).replace('T', ' ')}  ${Math.max(1, Math.round((s.end - s.start) / 60000))}min  ${s.label ?? s.app}  ${s.commands} cmds${s.failed ? ` (${s.failed} failed)` : ''}${s.report ? `  → ${s.report.outcome ?? 'report'}${s.report.score !== undefined ? ` ${s.report.score}` : ''}: ${s.report.summary.slice(0, 80)}` : '  (no report)'}`).join('\n')
   const cur = profiles.find((p) => p.app === currentApp)
+  const playbooks = extras.playbooks ?? {}
+  const curPb = currentApp ? playbooks[currentApp] : undefined
+  const genPb = playbooks['*']
   const curNotes = notes.filter((n) => n.app === currentApp)
   const curMacros = macros.filter((m) => m.app === currentApp)
   const quickStart = currentApp
     ? `## 0. QUICK START — the phone is currently in: ${cur?.label ?? extras.appLabels?.[currentApp] ?? currentApp}  (${currentApp})
 ${cur ? `You already know this game${cur.genre ? ` (genre: ${cur.genre} → follow playbook 7.${cur.genre})` : ' (genre unknown — set it: game_profile genre=...)'}. Use the @names below directly (tap at:"@jump", joystick at:"@stick", aim at:"@look", fire_burst at:"@fire", read_number region:"@score") — do NOT rediscover.
 ${fmtProfile(cur)}` : 'No profile for this app yet → first turn: observe + sample_colors, calibrate each control, then game_profile set:{...}.'}
+${curPb ? `
+### YOUR PLAYBOOK FOR THIS GAME — written by you in earlier chats. This IS your experience: apply it from the very first move, do not re-learn, do not experiment with things listed under MISTAKES.
+${fmtPlaybook(curPb, cur?.label ?? extras.appLabels?.[currentApp] ?? currentApp)}
+→ Keep it current: playbook {merge:{tricks:[...], mistakes:[...], strategy:[...]}} whenever you learn something; raise skill when you clearly play better.` : `
+No playbook for this game yet. After your first ~10 successful moves call playbook {merge:{overview:"...", strategy:[...], procedure:[...], facts:[...], skill:1}} — that file is what makes the NEXT chat as good as you are now.`}
+${genPb ? `
+### GENERAL PLAYBOOK (all games) — your cross-game skills
+${fmtPlaybook(genPb, 'ANY GAME')}` : ''}
 ${curNotes.length ? `Notes for this game: ${curNotes.map((n) => n.text).join(' | ')}` : ''}
 ${curMacros.length ? `Macros for this game: ${curMacros.map((m) => `run_macro "${m.name}"`).join(', ')}` : ''}
 Suggested first call:  ${cur ? './phone.sh look' : './phone.sh look 100 && ./phone.sh palette'}
-When you finish (or get stuck):  session_report summary="..." outcome=win|loss|progress|stuck score=N nextTime="..."  — mandatory, it is how the next chat gets smarter.
+When you finish (or get stuck):  1) playbook {merge:{...}} with everything you learned this session, then 2) session_report summary="..." outcome=win|loss|progress|stuck score=N nextTime="..."  — both mandatory, they are how the next chat plays at your level.
 `
     : ''
+  // playbooks of games that are NOT open right now (so the agent knows what it already masters)
+  const otherPbs = Object.entries(playbooks).filter(([app]) => app !== '*' && app !== currentApp)
+  const otherPbBlock = otherPbs.length ? `\n## 5g. Playbooks for other games you already know (open one with open_app and its playbook applies)\n${otherPbs.map(([app, pb]) => fmtPlaybook(pb, extras.appLabels?.[app] ?? profiles.find((p) => p.app === app)?.label ?? app)).join('\n')}\n` : ''
+  const genPbOnly = !currentApp && genPb ? `\n## 5h. GENERAL PLAYBOOK (all games)\n${fmtPlaybook(genPb, 'ANY GAME')}\n` : ''
   const screensBlock = screens.length === 0
     ? '  (none yet — label_screen "main-menu" etc. once per distinct screen; then observe/identify_screen tell you where you are)'
     : screens.map((s) => `  ${s.name}${s.app ? `  (${s.app})` : ''}${s.words.length ? `  words: ${s.words.slice(0, 5).join(' ')}` : ''}`).join('\n')
@@ -151,9 +180,9 @@ ${profilesBlock}
   observe is PROFILE-AWARE (v2.4): when a profile exists it also returns game.objects (each @color → count + biggest blobs) and game.values (numeric @regions like @score → number). One look = full game state.
   session_report at the end of EVERY session (summary, outcome, score, learned[], nextTime). bestScore is tracked; the next chat sees the last report in QUICK START and 5f.
 
-## 5g. Play history on this device (most recent first)
+## 5i. Play history on this device (most recent first)
 ${sessionsBlock}
-
+${otherPbBlock}${genPbOnly}
 ## 5e. Memory hygiene
 Everything above (notes, macros, screens) is grouped per app package. If the user says a game was UPDATED / looks different / your notes are wrong:
   recall forget="app" [app=<package>]   → wipe that game's notes (macros/screens: list_macros delete=..., identify_screen delete=...)
@@ -161,7 +190,7 @@ Everything above (notes, macros, screens) is grouped per app package. If the use
 The human can also review/delete/export all of it visually in the owner panel (/setup, section "ذاكرة الـ AI"). Never keep relying on notes that contradict what you observe — delete them and re-learn.
 
 ## 6. Operating rules
-0. START of every session: read section 0 (QUICK START, incl. the previous session's report and NEXT TIME advice) and 5f (profiles). YOU are the player: there are no bots — when the user says "play" / "العب" you play, live, with the fast loop in section 7a. END of every session: session_report. If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
+0. START of every session: read section 0 (QUICK START: your PLAYBOOK for this game = your accumulated expertise, the previous session's report and NEXT TIME advice) and 5f (profiles). A new chat must play EXACTLY as well as the last one: follow the playbook's STRATEGY + PROCEDURE from move one, never redo calibration for @names that exist, never retry anything under MISTAKES. YOU are the player: there are no bots — when the user says "play" / "العب" you play, live, with the fast loop in section 7a. END of every session: session_report. If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
 1. Observe before acting: "ui" first (exact, cheap). Use "look" (observe) when visuals matter (games, images, WebView) or when ui is empty — it gives image + text + app + diff at once.
 2. After every action that changes the screen, observe again and verify before the next step.
 3. Coordinates are ORIGINAL screen pixels (screen.w x screen.h). Elements from "ui" are already original. Screenshot px / scale = original.
@@ -174,6 +203,7 @@ The human can also review/delete/export all of it visually in the owner panel (/
 9. Input actions are serialized per phone (a queue); read-only actions (shot/ui/notifs) run in parallel. Results include queuedMs when they had to wait.
 10. For OTP codes / incoming messages use "notifs" (get_notifications) instead of opening apps.
 11. Read section 5b first; after finishing, "remember" anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
+12. EXPERTISE TRANSFER (v4.7.3): the playbook tool is your long-term skill memory — profile = WHERE things are, session_report = WHAT happened, playbook = HOW to play well. Update it (a) after the first ~10 successful moves of a new game (overview/strategy/procedure/facts), (b) the moment something fails (mistakes) or works surprisingly well (tricks), (c) before session_report. Put genre-independent lessons ("OCR the score region after every move", "wait_for_screen stable before deciding") in playbook app:"*". Anything you do NOT write there is lost when this chat ends.
 
 ## 7a. HOW TO PLAY LIVE — you are the player (v4.7: game_setup + play + play_loop(+learning +self-critique +turnBased) + react_script)
 v4.7 EVERY GENRE: play_loop rules may test UI buttons and screen text — if:{ui:"end turn"} (clickable node text/id contains it), if:{text:["your turn","continue"]} (OCR) — and act with tool:{name:"tap_text",arguments:{text:"@text"}} or do:[{op:"tap",x:"@found.x",y:"@found.y"}]. turnBased (auto for puzzle/card/board/strategy/rpg/simulation/adventure/sports, or turnBased:true) waits for the screen to settle before each tick and uses 600 ms action waits so animations finish. strategy:"default" now builds a sensible starter for ALL genres (shooter/runner/racing/fighting reflex policies; turn-based flow-keepers: end-turn/next/confirm/collect buttons, highlighted tiles, threats).

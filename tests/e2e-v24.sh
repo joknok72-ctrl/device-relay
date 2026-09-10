@@ -17,7 +17,7 @@ call '{"name":"get_current_app"}' >/dev/null
 
 echo "== version"
 check version '"version":"4.7.3"' "$(curl -s $U/api/health)"
-check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== observe without profile"
 check observe-nogame 'False' "$(call '{"name":"observe","arguments":{"image":false,"diff":false}}' | j '"game" in d')"
@@ -81,7 +81,7 @@ B=$(curl -s $U/agent/$T)
 check bs-progress 'progress: best score 1250' "$B"
 check bs-lastsession 'last session (' "$B"
 check bs-nexttime 'NEXT TIME:' "$B"
-check bs-finish 'When you finish (or get stuck):  session_report' "$B"
+check bs-finish 'When you finish (or get stuck):  1) playbook' "$B"
 check bs-rule0 'END of every session: session_report' "$B"
 check bs-5g-report '→ ' "$B"
 check bs-profile-aware 'observe is PROFILE-AWARE' "$B"

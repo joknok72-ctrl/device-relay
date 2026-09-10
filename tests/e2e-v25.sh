@@ -17,7 +17,7 @@ call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version"
 check version '"version":"4.7.3"' "$(curl -s $U/api/health)"
-check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== joystick"
 R=$(call '{"name":"joystick","arguments":{"x":250,"y":1900,"direction":"up","duration":800,"distance":200}}')
