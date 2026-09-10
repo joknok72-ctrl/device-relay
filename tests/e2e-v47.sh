@@ -17,7 +17,7 @@ reset_profile
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version"
-check version '"version":"4.7.2"' "$(curl -s $U/api/health)"
+check version '"version":"4.8.0"' "$(curl -s $U/api/health)"
 check schema-turn 'turnBased' "$(curl -s "$U/api/tools/schema?format=raw" | j '"turnBased" if "turnBased" in [t for t in d if t["name"]=="play_loop"][0]["parameters"]["properties"] else "no"')"
 
 echo "== if.ui rule (UI button PLAY) + @text token via tap_text"
