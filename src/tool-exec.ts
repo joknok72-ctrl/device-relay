@@ -1,4 +1,5 @@
 import type { Bindings, DeviceInfo, PlayState } from './types'
+import { READ_ONLY_ACTIONS } from './types'
 import { parseAction } from './validate'
 import { toolToAction, TOOLS, READ_ONLY_TOOLS, OBSERVATION_TOOLS } from './tools'
 import type { DeviceRegistry } from './registry'
@@ -233,12 +234,18 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   const { action, error } = parseAction(actionInput)
   if (!action) return { ok: false, error }
 
-  const r = await room(env, deviceId).fetch(`https://do/command?deviceId=${deviceId}`, {
+  const send = async () => (await (await room(env, deviceId).fetch(`https://do/command?deviceId=${deviceId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, wait: true }),
-  })
-  const res = (await r.json()) as CommandResult
+  })).json()) as CommandResult
+  let res = await send()
+  // Android rate-limits takeScreenshot (~1 per 350-1000 ms); when several perception calls overlap the phone answers
+  // "screenshot failed". Perception actions are idempotent → wait a beat and retry up to 2× instead of failing the tool.
+  for (let attempt = 0; attempt < 2 && !res.ok && /screenshot failed/i.test(res.error ?? '') && READ_ONLY_ACTIONS.has(action.type); attempt++) {
+    await new Promise((r) => setTimeout(r, 350 + attempt * 300))
+    res = await send()
+  }
 
   const out: ToolResult = { ok: res.ok, error: res.error, durationMs: res.durationMs }
   if (usedRefs?.length) out.resolved = usedRefs

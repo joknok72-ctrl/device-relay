@@ -15,7 +15,7 @@ call '{"name":"game_profile","arguments":{"delete":true}}' >/dev/null
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version"
-check version '"version":"4.7.1"' "$(curl -s $U/api/health)"
+check version '"version":"4.7.2"' "$(curl -s $U/api/health)"
 
 echo "== multi-object tracks (hook 12: nearest red drifts right, two others still)"
 call '{"name":"game_profile","arguments":{"set":{"colors":{"enemy":{"hex":"#ff0000"}}}}}' >/dev/null

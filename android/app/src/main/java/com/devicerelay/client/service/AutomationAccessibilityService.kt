@@ -44,6 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.sync.withLock
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import kotlinx.serialization.json.JsonArray
@@ -212,15 +213,14 @@ class AutomationAccessibilityService : AccessibilityService() {
         val move = (a.duration ?: 600L).coerceIn(50, 10_000)
         val holdPath = Path().apply { moveTo(a.x1, a.y1) }
         val movePath = Path().apply { moveTo(a.x1, a.y1); lineTo(a.x2, a.y2) }
-        val b = GestureDescription.Builder()
-        if (hold > 0) {
-            val s1 = GestureDescription.StrokeDescription(holdPath, 0, hold, true)
-            b.addStroke(s1)
-            b.addStroke(s1.continueStroke(movePath, 0, move, false))
-        } else {
-            b.addStroke(GestureDescription.StrokeDescription(movePath, 0, move))
-        }
-        return dispatch(b.build())
+        if (hold <= 0) return dispatch(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(movePath, 0, move)).build())
+        // A continued stroke must be dispatched as a SEPARATE gesture after the first one completes; putting both strokes
+        // in one GestureDescription makes Android cancel it ("gesture cancelled") — observed on realme/Android 11.
+        val s1 = GestureDescription.StrokeDescription(holdPath, 0, hold, true)
+        val r1 = dispatch(GestureDescription.Builder().addStroke(s1).build())
+        if (r1 is Outcome.Fail) return r1
+        val s2 = s1.continueStroke(movePath, 0, move, false)
+        return dispatch(GestureDescription.Builder().addStroke(s2).build())
     }
 
     /** Two-finger pinch around (x,y). scale > 1 = zoom in. */
@@ -328,9 +328,37 @@ class AutomationAccessibilityService : AccessibilityService() {
 
     // ---------------------------------------------------------------- screenshot
     /** Grab a full-resolution ARGB frame (Android 11+). */
+    /**
+     * takeScreenshot() is rate-limited by Android (~1 capture / 350-1000 ms → ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT).
+     * Several tools capture in parallel (game_setup, observe, play) and fast loops capture every few ms, so:
+     *  1) concurrent callers share ONE in-flight capture,  2) a frame younger than 120 ms is reused,
+     *  3) on the interval error we wait and retry (up to ~1.2 s) instead of failing the whole tool.
+     */
+    private val captureMutex = kotlinx.coroutines.sync.Mutex()
+    private var lastFrame: Bitmap? = null
+    private var lastFrameAt = 0L
+    private var lastCaptureAt = 0L
     private suspend fun captureBitmap(): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-        return suspendCoroutine { cont ->
+        return captureMutex.withLock {
+            val now = android.os.SystemClock.elapsedRealtime()
+            lastFrame?.takeIf { !it.isRecycled && now - lastFrameAt < 120 }?.let { return@withLock it }
+            var attempt = 0
+            while (true) {
+                val since = android.os.SystemClock.elapsedRealtime() - lastCaptureAt
+                if (since < 60) delay(60 - since)
+                lastCaptureAt = android.os.SystemClock.elapsedRealtime()
+                val (bmp, code) = captureOnce()
+                if (bmp != null) { lastFrame = bmp; lastFrameAt = android.os.SystemClock.elapsedRealtime(); return@withLock bmp }
+                // 3 = ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT, 1 = INTERNAL_ERROR (transient on some OEMs)
+                if ((code == 3 || code == 1) && attempt < 5) { attempt++; delay(if (code == 3) 250L else 120L); continue }
+                // last resort: a slightly stale frame (< 1.5 s) beats failing the whole tool
+                return@withLock lastFrame?.takeIf { !it.isRecycled && android.os.SystemClock.elapsedRealtime() - lastFrameAt < 1500 }
+            }
+        }
+    }
+    private suspend fun captureOnce(): Pair<Bitmap?, Int> = suspendCoroutine { cont ->
+        try {
             takeScreenshot(Display.DEFAULT_DISPLAY, screenshotExecutor, object : TakeScreenshotCallback {
                 override fun onSuccess(result: ScreenshotResult) {
                     val bmp = runCatching {
@@ -338,11 +366,11 @@ class AutomationAccessibilityService : AccessibilityService() {
                         hw?.copy(Bitmap.Config.ARGB_8888, true)
                     }.getOrNull()
                     result.hardwareBuffer.close()
-                    cont.resume(bmp)
+                    cont.resume(bmp to 0)
                 }
-                override fun onFailure(errorCode: Int) { cont.resume(null) }
+                override fun onFailure(errorCode: Int) { cont.resume(null to errorCode) }
             })
-        }
+        } catch (e: Exception) { cont.resume(null to 1) }
     }
 
     private suspend fun screenshot(maxWidth: Int? = null, quality: Int? = null, format: String? = null, grid: Int? = null, region: Region? = null): Outcome {
