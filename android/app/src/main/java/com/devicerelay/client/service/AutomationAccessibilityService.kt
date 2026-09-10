@@ -779,10 +779,11 @@ class AutomationAccessibilityService : AccessibilityService() {
                 var stopHit = false
                 for (sr in srs) if (cond(bmp, sr).first) { stoppedBy = "stop:" + sr.type + (sr.text?.let { " $it" } ?: sr.color?.let { " $it" } ?: ""); stopHit = true; break }
                 if (stopHit) break@outer
-                var firedThisFrame = false
+                var firedThisFrame = false; var firedExclusive = false
                 for (ri in order) {
                     val r = rules[ri]
-                    if (firedThisFrame && (r.exclusive != false)) continue
+                    // exclusive defaults to FALSE (several rules may fire in one frame, e.g. track + fire); exclusive:true = one rule per frame
+                    if (firedThisFrame && (r.exclusive == true || firedExclusive)) continue
                     if (now < readyAt[ri]) continue
                     if ((r.maxFires ?: 0) > 0 && fires[ri] >= r.maxFires!!) continue
                     var ok = true; var found: JsonObject? = null
@@ -802,7 +803,7 @@ class AutomationAccessibilityService : AccessibilityService() {
                     }
                     if (fx == null && r.then.any { it.op == "tap_found" || it.op == "aim_found" }) continue
                     val res = combo(Action(type = "combo", steps2 = steps))
-                    fires[ri]++; triggers++; firedThisFrame = true; lastRule = r.name ?: "rule$ri"
+                    fires[ri]++; triggers++; firedThisFrame = true; if (r.exclusive == true) firedExclusive = true; lastRule = r.name ?: "rule$ri"
                     readyAt[ri] = android.os.SystemClock.elapsedRealtime() + (r.cooldownMs ?: 250L).coerceIn(0, 10_000)
                     if (log.size < 60) log.add(buildJsonObject { put("t", now - t0); put("rule", lastRule); put("ok", res is Outcome.Ok); if (fx != null) { put("fx", fx.toInt()); put("fy", fy!!.toInt()) } })
                     if (triggers >= maxTriggers) { stoppedBy = "maxTriggers"; break@outer }
