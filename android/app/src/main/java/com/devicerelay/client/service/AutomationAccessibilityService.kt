@@ -172,6 +172,9 @@ class AutomationAccessibilityService : AccessibilityService() {
     private suspend fun gesture(path: Path?, durationMs: Long): Outcome {
         if (path == null) return Outcome.Fail("missing coordinates")
         val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceIn(1, 60_000))
+        // v4.1.5: while fingers are held (joystick), a plain gesture must carry their continuations too,
+        // otherwise Android cancels the held touches ("gesture cancelled" on the hold / dropped stick)
+        if (fingers.isNotEmpty()) return dispatchStrokes(listOf(stroke))
         return dispatch(GestureDescription.Builder().addStroke(stroke).build())
     }
 
@@ -1113,12 +1116,46 @@ class AutomationAccessibilityService : AccessibilityService() {
     private class Finger(var x: Float, var y: Float, var stroke: GestureDescription.StrokeDescription, val since: Long)
     private val fingers = HashMap<Int, Finger>()
 
-    /** Dispatch strokes for the given fingers as ONE gesture (they must share a GestureDescription to be simultaneous). */
-    private suspend fun dispatchStrokes(strokes: List<GestureDescription.StrokeDescription>, retry: Boolean = true): Outcome {
+    /**
+     * Dispatch strokes as ONE gesture. v4.1.5: every finger that is currently held and NOT part of `strokes` gets a
+     * continuation stroke (tiny jitter, willContinue=true) in the same gesture — Android only keeps a pending touch alive
+     * when the next dispatched gesture continues it. `owners` = finger ids whose strokes are already in `strokes`.
+     * A cancelled continuation means the system already dropped the touch → that finger is forgotten (re-press fallback
+     * lives in fingerMove/joystick).
+     */
+    private suspend fun dispatchStrokes(strokes: List<GestureDescription.StrokeDescription>, retry: Boolean = true, owners: Set<Int> = emptySet()): Outcome {
         if (strokes.isEmpty()) return Outcome.Ok()
         val b = GestureDescription.Builder()
         for (s in strokes.take(10)) b.addStroke(s)
-        return dispatch(b.build(), allowRetry = retry)
+        var span = 1L; for (s in strokes) span = maxOf(span, s.startTime + s.duration)
+        val carried = ArrayList<Pair<Int, GestureDescription.StrokeDescription>>()
+        for ((id, f) in fingers) {
+            if (id in owners || strokes.size + carried.size >= 10) continue
+            val c = f.stroke.continueStroke(Path().apply { moveTo(f.x, f.y); lineTo(f.x + 0.5f, f.y) }, 0, span, true)
+            b.addStroke(c); carried.add(id to c)
+        }
+        val r = dispatch(b.build(), allowRetry = retry && carried.isEmpty())
+        if (r is Outcome.Ok) { for ((id, c) in carried) fingers[id]?.let { it.stroke = c; it.x += 0.5f } }
+        else if (carried.isNotEmpty() && r is Outcome.Fail && r.error == "gesture cancelled") {
+            // held touches are gone; drop them and re-issue the new strokes alone so the caller's action still lands
+            for ((id, _) in carried) fingers.remove(id)
+            val b2 = GestureDescription.Builder(); for (s in strokes.take(10)) b2.addStroke(s)
+            return dispatch(b2.build(), allowRetry = retry)
+        }
+        return r
+    }
+
+    /** Path that moves from (sx,sy) to (tx,ty) in ~moveMs and then "holds" at the tip for holdMs (Android times a stroke by
+     *  path length, so the hold is a long micro-zigzag ≤ 1.5 px around the tip). */
+    private fun moveHoldPath(sx: Float, sy: Float, tx: Float, ty: Float, moveMs: Long, holdMs: Long): Path {
+        val p = Path().apply { moveTo(sx, sy); lineTo(tx, ty) }
+        val moveLen = maxOf(1.0, Math.hypot((tx - sx).toDouble(), (ty - sy).toDouble()))
+        if (holdMs <= 0) return p
+        val holdLen = moveLen * holdMs / maxOf(1L, moveMs)
+        val n = Math.ceil(holdLen / 2.0).toInt().coerceIn(1, 3000)   // ≤ 3000 zigzags; amplitude grows only for very long holds
+        val amp = (holdLen / (2.0 * n)).toFloat().coerceAtLeast(0.5f)
+        for (i in 0 until n) { p.lineTo(tx + amp, ty); p.lineTo(tx, ty) }
+        return p
     }
 
     /** Put finger `id` down at (x,y) and keep it there (willContinue). */
@@ -1128,7 +1165,7 @@ class AutomationAccessibilityService : AccessibilityService() {
         if (fingers.size >= 4) return Outcome.Fail("max 4 fingers")
         val hold = (a.duration ?: 60L).coerceIn(20, 1000)
         val s = GestureDescription.StrokeDescription(Path().apply { moveTo(x, y) }, 0, hold, true)
-        val r = dispatchStrokes(listOf(s))
+        val r = dispatchStrokes(listOf(s), owners = setOf(id))
         if (r is Outcome.Fail) return r
         fingers[id] = Finger(x, y, s, android.os.SystemClock.elapsedRealtime())
         return Outcome.Ok(data = buildJsonObject { put("finger", id); put("x", x.toInt()); put("y", y.toInt()); put("down", fingers.size) })
@@ -1143,17 +1180,17 @@ class AutomationAccessibilityService : AccessibilityService() {
         val dur = (a.duration ?: 150L).coerceIn(20, 10_000)
         val path = Path().apply { moveTo(f.x, f.y); for (p in pts) lineTo(p.x, p.y) }
         var s = f.stroke.continueStroke(path, 0, dur, true)
-        var r = dispatchStrokes(listOf(s), retry = false)
+        var r = dispatchStrokes(listOf(s), retry = false, owners = setOf(id))
         if (r is Outcome.Fail) {
             // the held stroke was dropped by the system (OEM timeout / cancelled) → re-press at the last position and continue
             fingers.remove(id)
             val press = GestureDescription.StrokeDescription(Path().apply { moveTo(f.x, f.y) }, 0, 40, true)
-            val rp = dispatchStrokes(listOf(press))
+            val rp = dispatchStrokes(listOf(press), owners = setOf(id))
             if (rp is Outcome.Fail) return Outcome.Fail("finger_move: ${r.error}; re-press failed: ${rp.error}")
+            fingers[id] = f; f.stroke = press
             s = press.continueStroke(path, 0, dur, true)
-            r = dispatchStrokes(listOf(s), retry = false)
-            if (r is Outcome.Fail) return r
-            fingers[id] = f
+            r = dispatchStrokes(listOf(s), retry = false, owners = setOf(id))
+            if (r is Outcome.Fail) { fingers.remove(id); return r }
         }
         f.stroke = s; f.x = pts.last().x; f.y = pts.last().y
         return Outcome.Ok(data = buildJsonObject { put("finger", id); put("x", f.x.toInt()); put("y", f.y.toInt()) })
@@ -1165,7 +1202,7 @@ class AutomationAccessibilityService : AccessibilityService() {
         val strokes = ArrayList<GestureDescription.StrokeDescription>()
         for (id in ids) { val f = fingers[id] ?: continue; strokes.add(f.stroke.continueStroke(Path().apply { moveTo(f.x, f.y) }, 0, 20, false)) }
         if (strokes.isEmpty()) return Outcome.Ok(data = buildJsonObject { put("lifted", 0); put("down", fingers.size) })
-        val r = dispatchStrokes(strokes, retry = false)
+        val r = dispatchStrokes(strokes, retry = false, owners = ids.toSet())
         for (id in ids) fingers.remove(id)
         // a cancelled continuation means the system had already released that touch → the finger IS up; report it as lifted
         return Outcome.Ok(data = buildJsonObject { put("lifted", strokes.size); put("down", fingers.size); if (r is Outcome.Fail) put("note", "system had already released the touch (${r.error})") })
@@ -1183,24 +1220,22 @@ class AutomationAccessibilityService : AccessibilityService() {
         val tx = cx + (Math.cos(angle) * dist).toFloat(); val ty = cy + (Math.sin(angle) * dist).toFloat()
         val hold = (a.duration ?: 500L).coerceIn(50, 40_000); val release = a.release != false
         val t0 = android.os.SystemClock.elapsedRealtime()
+        // v4.1.5: press → push → hold is ONE stroke (move ~80 ms, then a micro-zigzag hold at the tip). One stroke can't be
+        // cancelled between segments, and willContinue = !release keeps the finger down for the next combo step.
+        val moveMs = minOf(80L, hold / 2)
         val existing = fingers[id]
-        if (existing == null) {
-            val down = fingerDown(Action(type = "finger_down", x = cx, y = cy, finger = id, duration = 40))
-            if (down is Outcome.Fail) return down
+        val sx = existing?.x ?: cx; val sy = existing?.y ?: cy
+        val path = moveHoldPath(sx, sy, tx, ty, moveMs, hold - moveMs)
+        var s = if (existing != null) existing.stroke.continueStroke(path, 0, hold, !release) else GestureDescription.StrokeDescription(path, 0, hold, !release)
+        var r = dispatchStrokes(listOf(s), retry = existing == null, owners = setOf(id))
+        if (r is Outcome.Fail && existing != null) {
+            // the held stick was dropped by the system → start a fresh press from the centre
+            fingers.remove(id)
+            s = GestureDescription.StrokeDescription(moveHoldPath(cx, cy, tx, ty, moveMs, hold - moveMs), 0, hold, !release)
+            r = dispatchStrokes(listOf(s), owners = setOf(id))
         }
-        val mv = fingerMove(Action(type = "finger_move", x = tx, y = ty, finger = id, duration = 80))
-        if (mv is Outcome.Fail) return mv
-        // hold the stick: keep the stroke alive with tiny continuation segments (max 1s each) so the game keeps receiving MOVE events
-        var remaining = hold - 80
-        while (remaining > 0) {
-            val seg = Math.min(remaining, 900L)
-            val f = fingers[id] ?: break
-            val s = f.stroke.continueStroke(Path().apply { moveTo(f.x, f.y); lineTo(f.x + 0.5f, f.y) }, 0, seg, true)
-            val r = dispatchStrokes(listOf(s)); if (r is Outcome.Fail) return Outcome.Fail("joystick hold: ${r.error}")
-            f.stroke = s; f.x += 0.5f
-            remaining -= seg
-        }
-        if (release) fingerUp(Action(type = "finger_up", finger = id))
+        if (r is Outcome.Fail) { fingers.remove(id); return Outcome.Fail("joystick: ${r.error}") }
+        if (release) fingers.remove(id) else fingers[id] = Finger(tx, ty, s, existing?.since ?: t0)
         return Outcome.Ok(data = buildJsonObject { put("finger", id); put("angle", a.angle ?: 270.0); put("distance", dist.toInt()); put("heldMs", android.os.SystemClock.elapsedRealtime() - t0); put("released", release); put("tipX", tx.toInt()); put("tipY", ty.toInt()) })
     }
 
