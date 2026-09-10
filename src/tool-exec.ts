@@ -679,9 +679,25 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
   }
   let W = 1080, H = 2400
   let pendingAct: Record<string, unknown> | undefined
+  // v4.6 rule effectiveness: after a rule fires, judge the NEXT tick (score gained? hp lost? threat cleared?) and credit/blame the rule
+  const ruleStats: Record<string, { fires: number; good: number; bad: number }> = {}
+  let lastRule: string | undefined, lastThreatCount = 0, lastHp: number | undefined
+  const hpKey = (vals: Record<string, number>) => Object.keys(vals).find((k) => /hp|health|life|lives|shield|energy/i.test(k))
+  // v4.6 explore: when nothing is gained for `exploreAfter` ticks, try a random un-fired/low-scoring rule or nudge the action
+  const explore = args.explore === true
+  let noGainTicks = 0
+  // v4.6 hybrid: a rule may carry `reflex:{rules, timeoutMs}` → hands that phase to on-device react_script (~50 ms reactions)
+  let reflexRuns = 0
   for (let i = 1; i <= ticks; i++) {
     if (Date.now() - t0 > budgetMs) { stoppedBy = 'maxMs'; break }
     const tickArgs: Record<string, unknown> = { ...frameArgs, autoMenu, ...(i === 1 && args.reset === true ? { reset: true } : {}), ...(pendingAct ?? {}) }
+    if (pendingAct?.reflex) {
+      const rf = pendingAct.reflex as Record<string, unknown>
+      const rr = await executeTool(env, deviceId, 'react_script', { ...rf, timeoutMs: Math.min(Number(rf.timeoutMs) || 4000, Math.max(500, budgetMs - (Date.now() - t0) - 1500)) }, inner).catch((e) => ({ ok: false, error: String(e) } as ToolResult))
+      reflexRuns++
+      log.push({ tick: i, reflex: { ok: rr.ok, triggers: (rr.data as { triggers?: number } | undefined)?.triggers, stoppedBy: (rr.data as { stoppedBy?: string } | undefined)?.stoppedBy, error: rr.error } })
+      delete tickArgs.reflex
+    }
     const r = await play(env, deviceId, tickArgs, inner, false)
     pendingAct = undefined
     lastTick = r
@@ -696,19 +712,39 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
     const entry: Record<string, unknown> = { tick: i, summary: r.summary }
     // v4.4 learning signals: positive changes of score-like values; death = game_over screen
     const dl = (r.deltas as Record<string, unknown> | undefined) ?? {}
-    for (const [k, v] of Object.entries(dl)) if (typeof v === 'number' && v > 0 && /score|coin|gold|gem|point|kill|xp|money|cash|dist|level|combo|star/i.test(k)) gained += v
+    let tickGain = 0
+    for (const [k, v] of Object.entries(dl)) if (typeof v === 'number' && v > 0 && /score|coin|gold|gem|point|kill|xp|money|cash|dist|level|combo|star/i.test(k)) tickGain += v
+    gained += tickGain
     if (stuck?.kind === 'game_over') died = true
+    // v4.6 credit/blame the rule that acted before this tick
+    if (lastRule) {
+      const st = ruleStats[lastRule] ?? (ruleStats[lastRule] = { fires: 0, good: 0, bad: 0 })
+      const hk = hpKey(values); const hpNow = hk ? values[hk] : undefined
+      const hpDrop = lastHp !== undefined && hpNow !== undefined && hpNow < lastHp
+      const threatCleared = lastThreatCount > 0 && threats.length < lastThreatCount
+      if (tickGain > 0 || threatCleared) st.good++
+      if (hpDrop || stuck?.kind === 'game_over') st.bad++
+      entry.judge = `${lastRule}: ${tickGain > 0 ? `+${tickGain}` : ''}${threatCleared ? ' threat cleared' : ''}${hpDrop ? ' hp lost' : ''}${!tickGain && !threatCleared && !hpDrop ? 'neutral' : ''}`.trim()
+    }
+    { const hk = hpKey(values); lastHp = hk ? values[hk] : undefined; lastThreatCount = threats.length }
+    noGainTicks = tickGain > 0 ? 0 : noGainTicks + 1
     // stop conditions
     if (stopOn.stuck && stuck && (stopOn.stuck === 'any' || stuck.kind === stopOn.stuck)) { stoppedBy = `stuck:${stuck.kind}`; log.push(entry); break }
     if (stopOn.event && events.some((e) => e.toLowerCase().includes(stopOn.event!.toLowerCase()))) { stoppedBy = `event:${stopOn.event}`; log.push(entry); break }
     if (stopOn.valueBelow && typeof values[stopOn.valueBelow.name] === 'number' && values[stopOn.valueBelow.name] < stopOn.valueBelow.value) { stoppedBy = `${stopOn.valueBelow.name}<${stopOn.valueBelow.value}`; if (/hp|health|life|lives/i.test(stopOn.valueBelow.name)) died = true; log.push(entry); break }
     if (stopOn.valueAbove && typeof values[stopOn.valueAbove.name] === 'number' && values[stopOn.valueAbove.name] > stopOn.valueAbove.value) { stoppedBy = `${stopOn.valueAbove.name}>${stopOn.valueAbove.value}`; log.push(entry); break }
-    // pick the first matching rule (policy order = priority)
-    for (let pi = 0; pi < policy.length; pi++) {
+    // pick the first matching rule (policy order = priority); explore mode rotates the start so other matching rules get a chance
+    lastRule = undefined
+    const exploreAfter = Math.max(2, Math.round(Number(args.exploreAfter) || 4))
+    const exploring = explore && noGainTicks >= exploreAfter
+    const order = policy.map((_, idx) => idx); if (exploring && policy.length > 1) { const k = i % policy.length; order.push(...order.splice(0, k)) }
+    for (const pi of order) {
       const rule = policy[pi]
       const name = typeof rule.name === 'string' ? rule.name : `rule${pi}`
       const cd = Math.max(0, Math.round(Number(rule.cooldownTicks) || 0))
       if (lastFire[name] !== undefined && i - lastFire[name] <= cd) continue
+      // v4.6 a rule that keeps hurting (bad > good+1 after ≥3 fires) is skipped unless nothing else matches
+      const rs = ruleStats[name]; if (rs && rs.fires >= 3 && rs.bad > rs.good + 1 && !exploring) continue
       const cond = (rule.if ?? {}) as Record<string, unknown>
       let found: { cx: number; cy: number } | undefined
       let ok = true
@@ -721,11 +757,13 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
       if (ok && cond.valueAbove) { const c = cond.valueAbove as { name: string; value: number }; if (!(typeof values[c.name] === 'number' && values[c.name] > c.value)) ok = false }
       if (ok && cond.everyTicks !== undefined) { if (i % Math.max(1, Math.round(Number(cond.everyTicks))) !== 0) ok = false }
       if (!ok) continue
-      fires[name] = (fires[name] ?? 0) + 1; lastFire[name] = i
-      entry.rule = name
+      fires[name] = (fires[name] ?? 0) + 1; lastFire[name] = i; lastRule = name
+      ;(ruleStats[name] ?? (ruleStats[name] = { fires: 0, good: 0, bad: 0 })).fires++
+      entry.rule = name; if (exploring) entry.explore = true
       const th = threats[0] ? { cx: threats[0].cx, cy: threats[0].cy } : undefined
       if (Array.isArray(rule.do) && rule.do.length) pendingAct = { act: sub(rule.do, found, th), waitMs: rule.waitMs ?? args.waitMs ?? 150 }
       else if (rule.tool && typeof (rule.tool as { name?: unknown }).name === 'string') pendingAct = { tool: sub(rule.tool, found, th), waitMs: rule.waitMs ?? args.waitMs ?? 250 }
+      else if (rule.reflex && typeof rule.reflex === 'object') pendingAct = { reflex: sub(rule.reflex, found, th) }
       if (found) entry.at = found
       break
     }
@@ -740,12 +778,26 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
     const rec = await room(env, deviceId).fetch(`https://do/strategy?deviceId=${deviceId}&app=${encodeURIComponent(appPkg)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: strategyName, policy, stopOn: Object.keys(stopOn).length ? stopOn : undefined, ticks: log.length, gained, died, note: typeof args.note === 'string' ? args.note : undefined }) }).then((r) => r.json() as Promise<{ ok: boolean; strategy?: { name: string; fitness: number; runs: number }; rank?: number; total?: number }>).catch(() => null)
     if (rec?.ok && rec.strategy) learned = { name: rec.strategy.name, fitness: rec.strategy.fitness, runs: rec.strategy.runs, rank: rec.rank, of: rec.total, gained, died }
   }
+  // v4.6 rule report + concrete advice (which rule to demote/remove/keep)
+  const rules = Object.fromEntries(Object.entries(ruleStats).map(([k, s]) => [k, { ...s, score: s.good - s.bad }]))
+  const advice: string[] = []
+  for (const [k, s] of Object.entries(rules)) { if (s.fires >= 2 && s.bad > s.good) advice.push(`'${k}' hurt more than it helped (${s.bad} bad / ${s.good} good) — change its action or move it lower`); else if (s.fires >= 3 && s.good >= 2 && s.bad === 0) advice.push(`'${k}' works (${s.good} good) — keep it near the top`) }
+  const idle = policy.map((r, idx) => (typeof r.name === 'string' ? r.name : `rule${idx}`)).filter((n) => !fires[n]); if (idle.length && log.length >= 4) advice.push(`never fired: ${idle.join(', ')} — condition may be wrong (colour name? threshold?)`)
+  if (!gained && !died && log.length >= 5) advice.push('no score-like value changed during the run — make sure a score/coins region is in the profile so learning can judge progress')
+  if (died) advice.push('run ended in death/game_over — add a retreat/dodge rule with higher priority, or lower the hp threshold')
+  // v4.6 auto session report (fire-and-forget) so a new chat inherits what happened even if the model forgets session_report
+  if (appPkg && args.report !== false && log.length >= 3) {
+    const summary = `autopilot ${strategyName ?? 'policy'}: ${log.length} ticks, gained ${gained}, ${died ? 'died' : 'survived'}, stopped by ${stoppedBy}; fires ${JSON.stringify(fires)}`
+    room(env, deviceId).fetch(`https://do/session-report?deviceId=${deviceId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: appPkg, summary, outcome: died ? 'loss' : gained > 0 ? 'progress' : 'other', learned: advice.slice(0, 4), nextTime: advice[0] }) }).catch(() => {})
+  }
   return {
-    ok: true, ticks: log.length, stoppedBy, fires, log: log.slice(-20),
+    ok: true, ticks: log.length, stoppedBy, fires, rules, log: log.slice(-20),
     last: lastTick ? { summary: lastTick.summary, events: lastTick.events, threats: lastTick.threats, stuck: lastTick.stuck, frame: lastTick.frame } : undefined,
     ...(learned ? { learned } : {}),
+    ...(advice.length ? { advice } : {}),
+    ...(reflexRuns ? { reflexRuns } : {}),
     durationMs: Date.now() - t0,
-    hint: learned && (learned.rank as number) > 1 ? `this policy ranks #${learned.rank}/${learned.of} for this game — play_loop {strategy:"best"} replays the top one` : 'inspect log → tune the policy (order = priority) → call play_loop again; use react_script instead when reactions must be < 100 ms',
+    hint: learned && (learned.rank as number) > 1 ? `this policy ranks #${learned.rank}/${learned.of} for this game — play_loop {strategy:"best"} replays the top one` : 'read advice + rules (good/bad per rule) → fix the worst rule → play_loop again with name:"v2"; use reflex:{rules} inside a rule when reactions must be < 100 ms',
   }
 }
 
