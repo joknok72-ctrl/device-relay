@@ -455,6 +455,28 @@ export class DeviceRoom extends DurableObject<Bindings> {
         return Response.json({ ok: true, count: this.notes.length })
       }
     }
+    // v4.7.3 full memory snapshot / restore — used by "rename device" so profiles, strategies, sessions, notes,
+    // macros, labelled screens and apps-seen move with the human to the new deviceId (nothing is lost).
+    if (url.pathname.endsWith('/memory/full') && request.method === 'GET') {
+      return Response.json({
+        deviceId: this.info.deviceId, label: this.info.label, exportedAt: Date.now(),
+        notes: this.notes, macros: this.macros, screens: this.screens, apps: this.apps, profiles: this.profiles, sessions: this.sessions,
+      })
+    }
+    if (url.pathname.endsWith('/memory/full') && request.method === 'POST') {
+      const b = (await request.json()) as Partial<{ label: string; notes: Note[]; macros: Macro[]; screens: ScreenLabel[]; apps: typeof this.apps; profiles: typeof this.profiles; sessions: PlaySession[]; mode: 'merge' | 'replace' }>
+      const replace = b.mode === 'replace'
+      const dedupe = <T>(arr: T[], key: (x: T) => string) => { const seen = new Set<string>(); return arr.filter((x) => { const k = key(x); if (seen.has(k)) return false; seen.add(k); return true }) }
+      if (Array.isArray(b.notes)) this.notes = replace ? b.notes : dedupe([...this.notes, ...b.notes], (n) => `${n.app ?? ''}|${n.text}`).slice(0, 500)
+      if (Array.isArray(b.macros)) this.macros = replace ? b.macros : dedupe([...b.macros, ...this.macros], (m) => `${m.app ?? ''}|${m.name}`)
+      if (Array.isArray(b.screens)) this.screens = replace ? b.screens : dedupe([...b.screens, ...this.screens], (s) => `${s.app ?? ''}|${s.name}`)
+      if (b.apps) this.apps = replace ? b.apps : { ...b.apps, ...this.apps }
+      if (b.profiles) this.profiles = replace ? b.profiles : { ...b.profiles, ...this.profiles }
+      if (Array.isArray(b.sessions)) this.sessions = (replace ? b.sessions : dedupe([...this.sessions, ...b.sessions], (s) => `${s.app}|${s.start}`)).sort((x, y) => y.start - x.start).slice(0, 100)
+      if (b.label && !this.info.label) this.info.label = b.label.slice(0, 64)
+      await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps), this.ctx.storage.put('profiles', this.profiles), this.ctx.storage.put('sessions', this.sessions), this.persist()])
+      return Response.json({ ok: true, totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, profiles: Object.keys(this.profiles).length, sessions: this.sessions.length } })
+    }
     if (url.pathname.endsWith('/label') && request.method === 'POST') {
       const { label } = (await request.json()) as { label?: string }
       this.info.label = label?.slice(0, 64) || undefined

@@ -25,6 +25,18 @@ export class DeviceRegistry extends DurableObject {
     const cur = (await this.ctx.storage.get<{ label?: string }>(`meta:${deviceId}`)) ?? {}
     await this.ctx.storage.put(`meta:${deviceId}`, { ...cur, ...meta })
   }
+  /** v4.7.3 rename: move registration, label and every device-scoped token from `from` to `to`. */
+  async rename(from: string, to: string): Promise<{ tokens: number }> {
+    await this.ctx.storage.put(`dev:${to}`, (await this.ctx.storage.get<number>(`dev:${from}`)) ?? Date.now())
+    const meta = await this.ctx.storage.get<{ label?: string }>(`meta:${from}`)
+    if (meta) await this.ctx.storage.put(`meta:${to}`, meta)
+    const toks = await this.ctx.storage.list<TokenRecord>({ prefix: 'tok:' })
+    let n = 0
+    for (const [k, v] of toks) if (v.deviceId === from) { await this.ctx.storage.put(k, { ...v, deviceId: to }); n++ }
+    await this.ctx.storage.delete(`dev:${from}`)
+    await this.ctx.storage.delete(`meta:${from}`)
+    return { tokens: n }
+  }
   async allMeta(): Promise<Record<string, { label?: string }>> {
     const map = await this.ctx.storage.list<{ label?: string }>({ prefix: 'meta:' })
     const out: Record<string, { label?: string }> = {}

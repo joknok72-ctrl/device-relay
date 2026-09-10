@@ -212,6 +212,32 @@ admin.post('/devices/:deviceId/label', async (c) => {
   await room(c, deviceId).fetch(`https://do/label?deviceId=${deviceId}`, { method: 'POST', body: JSON.stringify({ label }), headers: { 'Content-Type': 'application/json' } })
   return c.json({ ok: true })
 })
+/**
+ * v4.7.3 — rename a device WITHOUT losing what the AI learned.
+ * POST /api/admin/devices/:id/rename  { newId, keepOld?: boolean }
+ * Copies the whole memory (profiles + learned strategies, sessions, notes, macros, labelled screens, apps) to `newId`,
+ * moves the label and all device tokens, tells the phone (if online) to reconnect under the new id, and unregisters the
+ * old id (unless keepOld). Also useful after a reinstall: the app's default id changes → rename the OLD id to the NEW one.
+ */
+admin.post('/devices/:deviceId/rename', async (c) => {
+  const from = c.req.param('deviceId')
+  const { newId, keepOld } = (await c.req.json().catch(() => ({}))) as { newId?: string; keepOld?: boolean }
+  const to = String(newId ?? '').trim()
+  if (!isValidDeviceId(from)) return c.json({ error: 'invalid deviceId' }, 400)
+  if (!isValidDeviceId(to)) return c.json({ error: 'invalid newId (letters, digits, - and _ ; 3-64 chars)' }, 400)
+  if (from === to) return c.json({ error: 'newId equals current id' }, 400)
+  const src = room(c, from), dst = room(c, to)
+  const mem = (await (await src.fetch(`https://do/memory/full?deviceId=${from}`)).json()) as Record<string, unknown>
+  const merged = (await (await dst.fetch(`https://do/memory/full?deviceId=${to}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...mem, mode: 'merge' }) })).json()) as { totals?: Record<string, number> }
+  const moved = await reg(c.env).rename(from, to)
+  // the phone (if connected under the old id) is told to switch: it saves the new id and reconnects
+  const phone = await src.fetch(`https://do/command?deviceId=${from}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: { type: 'set_device_id', text: to }, wait: true }) }).then((r) => r.json() as Promise<{ ok: boolean; error?: string }>).catch(() => ({ ok: false, error: 'offline' }))
+  if (!keepOld) {
+    await src.fetch(`https://do/memory?deviceId=${from}`, { method: 'DELETE' }).catch(() => {})
+    await src.fetch(`https://do/disconnect?deviceId=${from}`, { method: 'POST' }).catch(() => {})
+  } else await reg(c.env).register(from)
+  return c.json({ ok: true, from, to, memory: merged.totals, tokensMoved: moved.tokens, phone: phone.ok ? 'switched (reconnecting under the new id)' : `not switched (${phone.error ?? 'offline'}) — set the Device ID to '${to}' in the app` })
+})
 admin.post('/devices/:deviceId/clear-logs', async (c) => {
   const deviceId = c.req.param('deviceId')
   if (!isValidDeviceId(deviceId)) return c.json({ error: 'invalid deviceId' }, 400)
