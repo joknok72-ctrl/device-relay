@@ -35,13 +35,6 @@
 
 ## المميزات المنجزة ✅
 
-**👀 v4.8 — شوف الـ AI وهو بيلعب من اللاب (Auto-Live Monitor)**
-- افتح `/monitor/<token>` من أي متصفح (لابتوب مثلًا) → **البث الحي يشتغل لوحده** طول ما الصفحة مفتوحة: الـ relay بيقول للموبايل يبدأ يبعت إطارات (2 fps، 360px) أول ما يتصل مشاهد بـ `?live=1`، ويوقّفها لوحده لما آخر مشاهد يقفل التاب (توفير بطارية/باقة). مش محتاج تفتح اللعبة على الموبايل نفسه ولا تطلب من الـ AI `live_preview`.
-- لو الموبايل فصل واتصل تاني والصفحة مفتوحة → البث يرجع أوتوماتيك (hello → resume).
-- **وضع المشاهدة** `?watch=1` (أو زرار ⤢): شاشة الموبايل كبيرة بس، مناسبة لمتابعة اللعب. مؤشر أخضر = إطارات واصلة، برتقالي = مفيش إطارات (الموبايل أوفلاين/الشاشة مقفولة).
-- خيارات: `?live=0` (لقطات فقط)، `?fps=1..4`، `?w=160..720`. الأوامر اللي بيبعتها الـ AI (نقرات/سحب/OCR) بتتظبط فوق الصورة كـ overlay كما كان.
-- أداة اختبار: `node tests/viewer-probe.cjs <RELAY_URL> <TOKEN> <deviceId> [sec]` تعدّ الإطارات من موبايل حقيقي. اختبارات `tests/e2e-v48.sh` 7/7 ✅.
-
 **🌐 v4.7 — كل أنواع الألعاب (مش السريعة بس)**
 - **أنواع مدعومة رسميًا**: action/shooter، racing، fighting، rhythm، runner، puzzle، **card** (بلوت/طرنيب/UNO/بوكر)، **board** (شطرنج/لودو/دومينو/كيرم)، **sports** (كورة/بلياردو/جولف)، strategy، rpg، **simulation** (مزارع/إدارة/مدن)، **adventure** (قصص/أشياء مخفية/هروب)، casual — لكل نوع playbook في الدليل + قسم **7.ANY** للحلقة العامة اللي تشتغل مع أي لعبة.
 - **وضع الأدوار `turnBased`** (يتفعّل أوتوماتيك للأنواع غير السريعة): الطيار يستنى الأنيميشن يخلص قبل كل ملاحظة ويستخدم انتظار 600ms بعد كل فعل.
@@ -492,6 +485,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-10 (v4.8 — auto-live monitor: viewer ?live=1 starts/stops the phone stream server-side, resumes on reconnect, watch mode; Android 4.1.4 gesture serialisation; tests/live-audit.sh 77/77 on real realme RMX3269) · (v4.7.1 — full audit: 83/83 tools executed OK, all routes/pages/auth/CORS probed on production; fixed session_stats 502, OpenAI 1024-char description cap, 7 array schemas without items, react_script exclusive default, relay+Android timeouts for react_script/play_frame; Android 4.1.2) · (v4.7 — every genre: turnBased autopilot, ui/text rules, per-family default policies, 15-genre detection, playbooks card/board/sports/simulation/adventure/ANY) · (v4.6 — play_loop self-critique, explore, hybrid reflex, auto report) · (v4.5 — default policy synthesis, multi-object tracks, bar gauges, @threat/@away tokens) · (v4.4 — learned strategies: play_loop runs scored & ranked per game, strategy:"best" replay) · (v4.3 — play_loop autopilot policy engine, threats/velocity/eta, autoMenu, session memory on tick 1; 83 tools) · previously (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 83 tools; Android 4.1.1 connect fix)
+- **Last Updated**: 2026-09-10 (v4.7.1 — full audit: 83/83 tools executed OK, all routes/pages/auth/CORS probed on production; fixed session_stats 502, OpenAI 1024-char description cap, 7 array schemas without items, react_script exclusive default, relay+Android timeouts for react_script/play_frame; Android 4.1.2) · (v4.7 — every genre: turnBased autopilot, ui/text rules, per-family default policies, 15-genre detection, playbooks card/board/sports/simulation/adventure/ANY) · (v4.6 — play_loop self-critique, explore, hybrid reflex, auto report) · (v4.5 — default policy synthesis, multi-object tracks, bar gauges, @threat/@away tokens) · (v4.4 — learned strategies: play_loop runs scored & ranked per game, strategy:"best" replay) · (v4.3 — play_loop autopilot policy engine, threats/velocity/eta, autoMenu, session memory on tick 1; 83 tools) · previously (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 83 tools; Android 4.1.1 connect fix)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
