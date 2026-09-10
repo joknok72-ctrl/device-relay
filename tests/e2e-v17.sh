@@ -9,7 +9,7 @@ call() { curl -s "${A[@]}" -d "$1" $U/api/devices/$D/tools/call; }
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 
 echo "== version / catalogue"
-check version '"version":"4.6.0"' "$(curl -s $U/api/health)"
+check version '"version":"4.7.0"' "$(curl -s $U/api/health)"
 check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 call '{"name":"open_recents"}' >/dev/null  # fake phone: back to menu screen

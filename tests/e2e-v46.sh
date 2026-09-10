@@ -15,7 +15,7 @@ call '{"name":"game_profile","arguments":{"delete":true}}' >/dev/null
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version"
-check version '"version":"4.6.0"' "$(curl -s $U/api/health)"
+check version '"version":"4.7.0"' "$(curl -s $U/api/health)"
 check schema-explore 'explore' "$(curl -s "$U/api/tools/schema?format=raw" | j '"explore" if "explore" in [t for t in d if t["name"]=="play_loop"][0]["parameters"]["properties"] else "no"')"
 
 echo "== self-critique: good rule (score rises each tick, hook 12)"

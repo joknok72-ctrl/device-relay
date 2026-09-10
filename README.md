@@ -35,6 +35,13 @@
 
 ## المميزات المنجزة ✅
 
+**🌐 v4.7 — كل أنواع الألعاب (مش السريعة بس)**
+- **أنواع مدعومة رسميًا**: action/shooter، racing، fighting، rhythm، runner، puzzle، **card** (بلوت/طرنيب/UNO/بوكر)، **board** (شطرنج/لودو/دومينو/كيرم)، **sports** (كورة/بلياردو/جولف)، strategy، rpg، **simulation** (مزارع/إدارة/مدن)، **adventure** (قصص/أشياء مخفية/هروب)، casual — لكل نوع playbook في الدليل + قسم **7.ANY** للحلقة العامة اللي تشتغل مع أي لعبة.
+- **وضع الأدوار `turnBased`** (يتفعّل أوتوماتيك للأنواع غير السريعة): الطيار يستنى الأنيميشن يخلص قبل كل ملاحظة ويستخدم انتظار 600ms بعد كل فعل.
+- **شروط جديدة للسياسة**: `if:{ui:"end turn"}` (زرار في شجرة الواجهة) و `if:{text:["your turn","continue"]}` (OCR) + رمز `@text` = النص المطابق → `tool:tap_text {text:"@text"}`.
+- **سياسات افتراضية لكل عائلة**: fighting (strike/block/close-in)، والعائلة الدورية (card/board/strategy/rpg/simulation/adventure/sports/puzzle): أزرار التدفق (end-turn/next/confirm/collect/deal/roll…) من الـ UI أو النص، لمس العناصر المضيئة، تجنّب التهديدات — والقرار الحقيقي (أي كارت/أي نقلة) للـ AI كل دور.
+- **تخمين النوع** في `game_setup` بقى يغطي الـ 15 نوع (كلمات مفتاحية: deal/fold/ace → card، dice/checkmate/ludo → board، goal/serve/vs → sports، farm/customer/profit → simulation، chapter/clue/escape → adventure…). اختبارات **938/938** ✅.
+
 **🧩 v4.6 — النقد الذاتي: الطيار الآلي يحكم على قواعده بنفسه**
 - **تقييم لكل قاعدة**: بعد ما قاعدة تشتغل، الـ tick التالي يحكم عليها (سكور زاد / تهديد اتنحى = good، hp نزل / Game Over = bad) → `rules{fires,good,bad,score}` + `judge` في السجل + **`advice[]`** بلغة مباشرة ("'charge' أذى أكثر مما أفاد — غيّر فعلها"، "never fired: collect — اسم اللون غلط؟"، "الجولة انتهت بالموت — أضف قاعدة انسحاب أعلى"). القاعدة اللي بتضر باستمرار تُتخطى تلقائيًا.
 - **`explore:true`**: لو ما فيش مكسب لـ N ticks يدوّر الأولويات ليجرّب قواعد أخرى (استكشاف).
@@ -478,6 +485,6 @@ tests/e2e.sh && tests/e2e-v15.sh && tests/e2e-v16.sh && tests/e2e-v17.sh && test
 - **CI/CD**: push إلى `main` ⇒ بناء APK + نشر Worker تلقائيًا
 - **Secrets**: `RELAY_TOKEN` (مضبوط) · `WEBHOOK_URL` (اختياري)
 - **GitHub Actions secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (مضبوطة)
-- **Last Updated**: 2026-09-10 (v4.6 — play_loop self-critique, explore, hybrid reflex, auto report) · (v4.5 — default policy synthesis, multi-object tracks, bar gauges, @threat/@away tokens) · (v4.4 — learned strategies: play_loop runs scored & ranked per game, strategy:"best" replay) · (v4.3 — play_loop autopilot policy engine, threats/velocity/eta, autoMenu, session memory on tick 1; 83 tools) · previously (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 83 tools; Android 4.1.1 connect fix)
+- **Last Updated**: 2026-09-10 (v4.7 — every genre: turnBased autopilot, ui/text rules, per-family default policies, 15-genre detection, playbooks card/board/sports/simulation/adventure/ANY) · (v4.6 — play_loop self-critique, explore, hybrid reflex, auto report) · (v4.5 — default policy synthesis, multi-object tracks, bar gauges, @threat/@away tokens) · (v4.4 — learned strategies: play_loop runs scored & ranked per game, strategy:"best" replay) · (v4.3 — play_loop autopilot policy engine, threats/velocity/eta, autoMenu, session memory on tick 1; 83 tools) · previously (v4.2 — game_setup auto-profile for unknown games; play deltas/events/stuck detection with per-game tick memory; bootstrap decision heuristics; 83 tools; Android 4.1.1 connect fix)
 
 > ⚠️ **أمان**: التوكنات التي أُرسلت في المحادثة يجب تدويرها (Regenerate) بعد الانتهاء. لا يوجد أي توكن مخزّن داخل الكود.
