@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { Action, Bindings, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, PlaySession, PlayState, Recording, ScreenLabel, SessionReport } from './types'
+import type { Action, Bindings, CommandMessage, DeviceInfo, GameProfile, LogEntry, Macro, Note, PhoneMessage, Playbook, PlaySession, PlayState, Recording, ScreenLabel, SessionReport } from './types'
 import { READ_ONLY_ACTIONS, actionTimeoutMs } from './types'
 
 const MAX_LOGS = 100
@@ -56,6 +56,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
   private profiles: Record<string, GameProfile> = {}
   /** v2.3 play history: sessions (most recent first, max 100). */
   private sessions: PlaySession[] = []
+  /** v4.7.3 per-game playbooks: the AI's distilled expertise, injected into every new chat's bootstrap. */
+  private playbooks: Record<string, Playbook> = {}
   private currentApp = ''
   /** v4.2 last play frame per app (in-memory only) so play() can report deltas/events between ticks. */
   private playState: Record<string, PlayState> = {}
@@ -85,6 +87,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (profiles) this.profiles = profiles
       const sessions = await ctx.storage.get<PlaySession[]>('sessions')
       if (sessions) this.sessions = sessions
+      const playbooks = await ctx.storage.get<typeof this.playbooks>('playbooks')
+      if (playbooks) this.playbooks = playbooks
     })
   }
 
@@ -235,9 +239,10 @@ export class DeviceRoom extends DurableObject<Bindings> {
     // ---------- v2.2 memory management (human-facing) ----------
     if (url.pathname.endsWith('/memory')) {
       if (request.method === 'GET') {
-        type Group = { app: string; label?: string; lastSeen?: number; notes: (Note & { index: number })[]; macros: Macro[]; screens: ScreenLabel[]; profile?: GameProfile; sessions: number; playedMs: number }
+        type Group = { app: string; label?: string; lastSeen?: number; notes: (Note & { index: number })[]; macros: Macro[]; screens: ScreenLabel[]; profile?: GameProfile; playbook?: Playbook; sessions: number; playedMs: number }
         const groups: Record<string, Group> = {}
-        const g = (app: string): Group => (groups[app] ??= { app, label: this.apps[app]?.label ?? this.profiles[app]?.label, lastSeen: this.apps[app]?.last, notes: [], macros: [], screens: [], profile: this.profiles[app], sessions: 0, playedMs: 0 })
+        const g = (app: string): Group => (groups[app] ??= { app, label: this.apps[app]?.label ?? this.profiles[app]?.label, lastSeen: this.apps[app]?.last, notes: [], macros: [], screens: [], profile: this.profiles[app], playbook: this.playbooks[app], sessions: 0, playedMs: 0 })
+        for (const app of Object.keys(this.playbooks)) if (app !== '*') g(app)
         this.notes.forEach((n, index) => g(n.app ?? '').notes.push({ ...n, index }))
         for (const m of this.macros) g(m.app ?? '').macros.push(m)
         for (const s of this.screens) g(s.app ?? '').screens.push(s)
@@ -247,8 +252,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
         const list = Object.values(groups).sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
         return Response.json({
           deviceId: this.info.deviceId,
-          totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, profiles: Object.keys(this.profiles).length, sessions: this.sessions.length, recording: !!this.recording },
-          recording: this.recording, groups: list, apps: this.apps, sessions: this.sessions.slice(0, 20), currentApp: this.currentApp,
+          totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, profiles: Object.keys(this.profiles).length, sessions: this.sessions.length, playbooks: Object.keys(this.playbooks).length, recording: !!this.recording },
+          recording: this.recording, groups: list, apps: this.apps, sessions: this.sessions.slice(0, 20), currentApp: this.currentApp, generalPlaybook: this.playbooks['*'] ?? null,
         })
       }
       if (request.method === 'DELETE') {
@@ -277,7 +282,8 @@ export class DeviceRoom extends DurableObject<Bindings> {
         const beforeProfiles = Object.keys(this.profiles).length, beforeSessions = this.sessions.length
         if (kind === 'profiles' || kind === 'all') { if (app !== null) delete this.profiles[app]; else this.profiles = {} }
         if (kind === 'sessions' || kind === 'all') { this.sessions = app !== null ? this.sessions.filter((s) => s.app !== app) : [] }
-        await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps), this.ctx.storage.put('profiles', this.profiles), this.ctx.storage.put('sessions', this.sessions), this.ctx.storage.delete('bots'), this.ctx.storage.delete('aims')])
+        if (kind === 'playbooks' || kind === 'all') { if (app !== null) delete this.playbooks[app]; else this.playbooks = {} }
+        await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps), this.ctx.storage.put('profiles', this.profiles), this.ctx.storage.put('sessions', this.sessions), this.ctx.storage.put('playbooks', this.playbooks), this.ctx.storage.delete('bots'), this.ctx.storage.delete('aims')])
         return Response.json({ ok: true, removed: { notes: before.notes - this.notes.length, macros: before.macros - this.macros.length, screens: before.screens - this.screens.length, apps: before.apps - Object.keys(this.apps).length, profiles: beforeProfiles - Object.keys(this.profiles).length, sessions: beforeSessions - this.sessions.length }, totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, profiles: Object.keys(this.profiles).length } })
       }
     }
@@ -460,11 +466,11 @@ export class DeviceRoom extends DurableObject<Bindings> {
     if (url.pathname.endsWith('/memory/full') && request.method === 'GET') {
       return Response.json({
         deviceId: this.info.deviceId, label: this.info.label, exportedAt: Date.now(),
-        notes: this.notes, macros: this.macros, screens: this.screens, apps: this.apps, profiles: this.profiles, sessions: this.sessions,
+        notes: this.notes, macros: this.macros, screens: this.screens, apps: this.apps, profiles: this.profiles, sessions: this.sessions, playbooks: this.playbooks,
       })
     }
     if (url.pathname.endsWith('/memory/full') && request.method === 'POST') {
-      const b = (await request.json()) as Partial<{ label: string; notes: Note[]; macros: Macro[]; screens: ScreenLabel[]; apps: typeof this.apps; profiles: typeof this.profiles; sessions: PlaySession[]; mode: 'merge' | 'replace' }>
+      const b = (await request.json()) as Partial<{ label: string; notes: Note[]; macros: Macro[]; screens: ScreenLabel[]; apps: typeof this.apps; profiles: typeof this.profiles; sessions: PlaySession[]; playbooks: typeof this.playbooks; mode: 'merge' | 'replace' }>
       const replace = b.mode === 'replace'
       const dedupe = <T>(arr: T[], key: (x: T) => string) => { const seen = new Set<string>(); return arr.filter((x) => { const k = key(x); if (seen.has(k)) return false; seen.add(k); return true }) }
       if (Array.isArray(b.notes)) this.notes = replace ? b.notes : dedupe([...this.notes, ...b.notes], (n) => `${n.app ?? ''}|${n.text}`).slice(0, 500)
@@ -473,9 +479,42 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (b.apps) this.apps = replace ? b.apps : { ...b.apps, ...this.apps }
       if (b.profiles) this.profiles = replace ? b.profiles : { ...b.profiles, ...this.profiles }
       if (Array.isArray(b.sessions)) this.sessions = (replace ? b.sessions : dedupe([...this.sessions, ...b.sessions], (s) => `${s.app}|${s.start}`)).sort((x, y) => y.start - x.start).slice(0, 100)
+      if (b.playbooks) this.playbooks = replace ? b.playbooks : { ...b.playbooks, ...this.playbooks }
       if (b.label && !this.info.label) this.info.label = b.label.slice(0, 64)
-      await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps), this.ctx.storage.put('profiles', this.profiles), this.ctx.storage.put('sessions', this.sessions), this.persist()])
-      return Response.json({ ok: true, totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, profiles: Object.keys(this.profiles).length, sessions: this.sessions.length } })
+      await Promise.all([this.ctx.storage.put('notes', this.notes), this.ctx.storage.put('macros', this.macros), this.ctx.storage.put('screens', this.screens), this.ctx.storage.put('apps', this.apps), this.ctx.storage.put('profiles', this.profiles), this.ctx.storage.put('sessions', this.sessions), this.ctx.storage.put('playbooks', this.playbooks), this.persist()])
+      return Response.json({ ok: true, totals: { notes: this.notes.length, macros: this.macros.length, screens: this.screens.length, apps: Object.keys(this.apps).length, profiles: Object.keys(this.profiles).length, sessions: this.sessions.length, playbooks: Object.keys(this.playbooks).length } })
+    }
+    // v4.7.3 playbooks: GET ?app= (or all) | POST {app, merge:{overview?, strategy?[], procedure?[], tricks?[], mistakes?[], screens?[], facts?[], skill?}, replace?:bool, remove?:{field:[texts]}} | DELETE ?app=
+    if (url.pathname.endsWith('/playbook')) {
+      const app = url.searchParams.get('app') ?? ''
+      if (request.method === 'GET') return Response.json(app ? { playbook: this.playbooks[app] ?? null, general: this.playbooks['*'] ?? null } : { playbooks: this.playbooks })
+      if (request.method === 'DELETE') { const had = !!this.playbooks[app]; delete this.playbooks[app]; await this.ctx.storage.put('playbooks', this.playbooks); return Response.json({ ok: true, removed: had }) }
+      if (request.method === 'POST') {
+        const b = (await request.json()) as { app?: string; merge?: Partial<Playbook>; replace?: boolean; remove?: Partial<Record<string, string[]>> }
+        const key = String(b.app ?? app).trim().slice(0, 120)
+        if (!key) return Response.json({ ok: false, error: 'app required' }, { status: 400 })
+        const LIST: (keyof Playbook)[] = ['strategy', 'procedure', 'tricks', 'mistakes', 'screens', 'facts']
+        const cur: Playbook = (!b.replace && this.playbooks[key]) || { app: key, strategy: [], procedure: [], tricks: [], mistakes: [], screens: [], facts: [], ts: Date.now(), updates: 0 }
+        const m = b.merge ?? {}
+        if (typeof m.overview === 'string') cur.overview = m.overview.trim().slice(0, 1200)
+        if (typeof m.skill === 'number') cur.skill = Math.max(1, Math.min(5, Math.round(m.skill)))
+        const rec = cur as unknown as Record<string, string[]>
+        for (const f of LIST) {
+          const add = (m as Record<string, unknown>)[f]
+          if (Array.isArray(add)) {
+            const clean = add.map((t) => String(t).trim().slice(0, 400)).filter(Boolean)
+            // procedure is an ORDERED recipe → a new list replaces the old one; the other lists accumulate (deduped)
+            if (f === 'procedure') rec[f] = clean.slice(0, 40)
+            else { for (const s of clean) if (!rec[f].some((x) => x.toLowerCase() === s.toLowerCase())) rec[f].push(s); rec[f] = rec[f].slice(-60) }
+          }
+          const rm = b.remove?.[f]
+          if (Array.isArray(rm)) rec[f] = rec[f].filter((x) => !rm.some((r) => x.toLowerCase().includes(String(r).toLowerCase())))
+        }
+        cur.ts = Date.now(); cur.updates = (cur.updates ?? 0) + 1
+        this.playbooks[key] = cur
+        await this.ctx.storage.put('playbooks', this.playbooks)
+        return Response.json({ ok: true, playbook: cur })
+      }
     }
     if (url.pathname.endsWith('/label') && request.method === 'POST') {
       const { label } = (await request.json()) as { label?: string }

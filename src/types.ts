@@ -107,6 +107,33 @@ export interface PlayState {
   tick: number
 }
 
+/**
+ * v4.7.3 Playbook = the AI's transferable EXPERTISE for one game (or '*' = cross-game skills), written by the AI itself.
+ * Unlike a session_report (what happened once) this is the distilled how-to, kept current with every chat and injected
+ * verbatim into the bootstrap of the next chat so a brand-new conversation plays at the same level from turn one.
+ */
+export interface Playbook {
+  app: string
+  /** one paragraph: what the game is, how to win, what matters */
+  overview?: string
+  /** ordered rules of thumb — the strategy ("clear rows before placing big pieces", "keep 2 columns free") */
+  strategy: string[]
+  /** exact step-by-step procedure for one move/turn/round with the tools to call */
+  procedure: string[]
+  /** things that worked (tricks, exact coords, timings) */
+  tricks: string[]
+  /** things that failed and must not be repeated */
+  mistakes: string[]
+  /** how to tell menu / game over / paused / reward screens and what to press */
+  screens: string[]
+  /** free-form facts (piece sizes, board geometry, scoring) */
+  facts: string[]
+  /** skill level 1-5 the AI believes it has reached in this game */
+  skill?: number
+  ts: number
+  updates: number
+}
+
 /** v4.4 one autopilot policy + how it performed (kept per game, max 5, sorted by fitness). */
 export interface Strategy {
   name: string

@@ -28,7 +28,7 @@ check new-has-profile 'com.test.game' "$M"; check new-has-note 'rename-test note
 check new-label 'My Phone' "$(curl -s "${A[@]}" $U/api/devices | python3 -c "import json,sys; print([d for d in json.load(sys.stdin)['devices'] if d['deviceId']=='$N'])")"
 # moved token now scopes to the new id
 check token-scoped-new "\"deviceId\":\"$N\"" "$(curl -s -A dr-agent -H "Authorization: Bearer $TOK" $U/api/me)"
-check token-denied-old 'forbidden\|403\|not allowed' "$(curl -s -o /dev/null -w '%{http_code}' -A dr-agent -H "Authorization: Bearer $TOK" $U/api/devices/$D | sed 's/403/403 forbidden/')"
+check token-denied-old '403' "$(curl -s -o /dev/null -w '%{http_code}' -A dr-agent -H "Authorization: Bearer $TOK" $U/api/devices/$D)"
 # cleanup
 curl -s -X DELETE "${A[@]}" $U/api/devices/$N >/dev/null
 echo "v473 PASSED $pass  FAILED $fail"; [[ $fail -eq 0 ]]
