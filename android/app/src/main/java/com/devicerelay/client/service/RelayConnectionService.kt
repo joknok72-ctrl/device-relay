@@ -246,6 +246,9 @@ class RelayConnectionService : Service() {
             "joystick" -> base + (a.duration ?: 500L)
             "fire_burst" -> base + (a.holdMs ?: 0L) + (a.count ?: 5) * (a.intervalMs ?: 90L)
             "combo" -> base + (a.steps2?.sumOf { (it.delayMs ?: 0L) + (it.duration ?: 0L) + (it.holdMs ?: 0L) + (it.count ?: 0) * (it.intervalMs ?: 90L) } ?: 0L)
+            // v4.1 on-device engines
+            "react_script" -> base + (a.timeoutMs ?: 15_000L)
+            "play_frame" -> base + ((a.frame?.ocr?.size ?: 0) * 1500L)
             else -> base
         }
     }

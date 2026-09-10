@@ -245,7 +245,7 @@ export const TOOLS: ToolDef[] = [
     parameters: {
       type: 'object',
       properties: {
-        steps: { type: 'array', description: 'Array of {name: string, arguments: object}' },
+        steps: { type: 'array', description: 'Array of {name: string, arguments: object}', items: { type: 'object' } },
         continueOnError: { type: 'boolean', description: 'Keep going after a failed step (default false)', default: false },
       },
       required: ['steps'],
@@ -279,7 +279,7 @@ export const TOOLS: ToolDef[] = [
       'Use for rhythm games, combos, fast menus, typing on custom keyboards. Max 50 points / 50s total.',
     parameters: {
       type: 'object',
-      properties: { points: { type: 'array', description: '[{x, y, delayMs?, durationMs?}, ...]' } },
+      properties: { points: { type: 'array', description: '[{x, y, delayMs?, durationMs?}, ...]', items: { type: 'object' } } },
       required: ['points'],
     },
   },
@@ -288,7 +288,7 @@ export const TOOLS: ToolDef[] = [
     description: 'Tap up to 10 points SIMULTANEOUSLY (true multi-touch) for duration ms. Use for two-button game controls, chords, hidden gestures.',
     parameters: {
       type: 'object',
-      properties: { points: { type: 'array', description: '[{x,y}, ...]' }, duration: { type: 'integer', description: 'Hold time (default 60)', minimum: 20, maximum: 5000, default: 60 } },
+      properties: { points: { type: 'array', description: '[{x,y}, ...]', items: { type: 'object' } }, duration: { type: 'integer', description: 'Hold time (default 60)', minimum: 20, maximum: 5000, default: 60 } },
       required: ['points'],
     },
   },
@@ -297,7 +297,7 @@ export const TOOLS: ToolDef[] = [
     description: 'One continuous finger stroke through many points (curves, joystick moves, drawing, pattern unlock, slingshot aiming). duration is the total time. 2-50 points.',
     parameters: {
       type: 'object',
-      properties: { points: { type: 'array', description: '[{x,y}, ...] in order' }, duration: { type: 'integer', description: 'Total ms (default 500)', minimum: 50, maximum: 30000, default: 500 } },
+      properties: { points: { type: 'array', description: '[{x,y}, ...] in order', items: { type: 'object' } }, duration: { type: 'integer', description: 'Total ms (default 500)', minimum: 50, maximum: 30000, default: 500 } },
       required: ['points'],
     },
   },
@@ -317,7 +317,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'get_pixels',
     description: 'Read exact RGB hex colours at up to 50 original-pixel points from a fresh frame. Cheap way to detect HP bars, cooldowns, button states, tile colours without a full screenshot.',
-    parameters: { type: 'object', properties: { points: { type: 'array', description: '[{x,y}, ...]' } }, required: ['points'] },
+    parameters: { type: 'object', properties: { points: { type: 'array', description: '[{x,y}, ...]', items: { type: 'object' } } }, required: ['points'] },
   },
   {
     name: 'find_color',
@@ -457,7 +457,7 @@ export const TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         name: { type: 'string', description: 'kebab-case name' },
-        steps: { type: 'array', description: '[{name, arguments}, ...] max 25' },
+        steps: { type: 'array', description: '[{name, arguments}, ...] max 25', items: { type: 'object' } },
         description: { type: 'string', description: 'What it does (shown in bootstrap)' },
       },
       required: ['name', 'steps'],
@@ -523,7 +523,7 @@ export const TOOLS: ToolDef[] = [
     parameters: {
       type: 'object',
       properties: {
-        colors: { type: 'array', description: '["#rrggbb", ...] up to 8' },
+        colors: { type: 'array', description: '["#rrggbb", ...] up to 8', items: { type: 'string' } },
         tolerance: { type: 'integer', description: '0-128 (default 24)', minimum: 0, maximum: 128, default: 24 },
         region: { type: 'object', description: 'Optional {x,y,w,h}' },
       },
@@ -1166,10 +1166,19 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
 // ---------------------------------------------------------------- exporters
 
 /** OpenAI Chat Completions `tools` array */
+/** OpenAI caps function descriptions at 1024 chars — cut at a sentence boundary and point to the bootstrap for the rest. */
+function capDesc(d: string, max = 1024): string {
+  if (d.length <= max) return d
+  const tail = ' (full guide: /agent/<token> §7a)'
+  let cut = d.slice(0, max - tail.length)
+  const dot = cut.lastIndexOf('. ')
+  if (dot > max * 0.6) cut = cut.slice(0, dot + 1)
+  return cut + tail
+}
 export function openaiTools() {
   return TOOLS.map((t) => ({
     type: 'function',
-    function: { name: t.name, description: t.description, parameters: t.parameters },
+    function: { name: t.name, description: capDesc(t.description), parameters: t.parameters },
   }))
 }
 
@@ -1180,7 +1189,7 @@ export function anthropicTools() {
 
 /** Gemini function declarations */
 export function geminiTools() {
-  return [{ function_declarations: TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })) }]
+  return [{ function_declarations: TOOLS.map((t) => ({ name: t.name, description: capDesc(t.description), parameters: t.parameters })) }]
 }
 
 /** OpenAPI 3.1 document (for GPT Actions / any OpenAPI-aware agent) */

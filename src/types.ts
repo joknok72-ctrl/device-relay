@@ -164,6 +164,9 @@ export function actionTimeoutMs(a: Action): number {
     case 'joystick': return base + a.duration
     case 'fire_burst': return base + a.holdMs + a.count * a.intervalMs
     case 'combo': return base + a.combo.reduce((t, s) => t + (s.delayMs ?? 0) + (s.duration ?? 0) + (s.holdMs ?? 0) + (s.count ?? 0) * (s.intervalMs ?? 90), 0)
+    // v4.1 on-device engines: react_script runs up to timeoutMs (≤ 60 s); play_frame may run several OCR passes
+    case 'react_script': return base + (a.timeoutMs ?? 15_000)
+    case 'play_frame': return base + ((a.frame?.ocr?.length ?? 0) * 1500)
     default: return base
   }
 }

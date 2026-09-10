@@ -195,7 +195,7 @@ export async function executeTool(env: Bindings, deviceId: string, name: string,
   if (mapped.special === 'list_macros') return listMacros(env, deviceId, args)
   if (mapped.special === 'tap_text') return tapText(env, deviceId, args, opts)
   if (mapped.special === 'wait_for_text') return waitForText(env, deviceId, args, opts)
-  if (mapped.special === 'session_stats') return (await (await room(env, deviceId).fetch(`https://do/stats?deviceId=${deviceId}`)).json()) as ToolResult
+  if (mapped.special === 'session_stats') return { ok: true, ...((await (await room(env, deviceId).fetch(`https://do/stats?deviceId=${deviceId}`)).json()) as Record<string, unknown>) }
   if (mapped.special === 'observe') return observe(env, deviceId, args, opts)
   if (mapped.special === 'smart_tap') return smartTap(env, deviceId, args, opts)
   if (mapped.special === 'do_until') return doUntil(env, deviceId, args, opts)
