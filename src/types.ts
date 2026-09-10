@@ -130,6 +130,14 @@ export interface Playbook {
   facts: string[]
   /** skill level 1-5 the AI believes it has reached in this game */
   skill?: number
+  /**
+   * v4.7.4 the COMPLETE decision algorithm / planner the AI used (code, pseudo-code or exact rules), verbatim, up to 24 KB.
+   * Notes like "clear a row" are not enough to reproduce play quality — the next chat must be able to re-run the same planner
+   * (e.g. the Python/JS block that scores candidate placements). Optional language tag + short description of inputs/outputs.
+   */
+  algorithm?: { lang?: string; description?: string; code: string; ts: number }
+  /** v4.7.4 exact geometry / calibration the algorithm needs (screen size the numbers were measured on, offsets, cell sizes…) */
+  calibration?: Record<string, string | number | boolean>
   ts: number
   updates: number
 }

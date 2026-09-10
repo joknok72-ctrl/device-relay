@@ -263,13 +263,21 @@ class RelayConnectionService : Service() {
         }
     }
 
+    /** v4.1.7 REAL display size (incl. gesture/nav bar) = the coordinate space of takeScreenshot/dispatchGesture; displayMetrics
+     *  reports only the app window (e.g. 1448 instead of 1600) which confused agents comparing screenshots with hello.screen. */
+    private fun realScreen(): ScreenSize {
+        val wm = getSystemService(android.view.WindowManager::class.java)
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= 30) { val b = wm.maximumWindowMetrics.bounds; ScreenSize(b.width(), b.height()) }
+            else { val dm = android.util.DisplayMetrics(); @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(dm); ScreenSize(dm.widthPixels, dm.heightPixels) }
+        }.getOrElse { val dm = resources.displayMetrics; ScreenSize(dm.widthPixels, dm.heightPixels) }
+    }
     private fun buildHello(): HelloMessage {
-        val dm = resources.displayMetrics
         return HelloMessage(
             model = "${Build.MANUFACTURER} ${Build.MODEL}",
             android = Build.VERSION.RELEASE,
             appVersion = runCatching { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" }.getOrDefault("?"),
-            screen = ScreenSize(dm.widthPixels, dm.heightPixels),
+            screen = realScreen(),
             accessibilityEnabled = AutomationAccessibilityService.isEnabled,
             battery = batteryPercent(),
             charging = getSystemService(android.os.BatteryManager::class.java)?.isCharging == true,

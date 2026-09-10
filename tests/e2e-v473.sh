@@ -40,6 +40,12 @@ check pb-procedure-replaced '"procedure":["look","decide","act"]' "$R"
 check pb-strategy-deduped '"strategy":["Keep one column free for long pieces","Clear rows before placing big shapes"]' "$R"
 check pb-updates2 '"updates":2' "$R"
 R=$(call '{"name":"playbook","arguments":{"app":"com.test.game","remove":{"tricks":["OCR score"]}}}'); check pb-remove '"tricks":["drag with steps>=20 lands reliably"]' "$R"
+R=$(call '{"name":"playbook","arguments":{"app":"com.test.game","merge":{"algorithm":{"lang":"python","description":"score placements","code":"def best(board, pieces):\n    return max(cands(board,pieces), key=score)"},"calibration":{"screenW":720,"screenH":1600,"dragYComp":95}}}}')
+check pb-algorithm-saved '"lang":"python"' "$R"; check pb-calibration-saved '"dragYComp":95' "$R"
+B0=$(curl -s -A dr-agent $U/agent/$T); echo "$B0" | grep -q "ALGORITHM START" && echo "$B0" | grep -q "def best(board, pieces)" && { echo "  ✔ boot-injects-algorithm-code"; pass=$((pass+1)); } || { echo "  ✘ boot-injects-algorithm-code"; fail=$((fail+1)); }
+echo "$B0" | grep -q "dragYComp=95" && { echo "  ✔ boot-injects-calibration"; pass=$((pass+1)); } || { echo "  ✘ boot-injects-calibration"; fail=$((fail+1)); }
+echo "$B0" | grep -q "REPRODUCIBLE SKILL" && { echo "  ✔ boot-rule-13"; pass=$((pass+1)); } || { echo "  ✘ boot-rule-13"; fail=$((fail+1)); }
+R=$(call '{"name":"playbook","arguments":{"app":"com.test.game","remove":{"algorithm":true}}}'); echo "$R" | grep -q '"algorithm"' && { echo "  ✘ pb-remove-algorithm"; fail=$((fail+1)); } || { echo "  ✔ pb-remove-algorithm"; pass=$((pass+1)); }
 check pb-general '"ok":true' "$(call '{"name":"playbook","arguments":{"app":"*","merge":{"strategy":["wait_for_screen stable before deciding"],"skill":2}}}')"
 check pb-read-has-general 'wait_for_screen stable' "$(call '{"name":"playbook","arguments":{"app":"com.test.game"}}')"
 B=$(curl -s -A dr-agent $U/agent/$T)

@@ -19,6 +19,13 @@ function fmtPlaybook(pb: Playbook, title: string): string {
   sec('MISTAKES — never repeat', pb.mistakes)
   sec('SCREENS (recognise + what to press)', pb.screens)
   sec('FACTS', pb.facts)
+  if (pb.calibration && Object.keys(pb.calibration).length) L.push(`    CALIBRATION (exact numbers the algorithm relies on): ${Object.entries(pb.calibration).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join('  ')}`)
+  if (pb.algorithm?.code) {
+    L.push(`    ALGORITHM${pb.algorithm.lang ? ` (${pb.algorithm.lang})` : ''} — your complete planner from the last chat. Re-use it AS IS (paste into your scratchpad / run it) instead of inventing a new one.${pb.algorithm.description ? ` ${pb.algorithm.description}` : ''}`)
+    L.push('    -----8<----- ALGORITHM START -----8<-----')
+    L.push(pb.algorithm.code.split('\n').map((l) => '    ' + l).join('\n'))
+    L.push('    -----8<----- ALGORITHM END -----8<-----')
+  } else L.push('    ALGORITHM: (none saved yet — when you write a planner/scoring function for this game, save it: playbook {merge:{algorithm:{lang, description, code}}}; without it the next chat cannot reproduce your play quality)')
   return L.join('\n')
 }
 
@@ -67,7 +74,7 @@ ${fmtPlaybook(genPb, 'ANY GAME')}` : ''}
 ${curNotes.length ? `Notes for this game: ${curNotes.map((n) => n.text).join(' | ')}` : ''}
 ${curMacros.length ? `Macros for this game: ${curMacros.map((m) => `run_macro "${m.name}"`).join(', ')}` : ''}
 Suggested first call:  ${cur ? './phone.sh look' : './phone.sh look 100 && ./phone.sh palette'}
-When you finish (or get stuck):  1) playbook {merge:{...}} with everything you learned this session, then 2) session_report summary="..." outcome=win|loss|progress|stuck score=N nextTime="..."  — both mandatory, they are how the next chat plays at your level.
+When you finish (or get stuck):  1) playbook {merge:{..., algorithm:{lang,description,code}, calibration:{...}}} with everything you learned this session INCLUDING the full planner code you used, then 2) session_report summary="..." outcome=win|loss|progress|stuck score=N nextTime="..."  — both mandatory, they are how the next chat plays at your level.
 `
     : ''
   // playbooks of games that are NOT open right now (so the agent knows what it already masters)
@@ -193,7 +200,7 @@ The human can also review/delete/export all of it visually in the owner panel (/
 0. START of every session: read section 0 (QUICK START: your PLAYBOOK for this game = your accumulated expertise, the previous session's report and NEXT TIME advice) and 5f (profiles). A new chat must play EXACTLY as well as the last one: follow the playbook's STRATEGY + PROCEDURE from move one, never redo calibration for @names that exist, never retry anything under MISTAKES. YOU are the player: there are no bots — when the user says "play" / "العب" you play, live, with the fast loop in section 7a. END of every session: session_report. If a profile exists for the current game, use its @names immediately — never re-run sample_colors/calibrate for known controls. Otherwise: look → palette → calibrate → game_profile set. Then history 10 to avoid repeating a failed approach.
 1. Observe before acting: "ui" first (exact, cheap). Use "look" (observe) when visuals matter (games, images, WebView) or when ui is empty — it gives image + text + app + diff at once.
 2. After every action that changes the screen, observe again and verify before the next step.
-3. Coordinates are ORIGINAL screen pixels (screen.w x screen.h). Elements from "ui" are already original. Screenshot px / scale = original.
+3. Coordinates are ORIGINAL screen pixels = the full-resolution screenshot size (play.frame.w/h, capture_screen w/h before scaling). Elements from "ui" are already original. Screenshot px / scale = original. NOTE: on some phones hello.screen (status/devices) is the app WINDOW (e.g. 720x1448) while screenshots/gestures use the FULL display (e.g. 720x1600) — app 4.1.7+ reports the full display; if the two differ, trust the screenshot size and record it in the playbook FACTS.
 4. Prefer open_app, press (smart_tap), tapel/tapid, type over raw coordinates. Use waitfor / wait_for_text after actions that load content.
 4b. Unexpected dialog/ad/permission prompt? Call popups (dismiss_popups) once, then look again. Do not hand-craft taps for common dismiss buttons.
 5. Handle popups / permission dialogs / keyboards sensibly, then continue toward the goal.
@@ -204,6 +211,7 @@ The human can also review/delete/export all of it visually in the owner panel (/
 10. For OTP codes / incoming messages use "notifs" (get_notifications) instead of opening apps.
 11. Read section 5b first; after finishing, "remember" anything a future session would need (layouts, coordinates, quirks). Keep notes short and factual.
 12. EXPERTISE TRANSFER (v4.7.3): the playbook tool is your long-term skill memory — profile = WHERE things are, session_report = WHAT happened, playbook = HOW to play well. Update it (a) after the first ~10 successful moves of a new game (overview/strategy/procedure/facts), (b) the moment something fails (mistakes) or works surprisingly well (tricks), (c) before session_report. Put genre-independent lessons ("OCR the score region after every move", "wait_for_screen stable before deciding") in playbook app:"*". Anything you do NOT write there is lost when this chat ends.
+13. REPRODUCIBLE SKILL (v4.7.4): if you wrote ANY code / scoring function / planner / lookup table to decide moves (a Python or JS block, a 3x3-scan heuristic, a search over candidate placements, aim math, a build order…) you MUST store it verbatim with playbook {merge:{algorithm:{lang, description, code}}} together with calibration:{...} (exact screen size the numbers were measured on, offsets, cell size, drag compensation, timings). At the START of a chat, if the playbook has an ALGORITHM block: re-use it as is (paste it into your working notes / run it), do NOT design a new one; then keep improving it and re-save. This applies to EVERY genre: puzzle planners, shooter aim/strafe rules, card-game hand evaluators, racing line timings, farming build orders, chess/board openings, rhythm timing offsets — the next chat must be able to run the same brain.
 
 ## 7a. HOW TO PLAY LIVE — you are the player (v4.7: game_setup + play + play_loop(+learning +self-critique +turnBased) + react_script)
 v4.7 EVERY GENRE: play_loop rules may test UI buttons and screen text — if:{ui:"end turn"} (clickable node text/id contains it), if:{text:["your turn","continue"]} (OCR) — and act with tool:{name:"tap_text",arguments:{text:"@text"}} or do:[{op:"tap",x:"@found.x",y:"@found.y"}]. turnBased (auto for puzzle/card/board/strategy/rpg/simulation/adventure/sports, or turnBased:true) waits for the screen to settle before each tick and uses 600 ms action waits so animations finish. strategy:"default" now builds a sensible starter for ALL genres (shooter/runner/racing/fighting reflex policies; turn-based flow-keepers: end-turn/next/confirm/collect buttons, highlighted tiles, threats).

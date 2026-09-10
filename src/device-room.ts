@@ -477,7 +477,25 @@ export class DeviceRoom extends DurableObject<Bindings> {
       if (Array.isArray(b.macros)) this.macros = replace ? b.macros : dedupe([...b.macros, ...this.macros], (m) => `${m.app ?? ''}|${m.name}`)
       if (Array.isArray(b.screens)) this.screens = replace ? b.screens : dedupe([...b.screens, ...this.screens], (s) => `${s.app ?? ''}|${s.name}`)
       if (b.apps) this.apps = replace ? b.apps : { ...b.apps, ...this.apps }
-      if (b.profiles) this.profiles = replace ? b.profiles : { ...b.profiles, ...this.profiles }
+      if (b.profiles) {
+        if (replace) this.profiles = b.profiles
+        else for (const [app, inc] of Object.entries(b.profiles)) {
+          const cur = this.profiles[app]
+          if (!cur) { this.profiles[app] = inc; continue }
+          // v4.7.4 field-wise merge (existing keys win, missing ones are filled): controls/colors/regions/settings, best score = max,
+          // strategies = union by name (best fitness first, top 5), latest report kept — a rename/merge must never drop knowledge
+          const strat = [...(cur.strategies ?? [])]; for (const s of inc.strategies ?? []) if (!strat.some((x) => x.name === s.name)) strat.push(s)
+          this.profiles[app] = {
+            ...inc, ...cur,
+            controls: { ...inc.controls, ...cur.controls }, colors: { ...inc.colors, ...cur.colors }, regions: { ...inc.regions, ...cur.regions }, settings: { ...inc.settings, ...cur.settings },
+            label: cur.label ?? inc.label, genre: cur.genre ?? inc.genre,
+            strategies: strat.sort((x, y) => y.fitness - x.fitness).slice(0, 5),
+            bestScore: Math.max(cur.bestScore ?? -Infinity, inc.bestScore ?? -Infinity) === -Infinity ? undefined : Math.max(cur.bestScore ?? 0, inc.bestScore ?? 0),
+            reports: (cur.reports ?? 0) + (inc.reports ?? 0),
+            lastReport: (cur.lastReport?.ts ?? 0) >= (inc.lastReport?.ts ?? 0) ? cur.lastReport ?? inc.lastReport : inc.lastReport,
+          }
+        }
+      }
       if (Array.isArray(b.sessions)) this.sessions = (replace ? b.sessions : dedupe([...this.sessions, ...b.sessions], (s) => `${s.app}|${s.start}`)).sort((x, y) => y.start - x.start).slice(0, 100)
       if (b.playbooks) this.playbooks = replace ? b.playbooks : { ...b.playbooks, ...this.playbooks }
       if (b.label && !this.info.label) this.info.label = b.label.slice(0, 64)
@@ -498,6 +516,11 @@ export class DeviceRoom extends DurableObject<Bindings> {
         const m = b.merge ?? {}
         if (typeof m.overview === 'string') cur.overview = m.overview.trim().slice(0, 1200)
         if (typeof m.skill === 'number') cur.skill = Math.max(1, Math.min(5, Math.round(m.skill)))
+        // v4.7.4 full algorithm (code) + calibration numbers — verbatim, so the next chat can re-run the same planner
+        const alg = m.algorithm as { lang?: string; description?: string; code?: string } | undefined
+        if (alg && typeof alg.code === 'string' && alg.code.trim()) cur.algorithm = { lang: alg.lang?.slice(0, 24), description: alg.description?.slice(0, 600), code: alg.code.slice(0, 24_000), ts: Date.now() }
+        if (m.calibration && typeof m.calibration === 'object') { cur.calibration = { ...(cur.calibration ?? {}) }; for (const [k, v] of Object.entries(m.calibration as Record<string, unknown>).slice(0, 60)) if (['string', 'number', 'boolean'].includes(typeof v)) cur.calibration[k.slice(0, 40)] = (typeof v === 'string' ? v.slice(0, 200) : v) as string | number | boolean }
+        if (b.remove && (b.remove as Record<string, unknown>).algorithm) delete cur.algorithm
         const rec = cur as unknown as Record<string, string[]>
         for (const f of LIST) {
           const add = (m as Record<string, unknown>)[f]
