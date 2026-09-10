@@ -127,7 +127,7 @@ function resolveRefs(args: Record<string, unknown>, p: ProfileRec): { args: Reco
       }
       return out
     }
-    if (typeof v === 'string' && /^@(found|threat|away|center)\./.test(v)) return v // v4.3/4.5 runtime tokens substituted per tick by play_loop
+    if (typeof v === 'string' && (/^@(found|threat|away|center)\./.test(v) || v === '@text')) return v // v4.3/4.5/4.7 runtime tokens substituted per tick by play_loop
     if (typeof v === 'string' && v.startsWith('@')) {
       const r = look(v); if (!r) return v
       const k = (key ?? '').toLowerCase()
@@ -410,7 +410,22 @@ async function gameSetup(env: Bindings, deviceId: string, args: Record<string, u
   for (const e of els) { const raw = (e.text || e.id || '').toLowerCase().replace(/^btn_?/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20); if (raw && !set.controls[raw]) set.controls[raw] = { x: e.cx, y: e.cy, note: e.text ? `button "${e.text}"` : `id ${e.id}` } }
   // 4. genre guess (words + layout)
   const words = ocr.lines.map((l) => l.text.toLowerCase()).join(' ')
-  const genre = args.genre && typeof args.genre === 'string' ? args.genre : /ammo|kill|reload|headshot|weapon|scope/.test(words) ? 'shooter' : /lap|speed|km\/h|mph|nitro|gear/.test(words) ? 'racing' : /wave|tower|build|deploy|gold|elixir|mana/.test(words) ? 'strategy' : /combo|perfect|great|beat|note/.test(words) ? 'rhythm' : /level \d|moves|match|swap|tiles|puzzle/.test(words) ? 'puzzle' : /quest|hp|mp|xp|inventory|skill/.test(words) ? 'rpg' : /distance|run|jump|dash|\d+ ?m\b/.test(words) ? 'runner' : 'casual'
+  // v4.7 genre guess covers EVERY family: action/shooter, racing, fighting, rhythm, runner, puzzle, card, board, sports, strategy, rpg, simulation, adventure, casual
+  const genre = args.genre && typeof args.genre === 'string' ? args.genre
+    : /ammo|kill|reload|headshot|weapon|scope/.test(words) ? 'shooter'
+    : /lap|speed|km\/h|mph|nitro|gear|finish line|position/.test(words) ? 'racing'
+    : /round \d|ko\b|fight|block|punch|kick|combo/.test(words) && !/perfect|beat|note/.test(words) ? 'fighting'
+    : /perfect|great|beat|note|bpm/.test(words) ? 'rhythm'
+    : /deal|draw|hand|bet|fold|call|raise|spade|heart|club|diamond|ace|king|queen|jack|uno|solitaire|blackjack|poker|baloot|tarneeb|deck/.test(words) ? 'card'
+    : /your turn|opponent|dice|roll|checkmate|chess|ludo|domino|backgammon|board|monopoly|tile|carrom/.test(words) ? 'board'
+    : /goal|half|match|kick|shoot|pass|team|player|score \d+ ?- ?\d+|set|serve|inning|touchdown|quarter|penalty/.test(words) && /vs|\d+ ?- ?\d+|team/.test(words) ? 'sports'
+    : /wave|tower|build|deploy|gold|elixir|mana|troops|base|army|units|upgrade/.test(words) ? 'strategy'
+    : /quest|hp|mp|xp|inventory|skill|equip|dungeon|guild|party|hero/.test(words) ? 'rpg'
+    : /farm|harvest|crop|city|citizen|shop|customer|manage|profit|factory|restaurant|hotel|build|zoo|garden|breed|feed/.test(words) ? 'simulation'
+    : /talk|chapter|story|dialogue|explore|map|inventory|clue|escape|room|hidden|find the/.test(words) ? 'adventure'
+    : /level \d|moves|match|swap|tiles|puzzle|sudoku|word|crossword|hint|solve|merge/.test(words) ? 'puzzle'
+    : /distance|run|jump|dash|\d+ ?m\b/.test(words) ? 'runner'
+    : 'casual'
   set.settings.screenW = W; set.settings.screenH = H; set.settings.setupBy = 'game_setup'
   if (!cols.length) notes.push('palette empty — screen may be black/loading; re-run game_setup in-game')
   if (!numLines.length) notes.push('no HUD numbers found — start a round then game_setup {force:true} to capture score/hp')
@@ -705,6 +720,12 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
   // v4.6 explore: when nothing is gained for `exploreAfter` ticks, try a random un-fired/low-scoring rule or nudge the action
   const explore = args.explore === true
   let noGainTicks = 0
+  // v4.7 turn-based mode (puzzle/board/card/strategy/rpg/simulation/adventure/sports): wait for animations to settle before
+  // each observation, and allow rules on UI buttons (if.ui) / OCR texts (if.text) — the universal way to keep ANY game flowing
+  const genreNow = ((prof as unknown as { genre?: string } | null)?.genre ?? '').toLowerCase()
+  const turnBased = args.turnBased === true || (args.turnBased !== false && TURN_BASED_GENRES.has(genreNow))
+  const needsUi = policy.some((r) => (r.if as Record<string, unknown> | undefined)?.ui !== undefined)
+  const needsText = policy.some((r) => (r.if as Record<string, unknown> | undefined)?.text !== undefined)
   // v4.6 hybrid: a rule may carry `reflex:{rules, timeoutMs}` → hands that phase to on-device react_script (~50 ms reactions)
   let reflexRuns = 0
   for (let i = 1; i <= ticks; i++) {
@@ -717,9 +738,15 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
       log.push({ tick: i, reflex: { ok: rr.ok, triggers: (rr.data as { triggers?: number } | undefined)?.triggers, stoppedBy: (rr.data as { stoppedBy?: string } | undefined)?.stoppedBy, error: rr.error } })
       delete tickArgs.reflex
     }
+    if (turnBased && i > 1) await executeTool(env, deviceId, 'wait_for_screen', { mode: 'stable', timeoutMs: 2500, stableFor: 400, intervalMs: 200 }, { ...inner, internal: true }).catch(() => null)
     const r = await play(env, deviceId, tickArgs, inner, false)
     pendingAct = undefined
     lastTick = r
+    // v4.7 UI buttons + screen texts for turn-based rules (cheap: ui_dump is instant; OCR only when a rule needs it)
+    let uiButtons: { text: string; id?: string; cx: number; cy: number }[] = []
+    let texts: { text: string; cx: number; cy: number }[] = []
+    if (needsUi) { const u = await executeTool(env, deviceId, 'get_ui_elements', {}, { ...inner, internal: true }).catch(() => null); uiButtons = (((u?.data as { elements?: { text?: string; id?: string; cx: number; cy: number; clickable?: boolean }[] } | undefined)?.elements) ?? []).filter((e) => e.clickable && (e.text || e.id)).map((e) => ({ text: (e.text ?? e.id ?? '').toLowerCase(), id: e.id, cx: e.cx, cy: e.cy })) }
+    if (needsText) { const stuckTxt = (r.stuck as { text?: { text: string; cx: number; cy: number }[] } | undefined)?.text; texts = stuckTxt ?? (await ocrLines(env, deviceId, undefined, { ...inner, internal: true }).catch(() => ({ lines: [] as OcrLine[] }))).lines.map((l) => ({ text: l.text, cx: l.cx, cy: l.cy })) }
     if (!r.ok && !r.frame) { stoppedBy = 'error'; log.push({ tick: i, error: r.error }); break }
     const objs = (r.frame as { objects?: Record<string, { count: number; objects: { cx: number; cy: number }[] }> } | undefined)?.objects ?? {}
     const values: Record<string, number> = Object.fromEntries(Object.entries(((r.frame as { ocr?: Record<string, { value?: number } | unknown[]> }).ocr ?? {})).filter(([, v]) => v && !Array.isArray(v) && typeof (v as { value?: number }).value === 'number').map(([k, v]) => [k, (v as { value: number }).value]))
@@ -775,15 +802,21 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
       if (ok && cond.valueBelow) { const c = cond.valueBelow as { name: string; value: number }; if (!(typeof values[c.name] === 'number' && values[c.name] < c.value)) ok = false }
       if (ok && cond.valueAbove) { const c = cond.valueAbove as { name: string; value: number }; if (!(typeof values[c.name] === 'number' && values[c.name] > c.value)) ok = false }
       if (ok && cond.everyTicks !== undefined) { if (i % Math.max(1, Math.round(Number(cond.everyTicks))) !== 0) ok = false }
+      let matchedText: string | undefined
+      if (ok && cond.ui !== undefined) { const want = String(cond.ui).toLowerCase().replace(/[-_]/g, ' '); const b = uiButtons.find((x) => x.text.replace(/[-_]/g, ' ').includes(want) || (x.id ?? '').toLowerCase().includes(want.replace(/ /g, '_'))); if (!b) ok = false; else { found = { cx: b.cx, cy: b.cy }; matchedText = b.text } }
+      if (ok && cond.text !== undefined) { const wants = (Array.isArray(cond.text) ? cond.text : [cond.text]).map((t) => String(t).toLowerCase()); let hit: { text: string; cx: number; cy: number } | undefined; for (const w of wants) { hit = texts.find((l) => l.text.toLowerCase().includes(w)); if (hit) break } if (!hit) ok = false; else { found = { cx: hit.cx, cy: hit.cy }; matchedText = hit.text } }
       if (!ok) continue
       fires[name] = (fires[name] ?? 0) + 1; lastFire[name] = i; lastRule = name
       ;(ruleStats[name] ?? (ruleStats[name] = { fires: 0, good: 0, bad: 0 })).fires++
       entry.rule = name; if (exploring) entry.explore = true
       const th = threats[0] ? { cx: threats[0].cx, cy: threats[0].cy } : undefined
-      if (Array.isArray(rule.do) && rule.do.length) pendingAct = { act: sub(rule.do, found, th), waitMs: rule.waitMs ?? args.waitMs ?? 150 }
-      else if (rule.tool && typeof (rule.tool as { name?: unknown }).name === 'string') pendingAct = { tool: sub(rule.tool, found, th), waitMs: rule.waitMs ?? args.waitMs ?? 250 }
+      const subT = (v: unknown) => { const s = sub(v, found, th); return matchedText ? JSON.parse(JSON.stringify(s).replace(/"@text"/g, JSON.stringify(matchedText))) : s }
+      const defWait = turnBased ? 600 : 150
+      if (Array.isArray(rule.do) && rule.do.length) pendingAct = { act: subT(rule.do), waitMs: rule.waitMs ?? args.waitMs ?? defWait }
+      else if (rule.tool && typeof (rule.tool as { name?: unknown }).name === 'string') pendingAct = { tool: subT(rule.tool), waitMs: rule.waitMs ?? args.waitMs ?? Math.max(250, defWait) }
       else if (rule.reflex && typeof rule.reflex === 'object') pendingAct = { reflex: sub(rule.reflex, found, th) }
       if (found) entry.at = found
+      if (matchedText) entry.text = matchedText
       break
     }
     log.push(entry)
@@ -815,6 +848,7 @@ async function playLoop(env: Bindings, deviceId: string, args: Record<string, un
     ...(learned ? { learned } : {}),
     ...(advice.length ? { advice } : {}),
     ...(reflexRuns ? { reflexRuns } : {}),
+    ...(turnBased ? { turnBased: true } : {}),
     durationMs: Date.now() - t0,
     hint: learned && (learned.rank as number) > 1 ? `this policy ranks #${learned.rank}/${learned.of} for this game — play_loop {strategy:"best"} replays the top one` : 'read advice + rules (good/bad per rule) → fix the worst rule → play_loop again with name:"v2"; use reflex:{rules} inside a rule when reactions must be < 100 ms',
   }

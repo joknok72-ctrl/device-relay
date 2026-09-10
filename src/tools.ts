@@ -578,11 +578,11 @@ export const TOOLS: ToolDef[] = [
     name: 'play_loop',
     description:
       'AUTOPILOT (v4.3, learning v4.4): give the relay a POLICY (or strategy:"best" to replay the top learned one) and it plays up to 40 ticks (~0.3-0.6 s each, max 25 s) by itself using the full play() perception (objects, deltas, threats, values, stuck) — one action per tick, first matching rule wins (order = priority). ' +
-      'policy:[{name, if:{threat:"@enemy"|true, present:"@coin", absent:"@enemy", stuck:"menu|game_over|any", valueBelow:{name:"hp",value:30}, valueAbove:{...}, everyTicks:3}, do:[combo steps — tokens: x:"@found.x", y:"@found.y-40" (nearest matched object), "@threat.x/y" (most urgent threat), "@away.x" (side opposite the threat = dodge), "@center.x/y"] | tool:{name,arguments}, cooldownTicks, waitMs}]. valueBelow/valueAbove also work on bar gauges (profile region + same-named colour → fill %). ' +
+      'policy:[{name, if:{threat:"@enemy"|true, present:"@coin", absent:"@enemy", stuck:"menu|game_over|any", valueBelow:{name:"hp",value:30}, valueAbove:{...}, everyTicks:3, ui:"end turn" (v4.7 clickable UI node), text:["your turn","continue"] (v4.7 OCR; "@text" token = the matched text)}, do:[combo steps — tokens: x:"@found.x", y:"@found.y-40" (nearest matched object), "@threat.x/y" (most urgent threat), "@away.x" (side opposite the threat = dodge), "@center.x/y"] | tool:{name,arguments}, cooldownTicks, waitMs}]. valueBelow/valueAbove also work on bar gauges (profile region + same-named colour → fill %). ' +
       'stopOn:{stuck:"game_over"|"any", event:"hp dropping", valueBelow:{name,value}, valueAbove:{...}}; autoMenu (default true) taps PLAY/CONTINUE/RETRY/× when a menu blocks the game. Returns per-tick log (rule fired, summary, judge), fires per rule, stoppedBy, last frame. ' +
       'v4.6 SELF-CRITIQUE: each rule is judged by the tick after it fires (score gained / threat cleared = good; hp lost / game over = bad) → `rules` {fires,good,bad,score} + `advice` (which rule to fix). A rule that keeps hurting is auto-skipped. A rule may use reflex:{rules:[...react_script rules], timeoutMs} instead of do → hands that phase to the on-device 50 ms engine (hybrid). explore:true rotates priorities when stuck without gain. An automatic session_report is written after each run. ' +
       'Examples — clicker: [{if:{present:"@coin"},do:[{op:"tap",x:"@found.x",y:"@found.y"}]}]. Runner: [{name:"dodge",if:{threat:true},do:[{op:"swipe",x1:540,y1:1700,x2:540,y2:1100,duration:120}]},{if:{present:"@coin"},do:[{op:"tap",x:"@found.x",y:"@found.y"}]}]. Shooter: [{if:{valueBelow:{name:"hp",value:25}},do:[{op:"joystick",at:"@stick",direction:"down",duration:600}]},{if:{present:"@enemy"},do:[{op:"aim",at:"@look",dx:"@found.x-540",dy:0},{op:"fire",at:"@fire",count:4}]},{if:{everyTicks:2},do:[{op:"joystick",at:"@stick",direction:"up",duration:400}]}]. ' +
-      'Use play_loop for strategy-level autonomy (seconds), react_script for reflexes (< 100 ms), plain play when you want to think every tick.',
+      'Works for EVERY genre: reflex games via threat/present rules (+reflex hybrid), turn-based games (puzzle/card/board/strategy/rpg/simulation/adventure/sports) via ui/text rules with turnBased pacing. Use play_loop for strategy-level autonomy (seconds), react_script for reflexes (< 100 ms), plain play when you want to think every tick.',
     parameters: {
       type: 'object',
       properties: {
@@ -593,6 +593,7 @@ export const TOOLS: ToolDef[] = [
         explore: { type: 'boolean', description: 'v4.6: when nothing is gained for exploreAfter ticks, rotate rule priority so other matching rules get tried (default false)' },
         exploreAfter: { type: 'integer', description: 'v4.6: ticks without gain before exploring (default 4)' },
         report: { type: 'boolean', description: 'v4.6: auto-write a session_report summarising the run (default true)' },
+        turnBased: { type: 'boolean', description: 'v4.7: wait for the screen to settle before each tick + 600 ms action waits (auto-on for puzzle/card/board/strategy/rpg/simulation/adventure/sports genres; force with true/false)' },
         note: { type: 'string', description: 'v4.4: short note stored with the strategy' },
         ticks: { type: 'integer', description: 'max ticks (default 10, max 40)', minimum: 1, maximum: 40 },
         maxMs: { type: 'integer', description: 'time budget ms (default/max 25000)', minimum: 1000, maximum: 25000 },
@@ -611,7 +612,7 @@ export const TOOLS: ToolDef[] = [
     description:
       'AUTO-PROFILE AN UNKNOWN GAME (v4.2) — call once when play {} says there is no game_profile. One capture: dominant colours → @colours (red/green/yellow…), OCR digit lines in the HUD → numeric @regions (score/hp/coins/time…), clickable UI buttons → @controls, genre guess. Saves everything as the game_profile (nothing is tapped). ' +
       'Then play {} immediately tracks those colours/values every tick with deltas + events. Rename/prune afterwards with game_profile set/unset. Run in-game (not on a menu) for the best palette; force:true re-scans and merges.',
-    parameters: { type: 'object', properties: { force: { type: 'boolean', description: 're-scan even if a profile exists (merge)' }, genre: { type: 'string', description: 'override the genre guess: shooter|runner|puzzle|rhythm|strategy|rpg|racing|casual|other' }, label: { type: 'string', description: 'human name for the game' }, image: { type: 'boolean', description: 'include a small screenshot (default true)' } }, required: [] },
+    parameters: { type: 'object', properties: { force: { type: 'boolean', description: 're-scan even if a profile exists (merge)' }, genre: { type: 'string', description: 'override the genre guess: shooter|runner|racing|fighting|rhythm|puzzle|card|board|sports|strategy|rpg|simulation|adventure|casual|other' }, label: { type: 'string', description: 'human name for the game' }, image: { type: 'boolean', description: 'include a small screenshot (default true)' } }, required: [] },
   },
   {
     name: 'react_script',
@@ -1246,7 +1247,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '4.6.0',
+      version: '4.7.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
