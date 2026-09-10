@@ -100,21 +100,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
     const data = JSON.stringify(msg)
     for (const ws of this.viewerSockets()) { try { ws.send(data) } catch { /* ignore */ } }
   }
-  /** v4.8 auto-live: tell the phone to start/stop pushing preview frames depending on whether anyone is watching.
-   *  Fire-and-forget (no pending entry, no log row) so the human's monitor never pollutes the AI's command history. */
-  private setPhoneStream(enabled: boolean, fps = 2, maxWidth = 360) {
-    const phone = this.phoneSockets()[0]
-    if (!phone) return
-    try { phone.send(JSON.stringify({ kind: 'command', id: crypto.randomUUID(), ts: Date.now(), action: { type: 'stream', enabled, fps, maxWidth, quality: 55 } })) } catch { /* ignore */ }
-  }
-  private viewerWantsLive(): { fps: number; maxWidth: number } | null {
-    let fps = 0, maxWidth = 0, any = false
-    for (const ws of this.viewerSockets()) {
-      const a = ws.deserializeAttachment() as { live?: boolean; fps?: number; maxWidth?: number } | null
-      if (a?.live) { any = true; fps = Math.max(fps, a.fps ?? 2); maxWidth = Math.max(maxWidth, a.maxWidth ?? 360) }
-    }
-    return any ? { fps, maxWidth } : null
-  }
   private addLog(entry: LogEntry) {
     this.logs.unshift(entry)
     if (this.logs.length > MAX_LOGS) this.logs.length = MAX_LOGS
@@ -180,13 +165,7 @@ export class DeviceRoom extends DurableObject<Bindings> {
         this.broadcastViewers({ kind: 'status', info: this.snapshotInfo() })
         if (!wasOnline) this.webhook('online')
       } else {
-        // v4.8: ?live=1 → auto-start the phone stream while this viewer is connected (fps/maxWidth optional)
-        const live = url.searchParams.get('live') === '1'
-        const fps = Math.min(4, Math.max(0.5, Number(url.searchParams.get('fps') ?? 2) || 2))
-        const maxWidth = Math.min(720, Math.max(160, Number(url.searchParams.get('maxWidth') ?? 360) || 360))
-        server.serializeAttachment({ live, fps, maxWidth })
-        server.send(JSON.stringify({ kind: 'snapshot', info: this.snapshotInfo(), logs: this.logs, screenshot: this.lastScreenshot, recording: this.recording ? { active: true, name: this.recording.name, steps: this.recording.steps.length } : { active: false }, autoLive: live }))
-        if (live) this.setPhoneStream(true, fps, maxWidth)
+        server.send(JSON.stringify({ kind: 'snapshot', info: this.snapshotInfo(), logs: this.logs, screenshot: this.lastScreenshot, recording: this.recording ? { active: true, name: this.recording.name, steps: this.recording.steps.length } : { active: false } }))
       }
       return new Response(null, { status: 101, webSocket: client })
     }
@@ -614,8 +593,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
         this.info.online = true
         await this.persist()
         this.broadcastViewers({ kind: 'status', info: this.snapshotInfo() })
-        // v4.8: phone (re)connected while someone is watching → resume the live stream automatically
-        { const want = this.viewerWantsLive(); if (want) this.setPhoneStream(true, want.fps, want.maxWidth) }
         break
       }
       case 'result': {
@@ -655,13 +632,6 @@ export class DeviceRoom extends DurableObject<Bindings> {
 
   async webSocketClose(ws: WebSocket, code: number, reason: string) {
     const tags = this.ctx.getTags(ws)
-    if (tags.includes('viewer')) {
-      // v4.8: last live viewer left → stop the phone stream (saves battery/bandwidth); others still watching → keep it
-      const others = this.viewerSockets().filter((v) => v !== ws)
-      const stillLive = others.some((v) => (v.deserializeAttachment() as { live?: boolean } | null)?.live)
-      if (!stillLive) this.setPhoneStream(false)
-      return
-    }
     if (tags.includes('phone') && this.phoneSockets().length === 0) {
       const wasOnline = this.info.online
       this.info.online = false

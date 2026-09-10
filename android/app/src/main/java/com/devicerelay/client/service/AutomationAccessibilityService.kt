@@ -155,9 +155,6 @@ class AutomationAccessibilityService : AccessibilityService() {
         "aim" -> aim(action)
         "fire_burst" -> fireBurst(action)
         "combo" -> combo(action)
-        // v4.8 shared-phone play: the human keeps using the phone (chat app) while the AI plays
-        "split_screen" -> splitScreen(action)
-        "switch_app" -> switchApp(action)
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -187,49 +184,6 @@ class AutomationAccessibilityService : AccessibilityService() {
 
     private fun global(actionId: Int): Outcome =
         if (performGlobalAction(actionId)) Outcome.Ok() else Outcome.Fail("global action failed")
-
-    // ---------------------------------------------------------------- v4.8 shared-phone play
-    /**
-     * Toggle Android split-screen (multi-window). With `text` = package/label: bring that app to the front first, then
-     * toggle split so it lands in the top half; the previous app (the human's chat) stays reachable in the bottom half.
-     * `enabled:false` → toggle again to leave split mode. Some OEM launchers ignore the toggle; the result reports it.
-     */
-    private suspend fun splitScreen(a: Action): Outcome {
-        if (Build.VERSION.SDK_INT < 24) return Outcome.Fail("split screen requires Android 7+")
-        val before = currentPackage()
-        if (a.enabled == false) {
-            val ok = performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
-            return if (ok) Outcome.Ok(data = buildJsonObject { put("split", false) }) else Outcome.Fail("split toggle rejected")
-        }
-        if (!a.text.isNullOrBlank()) {
-            val r = openApp(a.text)
-            if (r is Outcome.Fail) return r
-            delay(900)
-        }
-        val ok = performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
-        if (!ok) return Outcome.Fail("split toggle rejected by system (launcher may not support it)")
-        delay(700)
-        // in split mode the top app keeps the focus; report what we see so the agent can verify
-        return Outcome.Ok(data = buildJsonObject {
-            put("split", true); put("top", currentPackage()); before?.let { put("previous", it) }
-            put("hint", "human: pick your chat app in the bottom half; AI: coordinates are still full-screen pixels — use capture_screen to see the new layout")
-        })
-    }
-
-    /** Bring `text` (package or label) to the front and remember the app that was there (for switch back with text:"back"). */
-    private var switchedFrom: String? = null
-    private suspend fun switchApp(a: Action): Outcome {
-        val target = when {
-            a.text == "back" || a.text.isNullOrBlank() -> switchedFrom ?: return Outcome.Fail("nothing to switch back to")
-            else -> a.text
-        }
-        val from = currentPackage()
-        val r = openApp(target)
-        if (r is Outcome.Fail) return r
-        if (from != null && from != target && !from.startsWith("com.android.systemui")) switchedFrom = from
-        delay(a.duration ?: 800)
-        return Outcome.Ok(data = buildJsonObject { put("now", currentPackage()); from?.let { put("from", it) }; switchedFrom?.let { put("switchBackTo", it) } })
-    }
 
     @Suppress("DEPRECATION")
     private fun wakeScreen(): Outcome {
