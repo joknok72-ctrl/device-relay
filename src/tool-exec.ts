@@ -621,16 +621,35 @@ function defaultPolicy(p: ProfileRec | null): { policy: Record<string, unknown>[
   } else if (genre === 'racing' || has('gas')) {
     policy.push({ name: 'gas', if: { everyTicks: 1 }, do: [{ op: 'down', finger: 0, at: has('gas') ? '@gas' : '@center.x' }] })
     if (enemy) policy.push({ name: 'steer', if: { threat: true }, do: [{ op: 'tap', at: has('left') && has('right') ? '@left' : '@center.x' }] })
+  } else if (genre === 'fighting' || (has('punch') || has('kick') || has('attack'))) {
+    const atk = ['attack', 'punch', 'kick', 'hit'].find(has)
+    if (enemy && atk) policy.push({ name: 'strike', if: { present: `@${enemy}` }, do: [{ op: 'tap', at: `@${atk}` }, { op: 'tap', at: `@${atk}`, delayMs: 120 }], cooldownTicks: 0 })
+    if (has('block')) policy.push({ name: 'block', if: { threat: true }, do: [{ op: 'long_press', at: '@block', duration: 600 }] })
+    if (has('stick')) policy.push({ name: 'close-in', if: { everyTicks: 2 }, do: [{ op: 'joystick', at: '@stick', direction: 'right', duration: 300 }] })
+  } else if (genre === 'puzzle' || genre === 'board' || genre === 'card' || genre === 'strategy' || genre === 'rpg' || genre === 'simulation' || genre === 'adventure' || genre === 'sports' || genre === 'casual' || genre === 'other' || genre === '') {
+    // TURN-BASED / UI-DRIVEN FAMILY (puzzle, board, card, strategy, rpg, simulation, adventure, sports, casual):
+    // the winning moves are decided by the model each turn; the default policy only keeps the game FLOWING:
+    //  • obvious buttons first (end turn / next / confirm / claim / collect / attack) via the UI tree or OCR
+    //  • collect/tap highlighted targets (coin/gem/glow/hint colours)
+    //  • avoid threats if any colour is named like one
+    //  • never spam: cooldowns + waitMs 600 so animations finish (turnBased is enabled by play_loop for these genres)
+    const buttons = ['end-turn', 'endturn', 'next', 'confirm', 'ok', 'done', 'attack', 'play', 'deal', 'draw', 'hint', 'roll', 'collect', 'claim', 'skip', 'continue', 'go', 'shoot', 'kick', 'swing', 'serve'].filter(has)
+    for (const b of buttons.slice(0, 4)) policy.push({ name: b, if: { ui: b }, do: [{ op: 'tap', at: `@${b}` }], cooldownTicks: 2, waitMs: 700 })
+    policy.push({ name: 'button-text', if: { text: ['END TURN', 'NEXT', 'CONTINUE', 'CONFIRM', 'OK', 'DONE', 'CLAIM', 'COLLECT', 'ATTACK', 'PLAY', 'DEAL', 'ROLL', 'HINT', 'SKIP', 'GO'] }, tool: { name: 'tap_text', arguments: { text: '@text' } }, cooldownTicks: 2, waitMs: 700 })
+    if (enemy) policy.push({ name: 'avoid', if: { threat: `@${enemy}` }, do: [{ op: 'tap', x: '@away.x', y: '@threat.y' }] })
+    const glow = pick(/hint|glow|highlight|select|active|target|coin|gem|star|collect|gold|money|fruit|green|yellow|blue/i)
+    if (glow) policy.push({ name: 'tap-highlight', if: { present: `@${glow}` }, do: [{ op: 'tap', x: '@found.x', y: '@found.y' }], cooldownTicks: 1, waitMs: 600 })
+    const other = colors.find((c) => c !== enemy && c !== glow)
+    if (other && !glow) policy.push({ name: 'tap', if: { present: `@${other}` }, do: [{ op: 'tap', x: '@found.x', y: '@found.y' }], cooldownTicks: 2, waitMs: 600 })
   } else {
-    // casual / clicker / puzzle / unknown: dodge threats, tap collectibles, otherwise tap the biggest target
     if (enemy) policy.push({ name: 'avoid', if: { threat: `@${enemy}` }, do: [{ op: 'tap', x: '@away.x', y: '@threat.y' }] })
     if (coin) policy.push({ name: 'collect', if: { present: `@${coin}` }, do: [{ op: 'tap', x: '@found.x', y: '@found.y' }] })
-    const other = colors.find((c) => c !== enemy && c !== coin)
-    if (other && !coin) policy.push({ name: 'tap', if: { present: `@${other}` }, do: [{ op: 'tap', x: '@found.x', y: '@found.y' }], cooldownTicks: 1 })
   }
   policy.push({ name: 'menu', if: { stuck: 'menu' }, tool: { name: 'dismiss_popups', arguments: {} } })
   return { policy, stopOn }
 }
+/** genres whose play is turn/animation driven rather than reflex driven */
+const TURN_BASED_GENRES = new Set(['puzzle', 'board', 'card', 'strategy', 'rpg', 'simulation', 'adventure', 'sports', 'casual', 'other', ''])
 
 async function playLoop(env: Bindings, deviceId: string, args: Record<string, unknown>, opts: ExecOptions): Promise<ToolResult> {
   const t0 = Date.now()
