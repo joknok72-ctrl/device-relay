@@ -44,7 +44,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.sync.withLock
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import kotlinx.serialization.json.JsonArray
@@ -340,22 +339,25 @@ class AutomationAccessibilityService : AccessibilityService() {
     private var lastCaptureAt = 0L
     private suspend fun captureBitmap(): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-        return captureMutex.withLock {
+        captureMutex.lock()
+        try {
             val now = android.os.SystemClock.elapsedRealtime()
-            lastFrame?.takeIf { !it.isRecycled && now - lastFrameAt < 120 }?.let { return@withLock it }
+            val cached = lastFrame
+            if (cached != null && !cached.isRecycled && now - lastFrameAt < 120) return cached
             var attempt = 0
             while (true) {
                 val since = android.os.SystemClock.elapsedRealtime() - lastCaptureAt
                 if (since < 60) delay(60 - since)
                 lastCaptureAt = android.os.SystemClock.elapsedRealtime()
                 val (bmp, code) = captureOnce()
-                if (bmp != null) { lastFrame = bmp; lastFrameAt = android.os.SystemClock.elapsedRealtime(); return@withLock bmp }
+                if (bmp != null) { lastFrame = bmp; lastFrameAt = android.os.SystemClock.elapsedRealtime(); return bmp }
                 // 3 = ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT, 1 = INTERNAL_ERROR (transient on some OEMs)
                 if ((code == 3 || code == 1) && attempt < 5) { attempt++; delay(if (code == 3) 250L else 120L); continue }
                 // last resort: a slightly stale frame (< 1.5 s) beats failing the whole tool
-                return@withLock lastFrame?.takeIf { !it.isRecycled && android.os.SystemClock.elapsedRealtime() - lastFrameAt < 1500 }
+                val stale = lastFrame
+                return if (stale != null && !stale.isRecycled && android.os.SystemClock.elapsedRealtime() - lastFrameAt < 1500) stale else null
             }
-        }
+        } finally { captureMutex.unlock() }
     }
     private suspend fun captureOnce(): Pair<Bitmap?, Int> = suspendCoroutine { cont ->
         try {
