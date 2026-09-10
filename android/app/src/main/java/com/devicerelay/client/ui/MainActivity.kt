@@ -267,6 +267,7 @@ fun RelayScreen(pairing: RelayConfig? = null, onPairingConsumed: () -> Unit = {}
                         OutlinedTextField(
                             value = cfg.deviceId, onValueChange = { cfg = cfg.copy(deviceId = it) },
                             label = { Text("Device ID (حروف/أرقام/-/_)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            supportingText = { Text("ثبّت اسمًا تختاره (مثل my-phone) — يبقى ثابتًا بعد إعادة التثبيت فلا تُفقد ذاكرة الـ AI. لتغيير اسم جهاز موجود مع نقل ذاكرته استخدم «تغيير ID» في صفحة /setup.", fontSize = 11.sp) },
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Switch(checked = cfg.autoConnect, onCheckedChange = { cfg = cfg.copy(autoConnect = it) })

@@ -56,6 +56,7 @@ export type Action =
   | { type: 'read_text'; region?: Region; lang?: string }
   | { type: 'find_colors'; colors: string[]; tolerance?: number; region?: Region }
   | { type: 'stream'; enabled: boolean; fps?: number; maxWidth?: number; quality?: number }
+  | { type: 'set_device_id'; text: string }
   // v1.9
   // v2.5 multi-touch
   | { type: 'finger_down'; finger: number; x: number; y: number; duration?: number }

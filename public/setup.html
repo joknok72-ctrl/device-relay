@@ -188,6 +188,7 @@
         <div class="flex flex-wrap gap-2 mt-2">
           <button class="btn btn-s !py-1" data-act="token" data-id="${esc(d.deviceId)}"><i class="fas fa-key"></i> توكن لهذا الجهاز</button>
           <button class="btn btn-s !py-1" data-act="label" data-id="${esc(d.deviceId)}"><i class="fas fa-tag"></i> تسمية</button>
+          <button class="btn btn-s !py-1" data-act="rename" data-id="${esc(d.deviceId)}" title="تغيير Device ID مع نقل كل الذاكرة (بروفايلات/استراتيجيات/جلسات/ملاحظات) والتوكنات"><i class="fas fa-i-cursor"></i> تغيير ID</button>
           <button class="btn btn-s !py-1" data-act="clear" data-id="${esc(d.deviceId)}"><i class="fas fa-broom"></i> مسح السجل</button>
           ${d.online ? `<button class="btn btn-s !py-1" data-act="disc" data-id="${esc(d.deviceId)}"><i class="fas fa-plug-circle-xmark"></i> فصل</button>` : ''}
           <button class="btn btn-d !py-1" data-act="del" data-id="${esc(d.deviceId)}"><i class="fas fa-trash"></i></button>
@@ -297,7 +298,7 @@
     const ov = await r.json()
     $('#ver').textContent = 'v' + ov.version
     $('#webhook-state').textContent = ov.webhookConfigured ? 'مضبوط ✔' : 'غير مضبوط'
-    renderDevices(ov.devices); renderTokens(ov.tokens)
+    window.__devices = ov.devices; renderDevices(ov.devices); renderTokens(ov.tokens)
     // memory device selector (keep selection)
     const sel = $('#mem-device'); const prev = memDevice
     sel.innerHTML = ov.devices.map(d => `<option value="${esc(d.deviceId)}">${esc(d.deviceId)}${d.label ? ' — ' + esc(d.label) : ''}</option>`).join('')
@@ -334,6 +335,16 @@
     const id = a.dataset.id
     if (a.dataset.act === 'token') { $('#kind').value = 'device'; $('#kind').onchange(); $('#deviceId').value = id; $('#new-token').scrollIntoView({ behavior: 'smooth' }); $('#new-token [name=label]').focus() }
     if (a.dataset.act === 'label') { const l = prompt('اسم توضيحي للجهاز ' + id + ':'); if (l !== null) { await fetch(`/api/admin/devices/${id}/label`, { method: 'POST', headers: H, body: JSON.stringify({ label: l }) }); load() } }
+    if (a.dataset.act === 'rename') {
+      const others = (window.__devices || []).map(d => d.deviceId).filter(x => x !== id)
+      const n = prompt('Device ID الجديد لـ ' + id + ' (حروف/أرقام/-/_):\nسيتم نقل كل ذاكرة الـ AI والتوكنات إلى الاسم الجديد.' + (others.length ? '\n(لو كتبت اسم جهاز موجود مثل ' + others.join(', ') + ' سيتم الدمج معه)' : ''))
+      if (!n) return
+      const r = await fetch(`/api/admin/devices/${id}/rename`, { method: 'POST', headers: H, body: JSON.stringify({ newId: n.trim() }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { alert('تعذّر التغيير: ' + (j.error || r.status)); return }
+      toast(`تم → ${j.to} · ذاكرة: ${j.memory ? Object.entries(j.memory).map(([k, v]) => k + ' ' + v).join(', ') : '-'} · توكنات ${j.tokensMoved} · الموبايل: ${j.phone}`)
+      setTimeout(load, 2500)
+    }
     if (a.dataset.act === 'clear') { await fetch(`/api/admin/devices/${id}/clear-logs`, { method: 'POST', headers: H }); toast('تم مسح السجل'); load() }
     if (a.dataset.act === 'disc') { await fetch(`/api/admin/devices/${id}/disconnect`, { method: 'POST', headers: H }); toast('تم الفصل — التطبيق سيعيد الاتصال تلقائيًا'); setTimeout(load, 1500) }
     if (a.dataset.act === 'del' && confirm('حذف الجهاز ' + id + ' وكل توكناته من القائمة؟')) { await fetch(`/api/devices/${id}`, { method: 'DELETE', headers: H }); load() }

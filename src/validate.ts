@@ -364,6 +364,11 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       if (isNum(a.quality)) action.quality = clamp(Math.round(a.quality), 10, 90)
       return { action }
     }
+    case 'set_device_id': {
+      // v4.7.3 admin rename: the phone saves the new id and reconnects under it
+      if (typeof a.text !== 'string' || !isValidDeviceId(a.text)) return { error: 'set_device_id requires a valid text (new device id)' }
+      return { action: { type: 'set_device_id', text: a.text } }
+    }
     case 'find_image': {
       if (typeof a.image !== 'string' || a.image.length < 16 || a.image.length > 400_000) return { error: 'find_image requires image (base64 PNG/JPEG, <= 300KB)' }
       const action: Action = { type: 'find_image', image: a.image.replace(/^data:image\/\w+;base64,/, ''), threshold: isNum(a.threshold) ? clamp(a.threshold, 0.5, 1) : 0.85, maxResults: isNum(a.maxResults) ? clamp(Math.round(a.maxResults), 1, 20) : 5 }

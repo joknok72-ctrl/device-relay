@@ -199,6 +199,16 @@ class RelayConnectionService : Service() {
         } else if (cmd.action.type == "stream") {
             if (AutomationAccessibilityService.instance == null && cmd.action.enabled == true) ResultMessage(id = cmd.id, ok = false, error = "accessibility service not enabled")
             else { setStream(ws, cmd.action.enabled == true, cmd.action.fps, cmd.action.maxWidth, cmd.action.quality); ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = kotlinx.serialization.json.buildJsonObject { put("streaming", kotlinx.serialization.json.JsonPrimitive(cmd.action.enabled == true)) }) }
+        } else if (cmd.action.type == "set_device_id") {
+            // v4.1.6 admin rename: persist the new id, ack, then reconnect under it (memory was already copied by the relay)
+            val newId = cmd.action.text?.trim()?.replace(Regex("[^a-zA-Z0-9_-]"), "-")?.take(64)
+            if (newId.isNullOrBlank() || newId.length < 3) ResultMessage(id = cmd.id, ok = false, error = "invalid device id")
+            else {
+                val cfg = SettingsRepo.get(this)
+                SettingsRepo.save(this, cfg.copy(deviceId = newId))
+                scope.launch { delay(600); backoffMs = 1_000L; ws.close(1000, "device id changed to $newId") }
+                ResultMessage(id = cmd.id, ok = true, durationMs = 0, data = kotlinx.serialization.json.buildJsonObject { put("deviceId", kotlinx.serialization.json.JsonPrimitive(newId)); put("reconnecting", kotlinx.serialization.json.JsonPrimitive(true)) })
+            }
         } else if (svc == null) {
             ResultMessage(id = cmd.id, ok = false, error = "accessibility service not enabled")
         } else {
