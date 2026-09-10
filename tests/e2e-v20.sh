@@ -11,7 +11,7 @@ export RELAY_URL=$U RELAY_TOKEN=$T RELAY_DEVICE=$D
 P=/home/user/webapp/agent/phone.sh
 
 echo "== version / catalogue"
-check version '"version":"4.5.0"' "$(curl -s $U/api/health)"
+check version '"version":"4.6.0"' "$(curl -s $U/api/health)"
 check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check bootstrap-rec 'record_macro start=true' "$(curl -s $U/agent/$T)"
 check bootstrap-lanes 'auto_react lanes=' "$(curl -s $U/agent/$T)"

@@ -15,7 +15,7 @@ call '{"name":"game_profile","arguments":{"delete":true}}' >/dev/null
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version / schema"
-check version '"version":"4.5.0"' "$(curl -s $U/api/health)"
+check version '"version":"4.6.0"' "$(curl -s $U/api/health)"
 check tools-83 '83' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check schema-loop 'play_loop' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t["name"] for t in d if t["name"]=="play_loop"][0]')"
 check schema-loop-req 'strategy' "$(curl -s "$U/api/tools/schema?format=raw" | j '"strategy" if "strategy" in [t for t in d if t["name"]=="play_loop"][0]["parameters"]["properties"] else "no"')"
@@ -44,7 +44,7 @@ check pl-at '"at":{"cx":540,"cy":' "$R"
 check pl-stopped-hp '"stoppedBy":"hp<80"' "$R"
 check pl-log '"log":[{"tick":1' "$R"
 check pl-last '"last":{"summary":' "$R"
-check pl-hint 'tune the policy' "$R"
+check pl-hint 'fix the worst rule' "$R"
 
 echo "== play_loop: present/absent/cooldown/ticks/valueAbove/stop event"
 R=$(call '{"name":"play_loop","arguments":{"ticks":4,"reset":true,"waitMs":0,"policy":[{"name":"collect","if":{"present":"@enemy"},"do":[{"op":"tap","x":"@found.x","y":"@found.y"}],"cooldownTicks":1},{"name":"roam","if":{"absent":"@nothing"},"do":[{"op":"wait","ms":5}]}]}}')
