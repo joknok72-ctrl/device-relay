@@ -172,14 +172,7 @@ class AutomationAccessibilityService : AccessibilityService() {
     private suspend fun gesture(path: Path?, durationMs: Long): Outcome {
         if (path == null) return Outcome.Fail("missing coordinates")
         val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceIn(1, 60_000))
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        return suspendCancellableCoroutine { cont ->
-            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
-                override fun onCompleted(g: GestureDescription?) { if (cont.isActive) cont.resume(Outcome.Ok()) }
-                override fun onCancelled(g: GestureDescription?) { if (cont.isActive) cont.resume(Outcome.Fail("gesture cancelled")) }
-            }, null)
-            if (!dispatched && cont.isActive) cont.resume(Outcome.Fail("dispatchGesture returned false"))
-        }
+        return dispatch(GestureDescription.Builder().addStroke(stroke).build())
     }
 
     private suspend fun doubleTap(x: Float?, y: Float?): Outcome {
@@ -238,12 +231,35 @@ class AutomationAccessibilityService : AccessibilityService() {
         return dispatch(GestureDescription.Builder().addStroke(stroke(1)).addStroke(stroke(-1)).build())
     }
 
-    private suspend fun dispatch(g: GestureDescription): Outcome = suspendCancellableCoroutine { cont ->
+    /**
+     * Live-device finding (realme / Android 11): a gesture dispatched within ~50 ms of the previous one, or while the
+     * previous callback is still settling, is CANCELLED by the system almost instantly (3-70 ms). So: serialise gestures,
+     * keep a short settle gap, and retry once when a gesture is cancelled long before its planned duration.
+     */
+    private val gestureMutex = kotlinx.coroutines.sync.Mutex()
+    private var lastGestureEnd = 0L
+    private suspend fun dispatchRaw(g: GestureDescription): Outcome = suspendCancellableCoroutine { cont ->
         val ok = dispatchGesture(g, object : GestureResultCallback() {
             override fun onCompleted(gd: GestureDescription?) { if (cont.isActive) cont.resume(Outcome.Ok()) }
             override fun onCancelled(gd: GestureDescription?) { if (cont.isActive) cont.resume(Outcome.Fail("gesture cancelled")) }
         }, null)
         if (!ok && cont.isActive) cont.resume(Outcome.Fail("dispatchGesture returned false"))
+    }
+    private fun plannedMs(g: GestureDescription): Long { var m = 0L; for (i in 0 until g.strokeCount) { val s = g.getStroke(i); m = maxOf(m, s.startTime + s.duration) }; return m }
+    private suspend fun dispatch(g: GestureDescription, allowRetry: Boolean = true): Outcome {
+        gestureMutex.lock()
+        try {
+            val gap = android.os.SystemClock.elapsedRealtime() - lastGestureEnd
+            if (gap in 0..49) delay(50 - gap)
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            var r = dispatchRaw(g)
+            val took = android.os.SystemClock.elapsedRealtime() - t0
+            if (allowRetry && r is Outcome.Fail && r.error == "gesture cancelled" && took < maxOf(120L, plannedMs(g) / 2)) {
+                delay(140); r = dispatchRaw(g)
+            }
+            lastGestureEnd = android.os.SystemClock.elapsedRealtime()
+            return r
+        } finally { gestureMutex.unlock() }
     }
 
     /** Accessibility scroll on a scrollable node (found by text/id, else the biggest scrollable). */
@@ -1098,11 +1114,11 @@ class AutomationAccessibilityService : AccessibilityService() {
     private val fingers = HashMap<Int, Finger>()
 
     /** Dispatch strokes for the given fingers as ONE gesture (they must share a GestureDescription to be simultaneous). */
-    private suspend fun dispatchStrokes(strokes: List<GestureDescription.StrokeDescription>): Outcome {
+    private suspend fun dispatchStrokes(strokes: List<GestureDescription.StrokeDescription>, retry: Boolean = true): Outcome {
         if (strokes.isEmpty()) return Outcome.Ok()
         val b = GestureDescription.Builder()
         for (s in strokes.take(10)) b.addStroke(s)
-        return dispatch(b.build())
+        return dispatch(b.build(), allowRetry = retry)
     }
 
     /** Put finger `id` down at (x,y) and keep it there (willContinue). */
@@ -1126,9 +1142,19 @@ class AutomationAccessibilityService : AccessibilityService() {
         if (pts.isEmpty()) return Outcome.Fail("finger_move requires x,y or points")
         val dur = (a.duration ?: 150L).coerceIn(20, 10_000)
         val path = Path().apply { moveTo(f.x, f.y); for (p in pts) lineTo(p.x, p.y) }
-        val s = f.stroke.continueStroke(path, 0, dur, true)
-        val r = dispatchStrokes(listOf(s))
-        if (r is Outcome.Fail) return r
+        var s = f.stroke.continueStroke(path, 0, dur, true)
+        var r = dispatchStrokes(listOf(s), retry = false)
+        if (r is Outcome.Fail) {
+            // the held stroke was dropped by the system (OEM timeout / cancelled) → re-press at the last position and continue
+            fingers.remove(id)
+            val press = GestureDescription.StrokeDescription(Path().apply { moveTo(f.x, f.y) }, 0, 40, true)
+            val rp = dispatchStrokes(listOf(press))
+            if (rp is Outcome.Fail) return Outcome.Fail("finger_move: ${r.error}; re-press failed: ${rp.error}")
+            s = press.continueStroke(path, 0, dur, true)
+            r = dispatchStrokes(listOf(s), retry = false)
+            if (r is Outcome.Fail) return r
+            fingers[id] = f
+        }
         f.stroke = s; f.x = pts.last().x; f.y = pts.last().y
         return Outcome.Ok(data = buildJsonObject { put("finger", id); put("x", f.x.toInt()); put("y", f.y.toInt()) })
     }
@@ -1139,10 +1165,10 @@ class AutomationAccessibilityService : AccessibilityService() {
         val strokes = ArrayList<GestureDescription.StrokeDescription>()
         for (id in ids) { val f = fingers[id] ?: continue; strokes.add(f.stroke.continueStroke(Path().apply { moveTo(f.x, f.y) }, 0, 20, false)) }
         if (strokes.isEmpty()) return Outcome.Ok(data = buildJsonObject { put("lifted", 0); put("down", fingers.size) })
-        val r = dispatchStrokes(strokes)
+        val r = dispatchStrokes(strokes, retry = false)
         for (id in ids) fingers.remove(id)
-        if (r is Outcome.Fail) return Outcome.Fail("finger_up: ${r.error}")
-        return Outcome.Ok(data = buildJsonObject { put("lifted", strokes.size); put("down", fingers.size) })
+        // a cancelled continuation means the system had already released that touch → the finger IS up; report it as lifted
+        return Outcome.Ok(data = buildJsonObject { put("lifted", strokes.size); put("down", fingers.size); if (r is Outcome.Fail) put("note", "system had already released the touch (${r.error})") })
     }
 
     /**
