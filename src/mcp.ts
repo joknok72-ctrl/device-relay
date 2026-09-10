@@ -40,7 +40,7 @@ export async function handleMcp(env: Env, request: Request, auth: Auth): Promise
         return rpcOk(id, {
           protocolVersion: params?.protocolVersion ?? '2025-06-18',
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: 'device-relay', version: '4.7.3' },
+          serverInfo: { name: 'device-relay', version: '4.7.4' },
           instructions:
             'You control a real Android phone. Start with capture_screen to see the screen, then tap/swipe using ORIGINAL pixel coordinates (screen.w x screen.h). ' +
             'Prefer get_ui_elements + tap_element/type_text over raw coordinates. After each action observe again to verify. Use batch to chain several steps in one call. Prefer wait_for_element after taps that trigger navigation or loading.',
