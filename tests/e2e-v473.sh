@@ -8,7 +8,7 @@ check() { if [[ "$3" == *"$2"* ]]; then echo "  ✔ $1"; pass=$((pass+1)); else 
 call() { curl -s "${A[@]}" -d "$1" $U/api/devices/$D/tools/call; }
 N="renamed-$RANDOM"
 echo "== v4.7.3 rename $D -> $N"
-check version '"version":"4.7.4"' "$(curl -s -A dr-agent $U/api/health)"
+check version '"version":"4.7.5"' "$(curl -s -A dr-agent $U/api/health)"
 # seed memory on the source
 call '{"name":"game_profile","arguments":{"app":"com.test.game","set":{"colors":{"enemy":{"hex":"#ff0000","tolerance":30}},"controls":{"jump":{"x":900,"y":1500}}},"label":"Test Game"}}' >/dev/null
 call '{"name":"remember","arguments":{"text":"rename-test note","app":"com.test.game"}}' >/dev/null
@@ -44,6 +44,8 @@ R=$(call '{"name":"playbook","arguments":{"app":"com.test.game","merge":{"algori
 check pb-algorithm-saved '"lang":"python"' "$R"; check pb-calibration-saved '"dragYComp":95' "$R"
 B0=$(curl -s -A dr-agent $U/agent/$T); echo "$B0" | grep -q "ALGORITHM START" && echo "$B0" | grep -q "def best(board, pieces)" && { echo "  ✔ boot-injects-algorithm-code"; pass=$((pass+1)); } || { echo "  ✘ boot-injects-algorithm-code"; fail=$((fail+1)); }
 echo "$B0" | grep -q "dragYComp=95" && { echo "  ✔ boot-injects-calibration"; pass=$((pass+1)); } || { echo "  ✘ boot-injects-calibration"; fail=$((fail+1)); }
+echo "$B0" | grep -q "PRECEDENCE: rules 1-13 below are DEFAULTS" && echo "$B0" | grep -q "RESTORES the same program" && ! echo "$B0" | grep -q "must play EXACTLY as well" && { echo "  ✔ boot-precedence-and-no-absolute-promise"; pass=$((pass+1)); } || { echo "  ✘ boot-precedence-and-no-absolute-promise"; fail=$((fail+1)); }
+echo "$B0" | grep -q "PRECEDENCE: whatever this ALGORITHM" && { echo "  ✔ boot-algorithm-precedence-line"; pass=$((pass+1)); } || { echo "  ✘ boot-algorithm-precedence-line"; fail=$((fail+1)); }
 echo "$B0" | grep -q "REPRODUCIBLE SKILL" && { echo "  ✔ boot-rule-13"; pass=$((pass+1)); } || { echo "  ✘ boot-rule-13"; fail=$((fail+1)); }
 R=$(call '{"name":"playbook","arguments":{"app":"com.test.game","remove":{"algorithm":true}}}'); echo "$R" | grep -q '"algorithm"' && { echo "  ✘ pb-remove-algorithm"; fail=$((fail+1)); } || { echo "  ✔ pb-remove-algorithm"; pass=$((pass+1)); }
 check pb-general '"ok":true' "$(call '{"name":"playbook","arguments":{"app":"*","merge":{"strategy":["wait_for_screen stable before deciding"],"skill":2}}}')"

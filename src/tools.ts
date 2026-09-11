@@ -751,7 +751,7 @@ export const TOOLS: ToolDef[] = [
       'YOUR EXPERTISE FILE for a game (v4.7.3) — the how-to that makes a brand-new chat play at your current level from turn one. session_report says what happened once; playbook says HOW TO PLAY WELL. It is injected verbatim into the bootstrap of every future chat (per game + a general "*" one). ' +
       'Read: playbook {} (current app) / {app}. Update: playbook {merge:{overview, strategy:[ordered rules of thumb], procedure:[exact tool steps for one move/turn], tricks:[what worked incl. exact coords/timings], mistakes:[never again], screens:[how to recognise menu/game-over/reward + what to press], facts:[geometry, scoring, piece sizes], skill:1-5}}. ' +
       'Lists accumulate and dedupe; procedure is ordered so a new list replaces it. remove:{tricks:["substring"]} deletes stale lines. app:"*" = cross-game skills (works for ANY genre). ' +
-      'UPDATE IT EVERY SESSION: after ~10 successful moves (what works), when something fails (mistakes), and before session_report (final state) — a new chat is only as smart as this file. ' +
+      'UPDATE IT EVERY SESSION: after ~10 successful moves (what works), when something fails (mistakes), and before session_report (final state) — a new chat restores exactly what this file contains (program + numbers); outcomes must still be verified live. ' +
       'v4.7.4 MANDATORY for reproducible skill: algorithm:{lang, description, code} = the COMPLETE planner / scoring function / decision rules you actually used (code or precise pseudo-code, up to 24 KB, verbatim — e.g. how you enumerate candidate moves, score them, choose, and the input/output format) and calibration:{screenW, screenH, offsets, cell sizes, timings…} = the exact numbers it depends on (state the screenshot size they were measured on). Prose rules of thumb are NOT enough.',
     parameters: {
       type: 'object',
@@ -1277,7 +1277,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '4.7.4',
+      version: '4.7.5',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',
