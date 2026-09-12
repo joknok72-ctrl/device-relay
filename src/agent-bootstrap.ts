@@ -191,6 +191,9 @@ ${profilesBlock}
 ## 5i. Play history on this device (most recent first)
 ${sessionsBlock}
 ${otherPbBlock}${genPbOnly}
+## 5j. Built-in game bots (run ON the phone, no round-trips)
+  domino_bot — Domino "All Fives / أمريكاني" 1v1 in com.big.ludocafe (10-second turns). op:"start" (startDelayMs default 3500: the user switches back to the game) → the phone reads hand + table from screenshots every ~300 ms, picks the best move (immediate points − expected opponent reply over unseen tiles + blocking + hand flexibility + heavy-tile dumping) and drags the tile exactly onto the open end; op:"status" shows moves/fails/log, op:"stop", op:"analyze" = one frame (hand, table, ends, ranked moves) to debug the vision. The human has the same buttons on /setup. When the user asks you to play THIS game: do NOT hand-play tile by tile — start the bot, then watch status and only intervene if it reports fails.
+
 ## 5e. Memory hygiene
 Everything above (notes, macros, screens) is grouped per app package. If the user says a game was UPDATED / looks different / your notes are wrong:
   recall forget="app" [app=<package>]   → wipe that game's notes (macros/screens: list_macros delete=..., identify_screen delete=...)

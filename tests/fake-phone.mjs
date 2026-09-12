@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
-let hashCounter = 0, diffCounter = 0, streaming = false, pfCounter = 0, pfHook = 0
+let hashCounter = 0, diffCounter = 0, streaming = false, pfCounter = 0, pfHook = 0, dominoRunning = false
 // v1.9: two fake 'screens' — 'menu' (default) and 'home' (after home action); recents switches back
 let screen = 'menu'
 const fingersDown = new Map()
