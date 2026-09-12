@@ -62,6 +62,17 @@ object DominoVision {
         return out
     }
 
+    /** runs of true values, bridging gaps of up to maxGap false values */
+    private fun runsGap(flags: BooleanArray, start: Int, maxGap: Int): List<IntArray> {
+        val out = ArrayList<IntArray>(); var s = -1; var last = -1
+        for (i in flags.indices) {
+            if (flags[i]) { if (s < 0) s = i; last = i }
+            else if (s >= 0 && i - last > maxGap) { out.add(intArrayOf(start + s, start + last)); s = -1 }
+        }
+        if (s >= 0) out.add(intArrayOf(start + s, start + last))
+        return out
+    }
+
     private class Blob(var n: Int = 0, var sx: Long = 0, var sy: Long = 0, var x0: Int = Int.MAX_VALUE, var y0: Int = Int.MAX_VALUE, var x1: Int = -1, var y1: Int = -1)
 
     private fun blobs(p: Px, x0: Int, y0: Int, x1: Int, y1: Int, pred: (Int, Int) -> Boolean): List<Blob> {
@@ -122,20 +133,21 @@ object DominoVision {
     fun readHand(p: Px): List<HandTile> {
         val xa = p.X(380); val xb = p.X(1330)
         val ya = p.Y(490); val yb = p.Y(650)
+        // tile columns = not table-green (pips are dark, face is cream) — solid runs per tile
         val flags = BooleanArray(xb - xa) { i ->
             var c = 0; var y = ya
-            while (y < yb) { if (p.face(xa + i, y)) c++; y += 2 }
-            c > (yb - ya) / 2 * 0.62
+            while (y < yb) { if (!p.green(xa + i, y)) c++; y += 2 }
+            c > (yb - ya) / 2 * 0.85
         }
         val minW = p.X(55); val maxW = p.X(100)
         val out = ArrayList<HandTile>()
-        for (r in runs(flags, xa)) {
+        for (r in runsGap(flags, xa, 3)) {
             val a = r[0]; val b = r[1]
             if (b - a < minW || b - a > maxW) continue
             val cx = (a + b) / 2
             val ys0 = p.Y(430); val ys1 = p.Y(700)
             val col = BooleanArray(ys1 - ys0) { i -> p.face(cx, ys0 + i) }
-            val best = runs(col, ys0).maxByOrNull { it[1] - it[0] } ?: continue
+            val best = runsGap(col, ys0, p.Y(40)).maxByOrNull { it[1] - it[0] } ?: continue
             val y0 = best[0]; val y1 = best[1]
             if (y1 - y0 < p.Y(150)) continue
             val sxp = a + p.X(8); val syp = y0 + p.Y(25)
@@ -157,6 +169,7 @@ object DominoVision {
         val TL = p.X(122); val TW = p.Y(50)
         val minLen = (TW * 0.52).toInt(); val maxLen = (TW * 1.05).toInt()
         val gapPx = maxOf(3, p.X(6))
+        val beadGap = maxOf(6, p.X(14))
         // face mask (only big blobs count as tiles)
         val fw = x1 - x0; val fh = y1 - y0
         val fm = BooleanArray(fw * fh)
@@ -186,7 +199,7 @@ object DominoVision {
                 var last = y; var yy = y; var gaps = 0
                 while (yy < y1) {
                     val kk = (yy - y0) * fw + (x - x0)
-                    if (thinV[kk]) { last = yy; used[kk] = true; gaps = 0 } else { gaps++; if (gaps > 8) break }
+                    if (thinV[kk]) { last = yy; used[kk] = true; gaps = 0 } else { gaps++; if (gaps > beadGap) break }
                     yy++
                 }
                 val len = last - y + 1
@@ -203,7 +216,7 @@ object DominoVision {
                 var last = x; var xx = x; var gaps = 0
                 while (xx < x1) {
                     val kk = (y - y0) * fw + (xx - x0)
-                    if (thinH[kk]) { last = xx; used2[kk] = true; gaps = 0 } else { gaps++; if (gaps > 8) break }
+                    if (thinH[kk]) { last = xx; used2[kk] = true; gaps = 0 } else { gaps++; if (gaps > beadGap) break }
                     xx++
                 }
                 val len = last - x + 1
@@ -240,14 +253,18 @@ object DominoVision {
     }
 
     // ------------------------------------------------------------------ misc
+    /** timer arc around an avatar: bright green (full) → yellow → red (almost out). Returns matching samples (of 108). */
     fun ring(p: Px, refCx: Int, refCy: Int): Int {
         var g = 0
         val cx = p.X(refCx); val cy = p.Y(refCy)
-        for (k in 0 until 36) for (r in intArrayOf(52, 56)) {
+        for (k in 0 until 36) for (r in intArrayOf(50, 54, 58)) {
             val x = cx + (p.X(r) * Math.cos(2 * Math.PI * k / 36)).toInt(); val y = cy + (p.Y(r) * Math.sin(2 * Math.PI * k / 36)).toInt()
             if (!p.inb(x, y)) continue
-            val i = p.idx(x, y)
-            if (p.g(i) > 170 && p.r(i) < 120) g++
+            val i = p.idx(x, y); val rr = p.r(i); val gg = p.g(i); val bb = p.b(i)
+            val brightGreen = gg > 195 && rr < 130 && bb < 130
+            val yellow = rr > 200 && gg > 140 && bb < 110
+            val red = rr > 190 && gg < 110 && bb < 110
+            if (brightGreen || yellow || red) g++
         }
         return g
     }
