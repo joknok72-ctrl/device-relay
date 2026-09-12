@@ -14,8 +14,8 @@ call '{"name":"get_current_app"}' >/dev/null
 call '{"name":"game_profile","arguments":{"delete":true}}' >/dev/null
 
 echo "== version / schema"
-check version '"version":"4.8.0"' "$(curl -s $U/api/health)"
-check tools-83 '85' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"4.7.5"' "$(curl -s $U/api/health)"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check schema-setup 'game_setup' "$(curl -s "$U/api/tools/schema?format=raw" | j '[t["name"] for t in d if t["name"]=="game_setup"][0]')"
 check schema-play-reset 'reset' "$(curl -s "$U/api/tools/schema?format=raw" | j '"reset" if "reset" in [t for t in d if t["name"]=="play"][0]["parameters"]["properties"] else "no"')"
 

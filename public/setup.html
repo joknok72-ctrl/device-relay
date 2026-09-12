@@ -117,24 +117,6 @@
       </div>
     </section>
 
-    <section id="domino-section" class="bg-slate-900 rounded-2xl p-5 border border-amber-900/60">
-      <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
-        <h2 class="font-bold"><i class="fas fa-dice text-amber-400 ml-1"></i> بوت الدومينو — All Fives (أمريكاني) · <span class="ltr mono text-xs text-slate-400">com.big.ludocafe</span></h2>
-        <div class="flex items-center gap-2 text-xs">
-          <label class="text-slate-400">الجهاز <select id="dom-device" class="ltr"></select></label>
-          <label class="text-slate-400">تأخير البدء <select id="dom-delay" class="ltr"><option value="3000">3 ث</option><option value="3500" selected>3.5 ث</option><option value="4000">4 ث</option><option value="6000">6 ث</option></select></label>
-        </div>
-      </div>
-      <p class="text-xs text-slate-500 mb-3">البوت شغّال <b>على الموبايل نفسه</b> (بدون إنترنت في كل حركة): يصوّر الشاشة كل ~300ms، يقرأ إيدك والطاولة، يحسب أحسن حركة (نقاط فورية − أفضل رد متوقع للخصم + سدّ + مرونة إيدك) ويسحب الحجر ويحطه في مكانه بالظبط قبل ما الـ10 ثواني تخلص. افتح اللعبة وادخل الجولة، ارجع هنا واضغط <b>ابدأ</b>، ثم ارجع للعبة خلال مهلة التأخير.</p>
-      <div class="flex flex-wrap gap-2 mb-3">
-        <button class="btn btn-p" id="dom-start"><i class="fas fa-play"></i> ابدأ البوت</button>
-        <button class="btn btn-d" id="dom-stop"><i class="fas fa-stop"></i> إيقاف</button>
-        <button class="btn btn-s" id="dom-analyze" title="يقرأ الشاشة الحالية مرة واحدة ويعرض الإيد والطاولة والحركات المرشّحة"><i class="fas fa-magnifying-glass"></i> تحليل الشاشة الآن</button>
-        <span id="dom-countdown" class="text-amber-300 font-bold text-lg self-center hidden"></span>
-      </div>
-      <div id="dom-status" class="text-xs text-slate-300 mono ltr bg-slate-950 rounded-lg p-3 max-h-64 overflow-auto whitespace-pre-wrap">—</div>
-    </section>
-
     <section id="memory-section" class="bg-slate-900 rounded-2xl p-5 border border-slate-800">
       <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
         <h2 class="font-bold"><i class="fas fa-brain text-fuchsia-400 ml-1"></i> ذاكرة الـ AI — ما تعلّمه عن كل لعبة / تطبيق</h2>
@@ -327,9 +309,6 @@
     sel.innerHTML = ov.devices.map(d => `<option value="${esc(d.deviceId)}">${esc(d.deviceId)}${d.label ? ' — ' + esc(d.label) : ''}</option>`).join('')
     memDevice = ov.devices.some(d => d.deviceId === prev) ? prev : (ov.devices.find(d => d.online) || ov.devices[0] || {}).deviceId || ''
     sel.value = memDevice
-    const ds = $('#dom-device'); const prevD = ds.value
-    ds.innerHTML = ov.devices.map(d => `<option value="${esc(d.deviceId)}">${esc(d.deviceId)}${d.online ? ' ●' : ' ○'}</option>`).join('')
-    ds.value = ov.devices.some(d => d.deviceId === prevD) ? prevD : memDevice
     loadMemory()
     const me = await (await fetch('/api/me', { headers: H })).json()
     fillQuickStart(me)
@@ -342,51 +321,6 @@
     ]
     $('#token-result-body').innerHTML = rows.map(([k, v], i) => `<div><div class="text-xs text-slate-400 mb-1">${k}</div><div class="flex gap-1"><pre class="copy flex-1 mono !text-xs" id="tr-${i}">${esc(v)}</pre><button class="btn btn-s !px-2" data-copy="#tr-${i}"><i class="fas fa-copy"></i></button></div></div>`).join('')
     $('#token-result').classList.remove('hidden'); $('#token-result').scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
-
-
-  // ---------------- Domino All-Fives bot (on-device, v4.8)
-  let domPoll = null
-  async function domCall(op, extra = {}) {
-    const dev = $('#dom-device').value
-    if (!dev) { toast('اختر جهازًا'); return null }
-    const r = await fetch(`/api/devices/${encodeURIComponent(dev)}/tools/domino_bot`, { method: 'POST', headers: H, body: JSON.stringify({ op, ...extra }) })
-    const j = await r.json().catch(() => ({}))
-    if (!r.ok || j.ok === false) { toast('خطأ: ' + (j.error || r.status)); $('#dom-status').textContent = JSON.stringify(j, null, 1); return null }
-    return j.data ?? j.result ?? j
-  }
-  function domRender(st) {
-    if (!st) return
-    const head = `running=${st.running}  ticks=${st.ticks ?? 0}  moves=${st.moves ?? 0}  fails=${st.fails ?? 0}  passes=${st.passes ?? 0}\nlast: ${st.lastMove || '-'}  ${st.lastError ? 'err: ' + st.lastError : ''}\n${st.lastState || ''}\n`
-    $('#dom-status').textContent = head + (Array.isArray(st.log) ? st.log.slice(-25).join('\n') : '')
-    $('#dom-status').scrollTop = 1e9
-    $('#dom-start').classList.toggle('opacity-50', !!st.running)
-  }
-  function domStartPolling() { clearInterval(domPoll); domPoll = setInterval(async () => { const st = await domCall('status'); domRender(st); if (st && st.running === false && (st.ticks ?? 0) > 0 && !st.lastState) clearInterval(domPoll) }, 1500) }
-  $('#dom-start').onclick = async () => {
-    const delay = Number($('#dom-delay').value)
-    const r = await domCall('start', { startDelayMs: delay })
-    if (!r) return
-    if (r.started === false) { toast('البوت شغّال بالفعل'); domStartPolling(); return }
-    toast(`البوت هيبدأ بعد ${delay / 1000} ثانية — ارجع للعبة الآن!`)
-    const cd = $('#dom-countdown'); cd.classList.remove('hidden'); let left = delay
-    const t = setInterval(() => { left -= 100; cd.textContent = left > 0 ? `⏱ ${(left / 1000).toFixed(1)} ث` : '🎲 البوت يلعب'; if (left <= 0) { clearInterval(t); setTimeout(() => cd.classList.add('hidden'), 4000) } }, 100)
-    domStartPolling()
-  }
-  $('#dom-stop').onclick = async () => { const r = await domCall('stop'); clearInterval(domPoll); toast('تم إيقاف البوت'); domRender(r && r.status ? r.status : r) }
-  $('#dom-analyze').onclick = async () => {
-    $('#dom-status').textContent = '… بقرأ الشاشة'
-    const a = await domCall('analyze')
-    if (!a) return
-    const lines = [
-      `screen ${a.w}x${a.h}  myTurn=${a.myTurn} (ring ${a.myRing})  oppTurn=${a.oppTurn} (ring ${a.oppRing})`,
-      `hand:  ${(a.hand || []).map(t => `${t.tile}${t.kind === 'grey' ? '(x)' : ''}@${t.x},${t.y}`).join('  ') || '-'}`,
-      `table: ${(a.table || []).map(t => `${t.tile}${t.orient}@${t.x},${t.y}`).join('  ') || '-'}`,
-      `layout: ${a.layout || '-'}`,
-      `ends:  ${(a.ends || []).map(e => `${e.id}=${e.value}${e.double ? 'd' : ''}→(${e.dropX},${e.dropY})`).join('  ') || '-'}`,
-      'plans:', ...(a.plans || []).map((p, i) => `  #${i + 1} ${p.move}  ${p.from} → ${p.to}   ${p.why}`),
-    ]
-    $('#dom-status').textContent = lines.join('\n')
   }
 
   $('#kind').onchange = () => { const admin = $('#kind').value === 'admin'; $('#device-field').classList.toggle('hidden', admin); $('#deviceId').required = !admin }

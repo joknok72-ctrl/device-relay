@@ -11,8 +11,8 @@ export RELAY_URL=$U RELAY_TOKEN=$T RELAY_DEVICE=$D
 P=/home/user/webapp/agent/phone.sh
 
 echo "== version / catalogue"
-check version '"version":"4.8.0"' "$(curl -s $U/api/health)"
-check tools-83 '85' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"4.7.5"' "$(curl -s $U/api/health)"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 check bootstrap-5d '## 5d. Labelled screens' "$(curl -s $U/agent/$T)"
 check bootstrap-react 'auto_react "#rrggbb" region' "$(curl -s $U/agent/$T)"
 

@@ -42,7 +42,6 @@ import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
 import com.google.mlkit.vision.common.InputImage
@@ -156,8 +155,6 @@ class AutomationAccessibilityService : AccessibilityService() {
         "aim" -> aim(action)
         "fire_burst" -> fireBurst(action)
         "combo" -> combo(action)
-        // v4.2 on-device Domino All-Fives bot (com.big.ludocafe)
-        "domino_bot" -> dominoBot(action)
         else -> Outcome.Fail("unsupported action: ${action.type}")
     }
 
@@ -1531,83 +1528,6 @@ class AutomationAccessibilityService : AccessibilityService() {
             Outcome.Ok(data = buildJsonObject { put("url", u) })
         } catch (e: Exception) {
             Outcome.Fail("open_url failed: ${e.message}")
-        }
-    }
-
-    // ---------------------------------------------------------------- v4.2 Domino All-Fives bot
-    private var dominoJob: kotlinx.coroutines.Job? = null
-    private var domino: com.devicerelay.client.domino.DominoBot? = null
-    private val dominoScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
-
-    private fun anyToJson(v: Any?): JsonElement = when (v) {
-        null -> kotlinx.serialization.json.JsonNull
-        is Boolean -> JsonPrimitive(v); is Int -> JsonPrimitive(v); is Long -> JsonPrimitive(v); is Double -> JsonPrimitive(v); is Float -> JsonPrimitive(v)
-        is String -> JsonPrimitive(v)
-        is List<*> -> buildJsonArray { for (e in v) add(anyToJson(e)) }
-        is Map<*, *> -> buildJsonObject { for ((k, e) in v) put(k.toString(), anyToJson(e)) }
-        else -> JsonPrimitive(v.toString())
-    }
-
-    /**
-     * domino_bot {text: start|stop|status|analyze, duration: maxMs, holdMs: startDelayMs}
-     * start → runs the bot in the background (returns immediately); the relay polls status.
-     * analyze → one frame: hand / table / turn / best moves (for debugging the vision from the site).
-     */
-    private suspend fun dominoBot(a: Action): Outcome {
-        val op = (a.text ?: "status").lowercase()
-        val svc = this
-        val io = object : com.devicerelay.client.domino.DominoBot.IO {
-            override suspend fun capture(): Triple<IntArray, Int, Int>? {
-                val bmp = withContext(Dispatchers.Main) { captureBitmap() } ?: return null
-                // work in landscape: the game is landscape; if the frame is portrait the game isn't in front
-                if (bmp.height > bmp.width) return null
-                val w = bmp.width; val h = bmp.height
-                val px = IntArray(w * h); bmp.getPixels(px, 0, w, 0, 0, w, h)
-                return Triple(px, w, h)
-            }
-            override suspend fun drag(x1: Float, y1: Float, x2: Float, y2: Float, holdMs: Long, moveMs: Long): String? {
-                val r = withContext(Dispatchers.Main) { svc.drag(Action(type = "drag", x1 = x1, y1 = y1, x2 = x2, y2 = y2, holdMs = holdMs, duration = moveMs)) }
-                return (r as? Outcome.Fail)?.error
-            }
-            override suspend fun tap(x: Float, y: Float): String? {
-                val r = withContext(Dispatchers.Main) { gesture(tapPath(x, y), 60) }
-                return (r as? Outcome.Fail)?.error
-            }
-            override suspend fun sleep(ms: Long) = delay(ms)
-            override fun now() = android.os.SystemClock.elapsedRealtime()
-            override fun log(msg: String) { Log.i(TAG, "domino: $msg") }
-        }
-        when (op) {
-            "start" -> {
-                if (domino?.running == true) return Outcome.Ok(data = buildJsonObject { put("started", false); put("note", "already running") })
-                val bot = com.devicerelay.client.domino.DominoBot(io)
-                domino = bot
-                val maxMs = (a.duration ?: 1_800_000L).coerceIn(10_000L, 6 * 3_600_000L)
-                val startDelay = (a.holdMs ?: 3_500L).coerceIn(0L, 30_000L)
-                dominoJob = dominoScope.launch { runCatching { bot.run(maxMs, startDelay) }.onFailure { Log.w(TAG, "domino bot crashed", it); bot.stats.lastError = "crash: ${it.message}" } }
-                return Outcome.Ok(data = buildJsonObject { put("started", true); put("startDelayMs", startDelay); put("maxMs", maxMs) })
-            }
-            "stop" -> {
-                domino?.running = false
-                dominoJob?.cancel(); dominoJob = null
-                return Outcome.Ok(data = buildJsonObject { put("stopped", true); domino?.let { put("status", anyToJson(it.status())) } })
-            }
-            "analyze" -> {
-                val cap = io.capture() ?: return Outcome.Fail("screenshot failed or the game is not in landscape")
-                val f = com.devicerelay.client.domino.DominoVision.analyze(cap.first, cap.second, cap.third)
-                val bot = domino ?: com.devicerelay.client.domino.DominoBot(io)
-                val (layout, ends) = bot.buildLayout(f)
-                val plans = bot.plans(f, 7, 14)
-                return Outcome.Ok(data = buildJsonObject {
-                    put("w", f.w); put("h", f.h); put("myTurn", f.myTurn); put("oppTurn", f.oppTurn); put("myRing", f.myRing); put("oppRing", f.oppRing)
-                    put("hand", buildJsonArray { for (t in f.hand) add(buildJsonObject { put("tile", "${t.a}|${t.b}"); put("x", t.cx); put("y", t.cy); put("kind", t.kind) }) })
-                    put("table", buildJsonArray { for (t in f.table) add(buildJsonObject { put("tile", "${t.a}|${t.b}"); put("x", t.cx); put("y", t.cy); put("orient", t.orient.toString()) }) })
-                    put("layout", layout.toString())
-                    put("ends", buildJsonArray { for (e in ends) add(buildJsonObject { put("id", e.id); put("value", e.value); put("double", e.isDouble); put("dropX", e.dropX); put("dropY", e.dropY) }) })
-                    put("plans", buildJsonArray { for (p in plans.take(5)) add(buildJsonObject { put("move", p.move.toString()); put("from", "${p.hand.cx},${p.hand.cy}"); put("to", "${p.end.dropX},${p.end.dropY}"); put("why", p.why) }) })
-                })
-            }
-            else -> return Outcome.Ok(data = domino?.let { anyToJson(it.status()) as JsonObject } ?: buildJsonObject { put("running", false); put("note", "bot never started") })
         }
     }
 

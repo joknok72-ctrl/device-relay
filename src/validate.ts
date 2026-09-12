@@ -369,14 +369,6 @@ export function parseAction(input: unknown): { action?: Action; error?: string }
       if (typeof a.text !== 'string' || !isValidDeviceId(a.text)) return { error: 'set_device_id requires a valid text (new device id)' }
       return { action: { type: 'set_device_id', text: a.text } }
     }
-    case 'domino_bot': {
-      const op = typeof a.text === 'string' ? a.text.toLowerCase() : 'status'
-      if (!['start', 'stop', 'status', 'analyze'].includes(op)) return { error: 'domino_bot text must be start|stop|status|analyze' }
-      const action: Action = { type: 'domino_bot', text: op }
-      if (isNum(a.duration)) action.duration = clamp(Math.round(a.duration), 10_000, 6 * 3_600_000)
-      if (isNum(a.holdMs)) action.holdMs = clamp(Math.round(a.holdMs), 0, 30_000)
-      return { action }
-    }
     case 'find_image': {
       if (typeof a.image !== 'string' || a.image.length < 16 || a.image.length > 400_000) return { error: 'find_image requires image (base64 PNG/JPEG, <= 300KB)' }
       const action: Action = { type: 'find_image', image: a.image.replace(/^data:image\/\w+;base64,/, ''), threshold: isNum(a.threshold) ? clamp(a.threshold, 0.5, 1) : 0.85, maxResults: isNum(a.maxResults) ? clamp(Math.round(a.maxResults), 1, 20) : 5 }

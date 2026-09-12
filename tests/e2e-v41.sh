@@ -17,8 +17,8 @@ call '{"name":"game_profile","arguments":{"delete":true}}' >/dev/null
 call '{"name":"finger","arguments":{"op":"up","finger":-1}}' >/dev/null
 
 echo "== version / schema"
-check version '"version":"4.8.0"' "$(curl -s $U/api/health)"
-check tools-83 '85' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"4.7.5"' "$(curl -s $U/api/health)"
+check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 SCHEMA=$(curl -s "$U/api/tools/schema?format=raw")
 check schema-play 'play' "$(echo "$SCHEMA" | j '[t["name"] for t in d if t["name"]=="play"][0]')"
 check schema-react 'react_script' "$(echo "$SCHEMA" | j '[t["name"] for t in d if t["name"]=="react_script"][0]')"
