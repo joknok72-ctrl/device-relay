@@ -25,8 +25,8 @@ object DominoVision {
         val myRing: Int, val oppRing: Int,
         val handGrey: Int, val yellowTable: Int,
     ) {
-        val myTurn get() = myRing >= 8
-        val oppTurn get() = oppRing >= 8
+        val myTurn get() = myRing >= 15
+        val oppTurn get() = oppRing >= 15
     }
 
     class Px(val pix: IntArray, val w: Int, val h: Int) {
@@ -99,12 +99,20 @@ object DominoVision {
         return out
     }
 
+    /** a real tile has (almost) no table-green inside its box */
+    private fun solid(p: Px, x0: Int, y0: Int, x1: Int, y1: Int): Boolean {
+        var n = 0; var g = 0
+        var y = y0
+        while (y < y1) { var x = x0; while (x < x1) { n++; if (!p.inb(x, y) || p.green(x, y)) g++; x += 3 }; y += 3 }
+        return n > 0 && g * 100 / n < 4
+    }
+
     /** count roundish dark blobs (pips) inside a half-tile */
     private fun pips(p: Px, x0: Int, y0: Int, x1: Int, y1: Int, mn: Int, mx: Int): Int {
         var c = 0
         for (b in blobs(p, x0, y0, x1, y1) { x, y -> p.dark(x, y) }) {
             val w = b.x1 - b.x0 + 1; val h = b.y1 - b.y0 + 1
-            if (b.n in mn..mx && w <= h * 1.6 && h <= w * 1.6) c++
+            if (b.n in mn..mx && w <= h * 1.8 && h <= w * 1.8) c++
         }
         return c
     }
@@ -124,7 +132,7 @@ object DominoVision {
         }
         val short = if (vertical) x1 - x0 else y1 - y0
         val pad = maxOf(5, short / 8)
-        val mn = (short * short * 0.02).toInt(); val mx = (short * short * 0.16).toInt()
+        val mn = (short * short * 0.012).toInt(); val mx = (short * short * 0.16).toInt()
         return if (vertical) pips(p, x0, y0, x1, div - pad, mn, mx) to pips(p, x0, div + pad, x1, y1, mn, mx)
         else pips(p, x0, y0, div - pad, y1, mn, mx) to pips(p, div + pad, y0, x1, y1, mn, mx)
     }
@@ -169,7 +177,7 @@ object DominoVision {
         val TL = p.X(122); val TW = p.Y(50)
         val minLen = (TW * 0.52).toInt(); val maxLen = (TW * 1.05).toInt()
         val gapPx = maxOf(3, p.X(6))
-        val beadGap = maxOf(6, p.X(14))
+        val beadGap = maxOf(5, p.X(12))
         // face mask (only big blobs count as tiles)
         val fw = x1 - x0; val fh = y1 - y0
         val fm = BooleanArray(fw * fh)
@@ -239,12 +247,16 @@ object DominoVision {
                 val bx0 = cx - TL / 2; val by0 = cy - TW / 2; val bx1 = cx + TL / 2; val by1 = cy + TW / 2
                 // a real horizontal tile has face on both sides of the divider along its long axis
                 if (!inFace(cx - TL / 3, cy) || !inFace(cx + TL / 3, cy)) continue
-                val (a, b) = readTile(p, bx0 + p.X(6), by0 + p.Y(6), bx1 - p.X(6), by1 - p.Y(8), false)
+                if (!solid(p, bx0 + p.X(4), by0 + p.Y(4), bx1 - p.X(4), by1 - p.Y(4))) continue
+                val (a, b) = readTile(p, bx0 + p.X(4), by0 + p.Y(3), bx1 - p.X(4), by1 - p.Y(5), false)
+                if (a < 0 || a > 6 || b < 0 || b > 6) continue
                 out.add(TableTile(cx, cy, 'h', a, b, bx0, by0, bx1, by1))
             } else {
                 val bx0 = cx - TW / 2; val by0 = cy - TL / 2; val bx1 = cx + TW / 2; val by1 = cy + TL / 2
                 if (!inFace(cx, cy - TL / 3) || !inFace(cx, cy + TL / 3)) continue
-                val (a, b) = readTile(p, bx0 + p.X(6), by0 + p.Y(6), bx1 - p.X(6), by1 - p.Y(8), true)
+                if (!solid(p, bx0 + p.X(4), by0 + p.Y(4), bx1 - p.X(4), by1 - p.Y(4))) continue
+                val (a, b) = readTile(p, bx0 + p.X(3), by0 + p.Y(4), bx1 - p.X(3), by1 - p.Y(6), true)
+                if (a < 0 || a > 6 || b < 0 || b > 6) continue
                 out.add(TableTile(cx, cy, 'v', a, b, bx0, by0, bx1, by1))
             }
         }
@@ -253,20 +265,28 @@ object DominoVision {
     }
 
     // ------------------------------------------------------------------ misc
-    /** timer arc around an avatar: bright green (full) → yellow → red (almost out). Returns matching samples (of 108). */
+    /**
+     * Turn indicator: during a player's turn the avatar disc is covered by a countdown (green tint → yellow wedge → red)
+     * with a big yellow digit in the centre. Score = yellow(digit)+green(tint) pixels in the central r≤22 disc, in 1/10 %.
+     * Idle avatars have < 8% such pixels; active ones 25-70%.
+     */
     fun ring(p: Px, refCx: Int, refCy: Int): Int {
-        var g = 0
-        val cx = p.X(refCx); val cy = p.Y(refCy)
-        for (k in 0 until 36) for (r in intArrayOf(50, 54, 58)) {
-            val x = cx + (p.X(r) * Math.cos(2 * Math.PI * k / 36)).toInt(); val y = cy + (p.Y(r) * Math.sin(2 * Math.PI * k / 36)).toInt()
-            if (!p.inb(x, y)) continue
-            val i = p.idx(x, y); val rr = p.r(i); val gg = p.g(i); val bb = p.b(i)
-            val brightGreen = gg > 195 && rr < 130 && bb < 130
-            val yellow = rr > 200 && gg > 140 && bb < 110
-            val red = rr > 190 && gg < 110 && bb < 110
-            if (brightGreen || yellow || red) g++
+        val cx = p.X(refCx); val cy = p.Y(refCy); val R = p.X(22)
+        var n = 0; var hit = 0
+        var y = cy - R
+        while (y <= cy + R) {
+            var x = cx - R
+            while (x <= cx + R) {
+                if (p.inb(x, y) && (x - cx) * (x - cx) + (y - cy) * (y - cy) <= R * R) {
+                    n++
+                    val i = p.idx(x, y); val rr = p.r(i); val gg = p.g(i); val bb = p.b(i)
+                    if ((rr > 200 && gg > 150 && bb < 90) || (gg > 150 && gg > rr + 40 && gg > bb + 40)) hit++
+                }
+                x++
+            }
+            y++
         }
-        return g
+        return if (n == 0) 0 else hit * 100 / n
     }
 
     fun analyze(pix: IntArray, w: Int, h: Int): Frame {

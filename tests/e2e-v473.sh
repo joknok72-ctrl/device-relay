@@ -8,7 +8,7 @@ check() { if [[ "$3" == *"$2"* ]]; then echo "  ✔ $1"; pass=$((pass+1)); else 
 call() { curl -s "${A[@]}" -d "$1" $U/api/devices/$D/tools/call; }
 N="renamed-$RANDOM"
 echo "== v4.7.3 rename $D -> $N"
-check version '"version":"4.7.5"' "$(curl -s -A dr-agent $U/api/health)"
+check version '"version":"4.8.0"' "$(curl -s -A dr-agent $U/api/health)"
 # seed memory on the source
 call '{"name":"game_profile","arguments":{"app":"com.test.game","set":{"colors":{"enemy":{"hex":"#ff0000","tolerance":30}},"controls":{"jump":{"x":900,"y":1500}}},"label":"Test Game"}}' >/dev/null
 call '{"name":"remember","arguments":{"text":"rename-test note","app":"com.test.game"}}' >/dev/null

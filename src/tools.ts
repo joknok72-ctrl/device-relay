@@ -712,6 +712,23 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'domino_bot',
+    description:
+      'v4.8 ON-DEVICE DOMINO ALL-FIVES BOT for the "Domino" game in com.big.ludocafe (mode أمريكاني / All Fives, 1v1, 10-second turns). The phone itself reads the table + hand from screenshots every ~300 ms, ' +
+      'computes the best move (immediate points, expected opponent reply over unseen tiles, blocking, hand flexibility, heavy-tile dumping) and DRAGS the tile exactly onto the open end. ' +
+      'op:"start" arms it (startDelayMs default 3500 so the user can switch to the game), op:"stop", op:"status" (moves/fails/log), op:"analyze" (one frame: hand, table, open ends, ranked moves — use it to debug the vision). ' +
+      'The game must be open in landscape in a running round. Start it from the /setup page button or from here.',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', description: 'start | stop | status (default) | analyze' },
+        startDelayMs: { type: 'integer', description: 'start only: wait this long before the first move (default 3500)', minimum: 0, maximum: 30000 },
+        maxMs: { type: 'integer', description: 'start only: auto-stop after this long (default 30 min)', minimum: 10000, maximum: 21600000 },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'combo',
     description:
       'A timed multi-touch SCRIPT executed entirely on the phone (no network jitter between steps): steps[] of {op: down|move|up|tap|wait|joystick|aim|fire, finger?, x?, y?, at?, dx?, dy?, angle?|direction?, distance?, duration?, delayMs?, count?, intervalMs?, holdMs?, release?}. ' +
@@ -1101,6 +1118,7 @@ export function toolToAction(name: string, args: Record<string, unknown>): { act
       return { error: 'finger op must be down|move|up' }
     }
     case 'combo': return { action: { type: 'combo', combo: args.steps ?? args.combo } }
+    case 'domino_bot': return { action: { type: 'domino_bot', text: args.op ?? 'status', duration: args.maxMs, holdMs: args.startDelayMs } }
     case 'react_script': return { action: { type: 'react_script', rules: args.rules, stopRules: args.stopRules, timeoutMs: args.timeoutMs, maxTriggers: args.maxTriggers, intervalMs: args.intervalMs, release: args.release } }
     case 'play': return { special: 'play' }
     case 'play_frame': return { special: 'play_frame' }
@@ -1277,7 +1295,7 @@ export function openapiSpec(serverUrl: string) {
     openapi: '3.1.0',
     info: {
       title: 'Device Relay — Android Automation Tools',
-      version: '4.7.5',
+      version: '4.8.0',
       description:
         'Control a real Android phone through an AI agent. Workflow: capture_screen → reason → tap/swipe → capture_screen to verify. For games use act_and_see (action+screenshot in one call), grid screenshots, tap_sequence/swipe_path for precise timing, find_color/get_pixels for cheap detection, and remember/recall to persist layouts. ' +
         'All coordinates are in original screen pixels.',

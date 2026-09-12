@@ -16,8 +16,8 @@ memdel 'kind=all' >/dev/null
 call '{"name":"get_current_app"}' >/dev/null
 
 echo "== version"
-check version '"version":"4.7.5"' "$(curl -s $U/api/health)"
-check tools-83 '84' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
+check version '"version":"4.8.0"' "$(curl -s $U/api/health)"
+check tools-83 '85' "$(curl -s "$U/api/tools/schema?format=raw" | j 'len(d)')"
 
 echo "== observe without profile"
 check observe-nogame 'False' "$(call '{"name":"observe","arguments":{"image":false,"diff":false}}' | j '"game" in d')"
